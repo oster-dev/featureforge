@@ -35,6 +35,7 @@ Completed:
 - Linting and testing setup
 - Docker Compose Redis service
 - Initial package smoke test
+- GitHub repository and initial project documentation
 
 Next:
 
@@ -48,18 +49,28 @@ Next:
 
 ## Development Setup
 
+### Prerequisites
+
+- Python 3.11 or newer
+- Docker Desktop
+- GNU Make
+
+### Clone and install
+
 ```bash
-git clone <repository-url>
+git clone [https://github.com/oster-dev/featureforge.git](https://github.com/oster-dev/featureforge.git)
 cd featureforge
 
 python3 -m venv .venv
 source .venv/bin/activate
 
 python -m pip install --upgrade pip
-python -m pip install -e ".[dev]"
+pip install -e ".[dev]"
 ```
 
 ## Validation
+
+Run the local quality checks:
 
 ```bash
 make validate
@@ -70,13 +81,13 @@ make docker-config
 
 ## Local Infrastructure
 
-Start Redis:
+Start the local Redis online store:
 
 ```bash
 make docker-up
 ```
 
-Check Redis:
+Verify Redis connectivity:
 
 ```bash
 docker exec featureforge-redis redis-cli ping
@@ -109,3 +120,8 @@ Version 1 focuses on:
 
 Kafka, Flink, Kubernetes, and complex model training are intentionally outside
 the first version of this project.
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for
+details.
