@@ -58,7 +58,7 @@ Next:
 ### Clone and install
 
 ```bash
-git clone [https://github.com/oster-dev/featureforge.git](https://github.com/oster-dev/featureforge.git)
+git clone https://github.com/oster-dev/featureforge.git
 cd featureforge
 
 python3 -m venv .venv
