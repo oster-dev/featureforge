@@ -40,6 +40,9 @@ dependencies = [
   "rich>=13.7,<14.0",
 ]
 
+[project.scripts]
+featureforge = "featureforge.cli:main"
+
 [project.optional-dependencies]
 dev = [
   "pytest>=8.3,<9.0",
