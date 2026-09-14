@@ -47,6 +47,19 @@ make docker-config
 
 All checks should pass before opening a pull request.
 
+## Generate Local Test Data
+
+Use the CLI to generate reproducible local Parquet datasets:
+
+```bash
+featureforge generate \
+  --config configs/synthetic_data.yaml \
+  --output data/generated
+```
+
+Generated artifacts are intentionally ignored by Git. Do not commit Parquet
+output, virtual environments, credentials, or local environment files.
+
 ## Development Principles
 
 - Keep changes small and focused.

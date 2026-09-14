@@ -3,62 +3,189 @@
 FeatureForge is a production-inspired feature platform for reproducible offline
 training data and low-latency online ML feature serving.
 
+The project starts with a deterministic synthetic-data foundation: it generates
+behavioral event data, intentionally models duplicate and late-arriving events,
+creates future-activity labels, and persists the result as typed Parquet tables.
+
+FeatureForge is built as a portfolio project for Data Infrastructure, Feature
+Infrastructure, and ML Platform Engineering.
+
 ## Project Goal
 
-FeatureForge provides trusted, versioned, point-in-time-correct features for
-both offline model training and online inference.
+The long-term goal is to provide trusted, versioned, point-in-time-correct
+features for both offline model training and online inference.
 
-The project is designed as a portfolio proof for Data Infrastructure,
-Feature Infrastructure, and ML Platform Engineering.
+The current implementation delivers the dataset foundation required for that
+goal:
+
+```text
+validated YAML configuration
+        ↓
+deterministic synthetic data generation
+        ↓
+duplicate and late-event injection
+        ↓
+observation-label generation
+        ↓
+Parquet offline datasets
+        ↓
+reproducible CLI execution
+```
+
+## Current Status
+
+### Implemented
+
+- Pydantic contracts for users, content, events, observation labels, and the
+  complete synthetic dataset
+- YAML-backed configuration with validation for time ranges, event rates, and
+  late-arrival constraints
+- Deterministic synthetic user and content generation
+- Deterministic behavioral event generation
+- Controlled duplicate-event delivery injection
+- Controlled late-event injection with separate event and ingestion timestamps
+- Observation labels for future user activity
+- In-memory dataset orchestration
+- Parquet persistence for users, content, events, and labels
+- Command-line dataset generation
+- Unit, persistence, and CLI integration tests
+- Local Redis service through Docker Compose for future online-serving work
+
+### Planned
+
+1. PySpark feature transformations.
+2. Point-in-time-correct feature computation.
+3. Feature definitions and historical retrieval with Feast.
+4. Offline and online feature-store integration.
+5. Redis materialization and online feature lookup.
+6. Data-quality and freshness checks.
+7. AWS S3 and DynamoDB production profile.
+8. GitHub Actions continuous integration.
 
 ## Core Architecture
 
 - Python for platform and pipeline code
-- PySpark for batch feature transformations
-- Amazon S3 and Parquet as the offline storage profile
-- Feast for feature definitions, historical retrieval, and materialization
-- Redis as the local online feature store
-- DynamoDB as the documented AWS online-store alternative
-- pytest for testing
-- Ruff for linting and formatting
-- GitHub Actions for continuous integration
+- Pydantic for executable data contracts
+- Pandas and PyArrow for local Parquet persistence
+- YAML for reproducible synthetic-data configuration
+- Rich for CLI output
+- Redis through Docker Compose for future local online serving
+- pytest for unit and integration tests
+- Ruff for formatting and linting
+- PySpark, Feast, AWS S3, DynamoDB, and GitHub Actions as planned extensions
 
-## Current Status
+## Generated Dataset
 
-The project is currently in Day 0 foundation setup.
+Run the generator with:
 
-Completed:
+```bash
+featureforge generate \
+  --config configs/synthetic_data.yaml \
+  --output data/generated
+```
 
-- Repository structure
-- Python package configuration
-- Development environment
-- Linting and testing setup
-- Docker Compose Redis service
-- Initial package smoke test
-- GitHub repository and initial project documentation
+The command writes four Parquet tables:
 
-Next:
+| Table | Description |
+|---|---|
+| `users.parquet` | User entities and signup attributes |
+| `content.parquet` | Content catalog entities and metadata |
+| `events.parquet` | Behavioral events, including duplicate and late-event flags |
+| `labels.parquet` | User observation timestamps and future-activity labels |
 
-1. Generate deterministic synthetic behavioral data.
-2. Build PySpark feature transformations.
-3. Integrate Feast feature definitions.
-4. Implement point-in-time historical retrieval.
-5. Materialize features into Redis.
-6. Add data-quality and freshness checks.
-7. Document the AWS production profile.
+Generated artifacts are ignored by Git and can be recreated at any time from
+the YAML configuration.
+
+### Example output
+
+```text
+FeatureForge dataset generated
+
+users      500  data/generated/users.parquet
+content    250  data/generated/content.parquet
+events   10200  data/generated/events.parquet
+labels    1000  data/generated/labels.parquet
+
+Duplicate events: 200
+Late events: 306
+```
+
+The exact counts are controlled by `configs/synthetic_data.yaml`.
+
+## Data Semantics
+
+### Event time and ingestion time
+
+FeatureForge explicitly models two timestamps:
+
+| Field | Meaning |
+|---|---|
+| `event_time` | When the user action actually occurred |
+| `ingested_at` | When the platform received or processed the event |
+
+For normal base events:
+
+```text
+ingested_at == event_time
+is_late == false
+```
+
+For late events:
+
+```text
+ingested_at > event_time
+is_late == true
+```
+
+This distinction is required for later point-in-time-correct feature
+computation, late-data handling, backfills, and feature freshness monitoring.
+
+### Duplicate events
+
+Duplicate events represent an additional delivery of an existing behavioral
+event.
+
+```text
+original event:
+event_id=event_00000042
+is_duplicate=false
+
+duplicate delivery:
+event_id=event_00000042_duplicate_01
+is_duplicate=true
+```
+
+The duplicate preserves the original behavioral payload while receiving its own
+delivery identifier.
+
+### Observation labels
+
+Each label answers the following question:
+
+> Did this user have at least one event during the configured future label
+> window?
+
+The label is calculated using event time:
+
+```text
+observation_time < event_time <= label_window_end
+```
+
+This makes the label suitable for later point-in-time-safe training-dataset
+construction.
 
 ## Development Setup
 
 ### Prerequisites
 
-- Python 3.11 or newer
+- Python 3.11, 3.12, or 3.13
 - Docker Desktop
 - GNU Make
 
 ### Clone and install
 
 ```bash
-git clone https://github.com/oster-dev/featureforge.git
+git clone [https://github.com/oster-dev/featureforge.git](https://github.com/oster-dev/featureforge.git)
 cd featureforge
 
 python3 -m venv .venv
@@ -68,9 +195,28 @@ python -m pip install --upgrade pip
 pip install -e ".[dev]"
 ```
 
+Verify the CLI:
+
+```bash
+featureforge --help
+```
+
 ## Validation
 
-Run the local quality checks:
+Run the complete test suite:
+
+```bash
+pytest -v
+```
+
+Run formatting and lint checks:
+
+```bash
+ruff format --check src tests
+ruff check src tests
+```
+
+Or use the project Make targets:
 
 ```bash
 make validate
@@ -81,13 +227,16 @@ make docker-config
 
 ## Local Infrastructure
 
-Start the local Redis online store:
+FeatureForge includes a local Redis service for the later online feature-store
+stage.
+
+Start Redis:
 
 ```bash
 make docker-up
 ```
 
-Verify Redis connectivity:
+Verify connectivity:
 
 ```bash
 docker exec featureforge-redis redis-cli ping
@@ -109,7 +258,7 @@ make docker-down
 
 Version 1 focuses on:
 
-- Event-time-aware batch feature computation
+- Event-time-aware feature computation
 - Offline and online feature separation
 - Point-in-time-correct historical retrieval
 - Reproducible backfills
