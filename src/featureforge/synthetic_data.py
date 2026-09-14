@@ -97,3 +97,33 @@ def generate_base_events(
         )
 
     return events
+
+
+def inject_duplicates(
+    config: SyntheticDataConfig,
+    events: list[Event],
+) -> list[Event]:
+    rng = np.random.default_rng(config.seed + 3)
+    duplicate_count = int(len(events) * config.duplicate_rate)
+
+    duplicate_indexes = rng.choice(
+        len(events),
+        size=duplicate_count,
+        replace=False,
+    )
+
+    duplicates: list[Event] = []
+
+    for duplicate_number, event_index in enumerate(duplicate_indexes, start=1):
+        original_event = events[int(event_index)]
+
+        duplicates.append(
+            original_event.model_copy(
+                update={
+                    "event_id": (f"{original_event.event_id}_duplicate_{duplicate_number:02d}"),
+                    "is_duplicate": True,
+                }
+            )
+        )
+
+    return [*events, *duplicates]

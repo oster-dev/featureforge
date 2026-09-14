@@ -3,6 +3,7 @@ from featureforge.synthetic_data import (
     generate_base_events,
     generate_content,
     generate_users,
+    inject_duplicates,
 )
 
 
@@ -110,3 +111,61 @@ def test_base_event_time_and_watch_semantics() -> None:
             assert event.watch_seconds > 0
         else:
             assert event.watch_seconds == 0
+
+
+def test_injects_expected_number_of_duplicates() -> None:
+    config = build_test_config()
+    users = generate_users(config)
+    content_items = generate_content(config)
+    base_events = generate_base_events(config, users, content_items)
+
+    events = inject_duplicates(config, base_events)
+
+    assert len(events) == 11
+    assert len([event for event in events if event.is_duplicate]) == 1
+
+
+def test_duplicate_injection_is_deterministic() -> None:
+    config = build_test_config()
+    users = generate_users(config)
+    content_items = generate_content(config)
+    base_events = generate_base_events(config, users, content_items)
+
+    first_run = inject_duplicates(config, base_events)
+    second_run = inject_duplicates(config, base_events)
+
+    assert first_run == second_run
+
+
+def test_duplicate_preserves_original_event_payload() -> None:
+    config = build_test_config()
+    users = generate_users(config)
+    content_items = generate_content(config)
+    base_events = generate_base_events(config, users, content_items)
+
+    events = inject_duplicates(config, base_events)
+
+    duplicate = next(event for event in events if event.is_duplicate)
+    original_event_id = duplicate.event_id.removesuffix("_duplicate_01")
+    original = next(event for event in events if event.event_id == original_event_id)
+
+    assert duplicate.user_id == original.user_id
+    assert duplicate.content_id == original.content_id
+    assert duplicate.event_type == original.event_type
+    assert duplicate.event_time == original.event_time
+    assert duplicate.ingested_at == original.ingested_at
+    assert duplicate.session_id == original.session_id
+    assert duplicate.device_type == original.device_type
+    assert duplicate.watch_seconds == original.watch_seconds
+
+
+def test_duplicate_injection_does_not_mutate_base_events() -> None:
+    config = build_test_config()
+    users = generate_users(config)
+    content_items = generate_content(config)
+    base_events = generate_base_events(config, users, content_items)
+
+    inject_duplicates(config, base_events)
+
+    assert len(base_events) == config.num_base_events
+    assert all(not event.is_duplicate for event in base_events)
