@@ -1,0 +1,59 @@
+from __future__ import annotations
+
+from datetime import datetime
+
+from pydantic import BaseModel, Field, model_validator
+
+
+class User(BaseModel):
+    user_id: str = Field(min_length=1)
+    signup_at: datetime
+    country: str = Field(min_length=2, max_length=3)
+    plan_tier: str
+    acquisition_channel: str
+
+
+class Content(BaseModel):
+    content_id: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    genre: str = Field(min_length=1)
+    released_at: datetime
+    duration_seconds: int = Field(gt=0)
+
+
+class Event(BaseModel):
+    event_id: str = Field(min_length=1)
+    user_id: str = Field(min_length=1)
+    content_id: str | None = None
+    event_type: str
+    event_time: datetime
+    ingested_at: datetime
+    session_id: str = Field(min_length=1)
+    device_type: str
+    watch_seconds: int = Field(ge=0)
+    is_duplicate: bool = False
+    is_late: bool = False
+
+    @model_validator(mode="after")
+    def validate_event_times(self) -> Event:
+        if self.ingested_at < self.event_time:
+            raise ValueError("ingested_at must be on or after event_time")
+
+        if self.is_late and self.ingested_at <= self.event_time:
+            raise ValueError("late events must have ingested_at after event_time")
+
+        return self
+
+
+class ObservationLabel(BaseModel):
+    label_id: str = Field(min_length=1)
+    user_id: str = Field(min_length=1)
+    observation_time: datetime
+    label_window_end: datetime
+    is_active_next_7d: bool
+
+    @model_validator(mode="after")
+    def validate_label_window(self) -> ObservationLabel:
+        if self.label_window_end <= self.observation_time:
+            raise ValueError("label_window_end must be after observation_time")
+        return self
