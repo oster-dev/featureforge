@@ -1,5 +1,9 @@
 from featureforge.config import SyntheticDataConfig
-from featureforge.synthetic_data import generate_content, generate_users
+from featureforge.synthetic_data import (
+    generate_base_events,
+    generate_content,
+    generate_users,
+)
 
 
 def build_test_config() -> SyntheticDataConfig:
@@ -54,3 +58,55 @@ def test_generates_deterministic_content_items() -> None:
     second_run = generate_content(config)
 
     assert first_run == second_run
+
+
+def test_generates_expected_number_of_base_events() -> None:
+    config = build_test_config()
+    users = generate_users(config)
+    content_items = generate_content(config)
+
+    events = generate_base_events(config, users, content_items)
+
+    assert len(events) == config.num_base_events
+    assert events[0].event_id == "event_00000001"
+    assert events[-1].event_id == "event_00000010"
+
+
+def test_generates_deterministic_base_events() -> None:
+    config = build_test_config()
+    users = generate_users(config)
+    content_items = generate_content(config)
+
+    first_run = generate_base_events(config, users, content_items)
+    second_run = generate_base_events(config, users, content_items)
+
+    assert first_run == second_run
+
+
+def test_base_events_reference_known_entities() -> None:
+    config = build_test_config()
+    users = generate_users(config)
+    content_items = generate_content(config)
+
+    user_ids = {user.user_id for user in users}
+    content_ids = {item.content_id for item in content_items}
+    events = generate_base_events(config, users, content_items)
+
+    assert all(event.user_id in user_ids for event in events)
+    assert all(event.content_id is None or event.content_id in content_ids for event in events)
+
+
+def test_base_event_time_and_watch_semantics() -> None:
+    config = build_test_config()
+    users = generate_users(config)
+    content_items = generate_content(config)
+
+    events = generate_base_events(config, users, content_items)
+
+    assert all(event.ingested_at == event.event_time for event in events)
+
+    for event in events:
+        if event.event_type in {"play", "watch"}:
+            assert event.watch_seconds > 0
+        else:
+            assert event.watch_seconds == 0

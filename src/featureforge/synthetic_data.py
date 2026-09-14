@@ -5,12 +5,14 @@ from datetime import timedelta
 import numpy as np
 
 from featureforge.config import SyntheticDataConfig
-from featureforge.models import Content, User
+from featureforge.models import Content, Event, User
 
 COUNTRIES = ("DE", "RO", "US", "GB", "FR", "ES")
 PLAN_TIERS = ("free", "basic", "premium")
 ACQUISITION_CHANNELS = ("organic", "search", "social", "referral")
 GENRES = ("drama", "comedy", "documentary", "action", "sci_fi", "thriller")
+EVENT_TYPES = ("impression", "click", "play", "watch", "like", "search")
+DEVICE_TYPES = ("web", "ios", "android", "tv")
 
 
 def generate_users(config: SyntheticDataConfig) -> list[User]:
@@ -57,3 +59,41 @@ def generate_content(config: SyntheticDataConfig) -> list[Content]:
         )
 
     return content_items
+
+
+def generate_base_events(
+    config: SyntheticDataConfig,
+    users: list[User],
+    content_items: list[Content],
+) -> list[Event]:
+    rng = np.random.default_rng(config.seed + 2)
+    total_seconds = int((config.end_time - config.start_time).total_seconds())
+
+    user_ids = [user.user_id for user in users]
+    content_ids = [item.content_id for item in content_items]
+
+    events: list[Event] = []
+
+    for index in range(1, config.num_base_events + 1):
+        event_type = str(rng.choice(EVENT_TYPES))
+        event_offset = int(rng.integers(0, total_seconds + 1))
+        event_time = config.start_time + timedelta(seconds=event_offset)
+
+        content_id = None if event_type == "search" else str(rng.choice(content_ids))
+        watch_seconds = int(rng.integers(30, 3_601)) if event_type in {"play", "watch"} else 0
+
+        events.append(
+            Event(
+                event_id=f"event_{index:08d}",
+                user_id=str(rng.choice(user_ids)),
+                content_id=content_id,
+                event_type=event_type,
+                event_time=event_time,
+                ingested_at=event_time,
+                session_id=f"session_{index:08d}",
+                device_type=str(rng.choice(DEVICE_TYPES)),
+                watch_seconds=watch_seconds,
+            )
+        )
+
+    return events
