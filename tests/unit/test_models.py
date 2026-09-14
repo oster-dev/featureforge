@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from featureforge.models import Event, ObservationLabel
+from featureforge.models import Event, ObservationLabel, SyntheticDataset
 
 
 def test_accepts_valid_late_event() -> None:
@@ -69,3 +69,17 @@ def test_rejects_invalid_observation_window() -> None:
             label_window_end="2026-01-10T00:00:00Z",
             is_active_next_7d=False,
         )
+
+
+def test_accepts_synthetic_dataset() -> None:
+    dataset = SyntheticDataset(
+        users=[],
+        content_items=[],
+        events=[],
+        labels=[],
+    )
+
+    assert dataset.users == []
+    assert dataset.content_items == []
+    assert dataset.events == []
+    assert dataset.labels == []

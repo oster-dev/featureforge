@@ -5,7 +5,13 @@ from datetime import timedelta
 import numpy as np
 
 from featureforge.config import SyntheticDataConfig
-from featureforge.models import Content, Event, ObservationLabel, User
+from featureforge.models import (
+    Content,
+    Event,
+    ObservationLabel,
+    SyntheticDataset,
+    User,
+)
 
 COUNTRIES = ("DE", "RO", "US", "GB", "FR", "ES")
 PLAN_TIERS = ("free", "basic", "premium")
@@ -208,3 +214,21 @@ def generate_observation_labels(
         )
 
     return labels
+
+
+def generate_synthetic_dataset(
+    config: SyntheticDataConfig,
+) -> SyntheticDataset:
+    users = generate_users(config)
+    content_items = generate_content(config)
+    base_events = generate_base_events(config, users, content_items)
+    events_with_duplicates = inject_duplicates(config, base_events)
+    events = inject_late_events(config, events_with_duplicates)
+    labels = generate_observation_labels(config, users, events)
+
+    return SyntheticDataset(
+        users=users,
+        content_items=content_items,
+        events=events,
+        labels=labels,
+    )

@@ -57,3 +57,10 @@ class ObservationLabel(BaseModel):
         if self.label_window_end <= self.observation_time:
             raise ValueError("label_window_end must be after observation_time")
         return self
+
+
+class SyntheticDataset(BaseModel):
+    users: list[User]
+    content_items: list[Content]
+    events: list[Event]
+    labels: list[ObservationLabel]

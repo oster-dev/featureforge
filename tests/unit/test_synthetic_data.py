@@ -5,6 +5,7 @@ from featureforge.synthetic_data import (
     generate_base_events,
     generate_content,
     generate_observation_labels,
+    generate_synthetic_dataset,
     generate_users,
     inject_duplicates,
     inject_late_events,
@@ -320,6 +321,50 @@ def test_observation_labels_match_event_activity() -> None:
             event.user_id == label.user_id
             and label.observation_time < event.event_time <= label.label_window_end
             for event in events
+        )
+
+        assert label.is_active_next_7d is expected_value
+
+
+def test_generates_complete_synthetic_dataset() -> None:
+    config = build_test_config()
+
+    dataset = generate_synthetic_dataset(config)
+
+    assert len(dataset.users) == config.num_users
+    assert len(dataset.content_items) == config.num_content_items
+    assert len(dataset.events) == 11
+    assert len(dataset.labels) == config.num_observations
+
+
+def test_synthetic_dataset_generation_is_deterministic() -> None:
+    config = build_test_config()
+
+    first_run = generate_synthetic_dataset(config)
+    second_run = generate_synthetic_dataset(config)
+
+    assert first_run == second_run
+
+
+def test_synthetic_dataset_contains_expected_event_quality_flags() -> None:
+    config = build_test_config()
+
+    dataset = generate_synthetic_dataset(config)
+
+    assert len([event for event in dataset.events if event.is_duplicate]) == 1
+    assert len([event for event in dataset.events if event.is_late]) == 1
+
+
+def test_synthetic_dataset_labels_match_event_activity() -> None:
+    config = build_test_config()
+
+    dataset = generate_synthetic_dataset(config)
+
+    for label in dataset.labels:
+        expected_value = any(
+            event.user_id == label.user_id
+            and label.observation_time < event.event_time <= label.label_window_end
+            for event in dataset.events
         )
 
         assert label.is_active_next_7d is expected_value
