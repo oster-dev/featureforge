@@ -5,7 +5,7 @@ from datetime import timedelta
 import numpy as np
 
 from featureforge.config import SyntheticDataConfig
-from featureforge.models import Content, Event, User
+from featureforge.models import Content, Event, ObservationLabel, User
 
 COUNTRIES = ("DE", "RO", "US", "GB", "FR", "ES")
 PLAN_TIERS = ("free", "basic", "premium")
@@ -171,3 +171,40 @@ def inject_late_events(
         )
 
     return late_events
+
+
+def generate_observation_labels(
+    config: SyntheticDataConfig,
+    users: list[User],
+    events: list[Event],
+) -> list[ObservationLabel]:
+    rng = np.random.default_rng(config.seed + 5)
+    label_horizon = timedelta(days=config.label_horizon_days)
+    latest_observation_time = config.end_time - label_horizon
+    available_seconds = int((latest_observation_time - config.start_time).total_seconds())
+
+    labels: list[ObservationLabel] = []
+
+    for index in range(1, config.num_observations + 1):
+        observation_offset = int(rng.integers(0, available_seconds + 1))
+        observation_time = config.start_time + timedelta(seconds=observation_offset)
+        label_window_end = observation_time + label_horizon
+        user = users[int(rng.integers(0, len(users)))]
+
+        is_active_next_7d = any(
+            event.user_id == user.user_id
+            and observation_time < event.event_time <= label_window_end
+            for event in events
+        )
+
+        labels.append(
+            ObservationLabel(
+                label_id=f"label_{index:08d}",
+                user_id=user.user_id,
+                observation_time=observation_time,
+                label_window_end=label_window_end,
+                is_active_next_7d=is_active_next_7d,
+            )
+        )
+
+    return labels

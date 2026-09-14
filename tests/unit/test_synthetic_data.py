@@ -4,6 +4,7 @@ from featureforge.config import SyntheticDataConfig
 from featureforge.synthetic_data import (
     generate_base_events,
     generate_content,
+    generate_observation_labels,
     generate_users,
     inject_duplicates,
     inject_late_events,
@@ -247,3 +248,78 @@ def test_late_event_injection_does_not_mutate_input_events() -> None:
     inject_late_events(config, events_with_duplicates)
 
     assert all(not event.is_late for event in events_with_duplicates)
+
+
+def test_generates_expected_number_of_observation_labels() -> None:
+    config = build_test_config()
+    users = generate_users(config)
+    content_items = generate_content(config)
+    base_events = generate_base_events(config, users, content_items)
+    events = inject_late_events(config, inject_duplicates(config, base_events))
+
+    labels = generate_observation_labels(config, users, events)
+
+    assert len(labels) == config.num_observations
+    assert labels[0].label_id == "label_00000001"
+    assert labels[-1].label_id == "label_00000005"
+
+
+def test_observation_label_generation_is_deterministic() -> None:
+    config = build_test_config()
+    users = generate_users(config)
+    content_items = generate_content(config)
+    base_events = generate_base_events(config, users, content_items)
+    events = inject_late_events(config, inject_duplicates(config, base_events))
+
+    first_run = generate_observation_labels(config, users, events)
+    second_run = generate_observation_labels(config, users, events)
+
+    assert first_run == second_run
+
+
+def test_observation_labels_reference_known_users() -> None:
+    config = build_test_config()
+    users = generate_users(config)
+    content_items = generate_content(config)
+    base_events = generate_base_events(config, users, content_items)
+    events = inject_late_events(config, inject_duplicates(config, base_events))
+
+    user_ids = {user.user_id for user in users}
+    labels = generate_observation_labels(config, users, events)
+
+    assert all(label.user_id in user_ids for label in labels)
+
+
+def test_observation_labels_have_valid_time_windows() -> None:
+    config = build_test_config()
+    users = generate_users(config)
+    content_items = generate_content(config)
+    base_events = generate_base_events(config, users, content_items)
+    events = inject_late_events(config, inject_duplicates(config, base_events))
+
+    labels = generate_observation_labels(config, users, events)
+
+    for label in labels:
+        assert label.label_window_end == (
+            label.observation_time + timedelta(days=config.label_horizon_days)
+        )
+        assert label.label_window_end <= config.end_time
+
+
+def test_observation_labels_match_event_activity() -> None:
+    config = build_test_config()
+    users = generate_users(config)
+    content_items = generate_content(config)
+    base_events = generate_base_events(config, users, content_items)
+    events = inject_late_events(config, inject_duplicates(config, base_events))
+
+    labels = generate_observation_labels(config, users, events)
+
+    for label in labels:
+        expected_value = any(
+            event.user_id == label.user_id
+            and label.observation_time < event.event_time <= label.label_window_end
+            for event in events
+        )
+
+        assert label.is_active_next_7d is expected_value
