@@ -1,9 +1,12 @@
+from datetime import timedelta
+
 from featureforge.config import SyntheticDataConfig
 from featureforge.synthetic_data import (
     generate_base_events,
     generate_content,
     generate_users,
     inject_duplicates,
+    inject_late_events,
 )
 
 
@@ -169,3 +172,78 @@ def test_duplicate_injection_does_not_mutate_base_events() -> None:
 
     assert len(base_events) == config.num_base_events
     assert all(not event.is_duplicate for event in base_events)
+
+
+def test_injects_expected_number_of_late_events() -> None:
+    config = build_test_config()
+    users = generate_users(config)
+    content_items = generate_content(config)
+    base_events = generate_base_events(config, users, content_items)
+    events_with_duplicates = inject_duplicates(config, base_events)
+
+    events = inject_late_events(config, events_with_duplicates)
+
+    assert len(events) == len(events_with_duplicates)
+    assert len([event for event in events if event.is_late]) == 1
+
+
+def test_late_event_injection_is_deterministic() -> None:
+    config = build_test_config()
+    users = generate_users(config)
+    content_items = generate_content(config)
+    base_events = generate_base_events(config, users, content_items)
+    events_with_duplicates = inject_duplicates(config, base_events)
+
+    first_run = inject_late_events(config, events_with_duplicates)
+    second_run = inject_late_events(config, events_with_duplicates)
+
+    assert first_run == second_run
+
+
+def test_late_events_have_valid_delays() -> None:
+    config = build_test_config()
+    users = generate_users(config)
+    content_items = generate_content(config)
+    base_events = generate_base_events(config, users, content_items)
+    events_with_duplicates = inject_duplicates(config, base_events)
+
+    events = inject_late_events(config, events_with_duplicates)
+
+    for event in events:
+        if event.is_late:
+            delay = event.ingested_at - event.event_time
+            assert delay > timedelta(0)
+            assert delay <= timedelta(hours=config.max_late_arrival_hours)
+
+
+def test_late_event_injection_preserves_event_payload() -> None:
+    config = build_test_config()
+    users = generate_users(config)
+    content_items = generate_content(config)
+    base_events = generate_base_events(config, users, content_items)
+    events_with_duplicates = inject_duplicates(config, base_events)
+
+    events = inject_late_events(config, events_with_duplicates)
+
+    for original, updated in zip(events_with_duplicates, events, strict=True):
+        assert updated.event_id == original.event_id
+        assert updated.user_id == original.user_id
+        assert updated.content_id == original.content_id
+        assert updated.event_type == original.event_type
+        assert updated.event_time == original.event_time
+        assert updated.session_id == original.session_id
+        assert updated.device_type == original.device_type
+        assert updated.watch_seconds == original.watch_seconds
+        assert updated.is_duplicate == original.is_duplicate
+
+
+def test_late_event_injection_does_not_mutate_input_events() -> None:
+    config = build_test_config()
+    users = generate_users(config)
+    content_items = generate_content(config)
+    base_events = generate_base_events(config, users, content_items)
+    events_with_duplicates = inject_duplicates(config, base_events)
+
+    inject_late_events(config, events_with_duplicates)
+
+    assert all(not event.is_late for event in events_with_duplicates)

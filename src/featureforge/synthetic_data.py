@@ -127,3 +127,47 @@ def inject_duplicates(
         )
 
     return [*events, *duplicates]
+
+
+def inject_late_events(
+    config: SyntheticDataConfig,
+    events: list[Event],
+) -> list[Event]:
+    rng = np.random.default_rng(config.seed + 4)
+    late_event_count = int(len(events) * config.late_event_rate)
+
+    if late_event_count == 0:
+        return list(events)
+
+    late_indexes = set(
+        rng.choice(
+            len(events),
+            size=late_event_count,
+            replace=False,
+        )
+    )
+
+    late_events: list[Event] = []
+
+    for index, event in enumerate(events):
+        if index not in late_indexes:
+            late_events.append(event)
+            continue
+
+        delay_seconds = int(
+            rng.integers(
+                1,
+                config.max_late_arrival_hours * 3_600 + 1,
+            )
+        )
+
+        late_events.append(
+            event.model_copy(
+                update={
+                    "ingested_at": event.ingested_at + timedelta(seconds=delay_seconds),
+                    "is_late": True,
+                }
+            )
+        )
+
+    return late_events

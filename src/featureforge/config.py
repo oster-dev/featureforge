@@ -25,9 +25,16 @@ class SyntheticDataConfig(BaseModel):
     max_late_arrival_hours: int = Field(ge=0)
 
     @model_validator(mode="after")
-    def validate_time_range(self) -> SyntheticDataConfig:
+    def validate_config(self) -> SyntheticDataConfig:
         if self.end_time <= self.start_time:
             raise ValueError("end_time must be after start_time")
+
+        if self.late_event_rate > 0.0 and self.max_late_arrival_hours == 0:
+            raise ValueError(
+                "max_late_arrival_hours must be greater than zero "
+                "when late_event_rate is positive"
+            )
+
         return self
 
 
