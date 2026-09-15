@@ -64,3 +64,35 @@ class SyntheticDataset(BaseModel):
     content_items: list[Content]
     events: list[Event]
     labels: list[ObservationLabel]
+
+
+class DatasetQualityReport(BaseModel):
+    user_count: int = Field(ge=0)
+    content_count: int = Field(ge=0)
+    event_count: int = Field(ge=0)
+    label_count: int = Field(ge=0)
+
+    duplicate_count: int = Field(ge=0)
+    late_event_count: int = Field(ge=0)
+
+    unknown_event_user_reference_count: int = Field(ge=0)
+    unknown_event_content_reference_count: int = Field(ge=0)
+    invalid_search_content_reference_count: int = Field(ge=0)
+    invalid_watch_semantics_count: int = Field(ge=0)
+    invalid_event_time_order_count: int = Field(ge=0)
+    invalid_late_event_count: int = Field(ge=0)
+
+    unknown_label_user_reference_count: int = Field(ge=0)
+    invalid_label_window_count: int = Field(ge=0)
+
+    expected_duplicate_count: int = Field(ge=0)
+    expected_late_event_count: int = Field(ge=0)
+    expected_event_count: int = Field(ge=0)
+    expected_label_count: int = Field(ge=0)
+
+    duplicate_count_matches_expected: bool
+    late_event_count_matches_expected: bool
+    event_count_matches_expected: bool
+    label_count_matches_expected: bool
+
+    passed: bool
