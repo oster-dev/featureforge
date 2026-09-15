@@ -96,6 +96,65 @@ The command writes four Parquet tables:
 Generated artifacts are ignored by Git and can be recreated at any time from
 the YAML configuration.
 
+## Quality Validation
+
+Every generation run includes automatic quality validation:
+
+- **Referential integrity**: All user and content references exist
+- **Temporal validity**: `ingested_at >= event_time` for all events
+- **Event semantics**: Search events have no content reference; play/watch have positive duration
+- **Late-event semantics**: Late events have positive delay between event and ingestion time
+- **Label validity**: Label windows end after observation time
+- **Volume validation**: Event and label counts match expected values
+
+Quality results are available in `run_manifest.json`:
+
+```json
+{
+  "quality_report": {
+    "passed": true,
+    "unknown_event_user_reference_count": 0,
+    "unknown_event_content_reference_count": 0,
+    "invalid_search_content_reference_count": 0,
+    "invalid_watch_semantics_count": 0,
+    "invalid_event_time_order_count": 0,
+    "invalid_late_event_count": 0,
+    "unknown_label_user_reference_count": 0,
+    "invalid_label_window_count": 0,
+    "duplicate_count_matches_expected": true,
+    "late_event_count_matches_expected": true,
+    "event_count_matches_expected": true,
+    "label_count_matches_expected": true
+  }
+}
+```
+
+## Run Manifest
+
+Every generation run produces a `run_manifest.json` for auditability:
+
+```json
+{
+  "generated_at": "2026-09-15T09:13:06.952601+00:00",
+  "config": { ... },
+  "row_counts": {
+    "users": 500,
+    "content": 250,
+    "events": 10200,
+    "labels": 1000
+  },
+  "quality_report": { ... },
+  "output_paths": {
+    "users": "output/users.parquet",
+    "content": "output/content.parquet",
+    "events": "output/events.parquet",
+    "labels": "output/labels.parquet"
+  }
+}
+```
+
+The manifest captures the full configuration, row counts, quality report, and output paths for reproducibility.
+
 ### Example output
 
 ```text
