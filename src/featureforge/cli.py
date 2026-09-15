@@ -7,6 +7,8 @@ from rich.console import Console
 from rich.table import Table
 
 from featureforge.config import load_synthetic_data_config
+from featureforge.manifest import GenerationRunManifest
+from featureforge.quality import validate_synthetic_dataset
 from featureforge.storage import write_synthetic_dataset
 from featureforge.synthetic_data import generate_synthetic_dataset
 
@@ -48,6 +50,7 @@ def print_generation_summary(
     duplicate_count: int,
     late_event_count: int,
     label_count: int,
+    manifest_path: Path | None = None,
 ) -> None:
     table = Table(title="FeatureForge dataset generated")
     table.add_column("Table", style="cyan")
@@ -63,11 +66,28 @@ def print_generation_summary(
     console.print(f"Duplicate events: {duplicate_count}")
     console.print(f"Late events: {late_event_count}")
 
+    if manifest_path is not None:
+        console.print(f"Run manifest: {manifest_path}")
+
 
 def run_generate(config_path: Path, output_dir: Path) -> None:
     config = load_synthetic_data_config(config_path)
     dataset = generate_synthetic_dataset(config)
+
+    # Quality validation
+    quality_report = validate_synthetic_dataset(dataset, config)
+
+    # Persist Parquet files
     output_paths = write_synthetic_dataset(dataset, output_dir)
+
+    # Write run manifest
+    manifest = GenerationRunManifest.from_run(
+        config=config,
+        dataset=dataset,
+        quality_report=quality_report,
+        output_paths=output_paths,
+    )
+    manifest_path = manifest.write(output_dir)
 
     console = Console()
     print_generation_summary(
@@ -79,6 +99,7 @@ def run_generate(config_path: Path, output_dir: Path) -> None:
         duplicate_count=sum(event.is_duplicate for event in dataset.events),
         late_event_count=sum(event.is_late for event in dataset.events),
         label_count=len(dataset.labels),
+        manifest_path=manifest_path,
     )
 
 
