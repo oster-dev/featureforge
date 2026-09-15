@@ -56,10 +56,7 @@ def test_rejects_invalid_time_range() -> None:
 def test_rejects_late_events_without_allowed_lateness() -> None:
     with pytest.raises(
         ValidationError,
-        match=(
-            "max_late_arrival_hours must be greater than zero "
-            "when late_event_rate is positive"
-        ),
+        match=("max_late_arrival_hours must be greater than zero when late_event_rate is positive"),
     ):
         SyntheticDataConfig(
             seed=1,

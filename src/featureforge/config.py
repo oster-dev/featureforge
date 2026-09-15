@@ -31,8 +31,7 @@ class SyntheticDataConfig(BaseModel):
 
         if self.late_event_rate > 0.0 and self.max_late_arrival_hours == 0:
             raise ValueError(
-                "max_late_arrival_hours must be greater than zero "
-                "when late_event_rate is positive"
+                "max_late_arrival_hours must be greater than zero when late_event_rate is positive"
             )
 
         return self
