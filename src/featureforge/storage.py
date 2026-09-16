@@ -1,31 +1,59 @@
+"""Parquet persistence for FeatureForge synthetic datasets."""
+
 from __future__ import annotations
 
 from pathlib import Path
 
 import pandas as pd
 
-from featureforge.models import SyntheticDataset
+from .models import Content, Event, ObservationLabel, SyntheticDataset, User
 
 
 def write_synthetic_dataset(
     dataset: SyntheticDataset,
-    output_dir: str | Path,
+    output_dir: Path,
 ) -> dict[str, Path]:
-    destination = Path(output_dir)
-    destination.mkdir(parents=True, exist_ok=True)
+    """Write a synthetic dataset to Parquet files."""
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    tables = {
-        "users": [user.model_dump() for user in dataset.users],
-        "content": [item.model_dump() for item in dataset.content_items],
-        "events": [event.model_dump() for event in dataset.events],
-        "labels": [label.model_dump() for label in dataset.labels],
+    users_df = pd.DataFrame([u.model_dump() for u in dataset.users])
+    content_df = pd.DataFrame([c.model_dump() for c in dataset.content_items])
+    events_df = pd.DataFrame([e.model_dump() for e in dataset.events])
+    labels_df = pd.DataFrame([label.model_dump() for label in dataset.labels])
+
+    users_path = output_dir / "users.parquet"
+    content_path = output_dir / "content.parquet"
+    events_path = output_dir / "events.parquet"
+    labels_path = output_dir / "labels.parquet"
+
+    users_df.to_parquet(users_path, index=False)
+    content_df.to_parquet(content_path, index=False)
+    events_df.to_parquet(events_path, index=False)
+    labels_df.to_parquet(labels_path, index=False)
+
+    return {
+        "users": users_path,
+        "content": content_path,
+        "events": events_path,
+        "labels": labels_path,
     }
 
-    output_paths: dict[str, Path] = {}
 
-    for table_name, records in tables.items():
-        output_path = destination / f"{table_name}.parquet"
-        pd.DataFrame(records).to_parquet(output_path, index=False)
-        output_paths[table_name] = output_path
+def read_synthetic_dataset(input_dir: Path) -> SyntheticDataset:
+    """Read a synthetic dataset from Parquet files."""
+    users_df = pd.read_parquet(input_dir / "users.parquet")
+    content_df = pd.read_parquet(input_dir / "content.parquet")
+    events_df = pd.read_parquet(input_dir / "events.parquet")
+    labels_df = pd.read_parquet(input_dir / "labels.parquet")
 
-    return output_paths
+    users = [User(**row) for row in users_df.to_dict("records")]
+    content_items = [Content(**row) for row in content_df.to_dict("records")]
+    events = [Event(**row) for row in events_df.to_dict("records")]
+    labels = [ObservationLabel(**row) for row in labels_df.to_dict("records")]
+
+    return SyntheticDataset(
+        users=users,
+        content_items=content_items,
+        events=events,
+        labels=labels,
+    )
