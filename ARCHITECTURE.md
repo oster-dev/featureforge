@@ -2,13 +2,20 @@
 
 ## Purpose
 
-FeatureForge currently provides a deterministic synthetic-data and offline
-dataset foundation for a future shared feature platform supporting offline model
-training and low-latency online inference.
+FeatureForge is a production-inspired feature platform for reproducible offline
+training data and future low-latency online ML feature serving.
 
-The implemented foundation is designed to make data contracts, time boundaries,
-synthetic-data quality issues, and dataset generation reproducible from the
-start.
+The project is designed to prove end-to-end Data Infrastructure, Feature
+Infrastructure, and ML Platform Engineering fundamentals:
+
+- executable data contracts
+- deterministic synthetic data generation
+- event-time-aware feature computation
+- point-in-time correctness
+- partitioned offline feature datasets
+- reproducible, date-parameterized backfills
+- auditable run metadata
+- quality validation and automated tests
 
 The longer-term architecture will build on this foundation to prevent
 training-serving skew, future-data leakage, stale online features, and
@@ -27,27 +34,108 @@ flowchart LR
 
     F --> G[Duplicate Injection]
     G --> H[Final Events]
+    H --> I[Late-Event Injection]
+    I --> J[Final Delivered Events]
 
-    D --> I[Observation Label Generation]
-    H --> I
+    D --> K[Observation Label Generation]
+    J --> K
 
-    D --> J[SyntheticDataset]
-    E --> J
-    H --> J
-    I --> J
+    D --> L[SyntheticDataset]
+    E --> L
+    J --> L
+    K --> L
 
-    J --> K[Parquet Writer]
-    K --> L[users.parquet]
-    K --> M[content.parquet]
-    K --> N[events.parquet]
-    K --> O[labels.parquet]
+    L --> M[Quality Validation]
+    M --> N[Source Parquet Writer]
 
-    P[featureforge generate CLI] --> B
+    N --> O[users.parquet]
+    N --> P[content.parquet]
+    N --> Q[events.parquet]
+    N --> R[labels.parquet]
 
-    N -. future input .-> Q[PySpark Feature Transformations]
-    O -. future input .-> R[Point-in-Time Historical Retrieval]
-    Q -. future output .-> S[Feast Feature Views]
-    S -. future materialization .-> T[Redis Online Store]
+    S[featureforge generate] --> B
+
+    O --> T[Backfill Runner]
+    P --> T
+    Q --> T
+    R --> T
+
+    T --> U[Point-in-Time User Features]
+    T --> V[Point-in-Time Content Features]
+
+    U --> W[Partitioned User Feature Parquet]
+    V --> X[Partitioned Content Feature Parquet]
+
+    T --> Y[Backfill Run Manifest]
+
+    Z[featureforge backfill] --> T
+
+    W -. future input .-> AA[PySpark Feature Transformations]
+    X -. future input .-> AB[Feast Batch Sources and Feature Views]
+    AB -. future materialization .-> AC[Redis Online Store]
+```
+
+## Current Data Flow
+
+FeatureForge currently provides two executable local flows.
+
+### Synthetic Dataset Generation
+
+```text
+YAML configuration
+        ↓
+configuration validation
+        ↓
+deterministic synthetic dataset generation
+        ↓
+duplicate and late-event injection
+        ↓
+observation-label generation
+        ↓
+quality validation
+        ↓
+source Parquet datasets
+        ↓
+generation run manifest
+```
+
+Run the generation flow:
+
+```bash
+featureforge generate \
+  --config configs/synthetic_data.yaml \
+  --output output/source_data
+```
+
+### Offline Feature Backfill
+
+```text
+source Parquet datasets
+        ↓
+read SyntheticDataset
+        ↓
+inclusive date-range iteration
+        ↓
+UTC observation timestamp per day
+        ↓
+point-in-time user feature aggregation
+        ↓
+point-in-time content feature aggregation
+        ↓
+partitioned Parquet feature datasets
+        ↓
+backfill run manifest
+```
+
+Run an offline feature backfill:
+
+```bash
+featureforge backfill \
+  --input output/source_data \
+  --output output/offline_store \
+  --start-date 2026-03-10 \
+  --end-date 2026-03-12 \
+  --window-days 7
 ```
 
 ## Components
@@ -83,7 +171,7 @@ The synthetic-data module generates deterministic, production-inspired
 behavioral data.
 
 Every generation stage uses a separate random-number-generator seed derived
-from the configured base seed. This makes a complete run reproducible while
+from the configured base seed. This makes complete runs reproducible while
 keeping individual stages independent.
 
 The current generator produces:
@@ -96,11 +184,11 @@ The current generator produces:
 - observation labels
 
 For the same configuration and seed, FeatureForge produces the same entities,
-events, labels, and Parquet output structure.
+events, labels, and source Parquet output structure.
 
 ### Users and Content
 
-Users and content items are generated as independent reference datasets.
+Users and content items are independent reference datasets.
 
 User records include:
 
@@ -172,12 +260,12 @@ event_id=event_00000042_duplicate_01
 is_duplicate=true
 ```
 
-This allows downstream feature transformations and data-quality checks to test
+This allows downstream quality checks and later transformations to test
 deduplication behavior explicitly.
 
 ### Late-Event Injection
 
-Late-event injection models events that occur at one time but arrive at the
+Late-event injection models events that occurred at one time but arrive at the
 platform later.
 
 A late event:
@@ -188,8 +276,8 @@ A late event:
 - keeps all behavioral payload fields unchanged
 - has a delay bounded by `max_late_arrival_hours`
 
-Late-event injection does not add events or remove events. It returns a new
-event collection and leaves the input collection unchanged.
+Late-event injection returns a new event collection and leaves the input
+collection unchanged.
 
 ### Observation Labels
 
@@ -220,91 +308,234 @@ The target is calculated with event time:
 observation_time < event_time <= label_window_end
 ```
 
-This is intentional: labels represent future user behavior, not the time at
-which the platform received an event.
+Labels represent future user behavior, not the time at which the platform
+received an event.
 
-### Dataset Orchestration
+### Feature Contracts
 
-`generate_synthetic_dataset()` is the single in-memory entry point for the
-current data-generation pipeline.
+FeatureForge currently exposes two point-in-time feature contracts.
 
-It executes the stages in this order:
+#### User Engagement Features
 
-```text
-generate users
-        ↓
-generate content
-        ↓
-generate base events
-        ↓
-inject duplicates
-        ↓
-inject late events
-        ↓
-generate observation labels
-        ↓
-return SyntheticDataset
+`UserEngagementFeatures` is computed once per `user_id` for an observation
+timestamp and lookback window.
+
+Current fields:
+
+- `event_count`
+- `unique_content_count`
+- `total_watch_seconds`
+- `search_count`
+- `play_count`
+- `watch_count`
+- `days_since_last_activity`
+
+`UserFeatureBatch` validates that all rows share one observation time and one
+window size.
+
+#### Content Popularity Features
+
+`ContentPopularityFeatures` is computed once per `content_id` for an
+observation timestamp and lookback window.
+
+Current fields:
+
+- `view_count`
+- `unique_viewer_count`
+- `total_watch_seconds`
+- `average_watch_seconds`
+- `search_count`
+- `play_count`
+- `watch_count`
+- `days_since_last_view`
+
+`ContentFeatureBatch` validates that all rows share one observation time and
+one window size.
+
+### Point-in-Time Feature Computation
+
+The feature layer contains domain logic only. It does not know about CLI
+arguments, directory paths, or Parquet storage.
+
+Both current feature functions accept:
+
+```python
+dataset
+observation_time
+window_days
 ```
 
-`SyntheticDataset` is a typed container holding:
+The event window is:
 
-- users
-- content items
-- events
-- labels
+```text
+(observation_time - window_days, observation_time]
+```
 
-Generation, data persistence, and command-line execution remain separated.
+That means:
+
+- events at the lower boundary are excluded
+- events at the observation timestamp are included
+- events after the observation timestamp are excluded
+- each feature record carries its `observation_time` and `window_days`
+
+This explicit event-time contract prevents future events from entering a
+feature value computed as of an earlier observation timestamp.
 
 ### Parquet Persistence
 
-The storage layer writes the `SyntheticDataset` to four Parquet tables:
+The storage layer has two responsibilities.
+
+#### Source Dataset Persistence
+
+A `SyntheticDataset` is written to four source Parquet tables:
 
 ```text
-data/generated/
+<output>/
 ├── users.parquet
 ├── content.parquet
 ├── events.parquet
 └── labels.parquet
 ```
 
-Parquet is the current offline-storage format because it is columnar, supports
-typed data, and can be consumed by Pandas, PyArrow, PySpark, and later offline
-feature-store workflows.
+Parquet is used because it is columnar, typed, efficient for analytical reads,
+and consumable by Pandas, PyArrow, PySpark, and later Feast batch sources.
 
-Generated artifacts are ignored by Git. They are reproducible from the YAML
-configuration and should not be committed.
+#### Feature Batch Persistence
+
+Feature batches are written into deterministic, partitioned paths:
+
+```text
+<output>/
+├── user_engagement_features/
+│   ├── observation_date=2026-03-10/
+│   │   └── features.parquet
+│   └── observation_date=2026-03-11/
+│       └── features.parquet
+├── content_popularity_features/
+│   ├── observation_date=2026-03-10/
+│   │   └── features.parquet
+│   └── observation_date=2026-03-11/
+│       └── features.parquet
+└── manifests/
+    └── backfill-2026-03-10-to-2026-03-11.json
+```
+
+The partition key is `observation_date`, because each file represents the
+feature state at a specific point in time.
+
+### Backfills
+
+`run_backfill(...)` computes and persists user and content features for an
+inclusive date range.
+
+A backfill accepts:
+
+```text
+start_date
+end_date
+window_days
+output_dir
+```
+
+For every backfill date, FeatureForge constructs this observation timestamp:
+
+```text
+YYYY-MM-DDT00:00:00+00:00
+```
+
+For example:
+
+```text
+observation_date=2026-03-12
+observation_time=2026-03-12T00:00:00+00:00
+```
+
+The date partition therefore represents features available as of UTC midnight
+on that date.
+
+#### Idempotency Semantics
+
+Feature backfills use deterministic partition paths:
+
+```text
+<output>/<feature_view>/observation_date=YYYY-MM-DD/features.parquet
+```
+
+A repeated backfill with the same source data, dates, window, and code
+overwrites the same canonical feature partitions. It does not append duplicate
+files or create random output names.
+
+The feature-value idempotency contract is tested by running an identical
+backfill twice and asserting equal Parquet DataFrames.
+
+The backfill manifest is intentionally updated for the same date range because
+it records real execution timestamps.
+
+### Run Manifests
+
+FeatureForge writes machine-readable JSON manifests for both generation and
+backfill runs.
+
+A generation manifest includes:
+
+- generation timestamp
+- full configuration
+- row counts
+- quality report
+- source output paths
+
+A backfill manifest includes:
+
+- `run_type`
+- `started_at`
+- `completed_at`
+- `status`
+- `start_date`
+- `end_date`
+- `window_days`
+- `output_dir`
+- one entry per observation-date partition
+- user and content feature row counts
+- concrete feature output paths
+
+The current deterministic backfill manifest path is:
+
+```text
+<output>/manifests/backfill-<start-date>-to-<end-date>.json
+```
 
 ### Command-Line Interface
 
-The CLI provides the current end-to-end execution path:
+FeatureForge currently provides three commands.
+
+Generate source data:
 
 ```bash
 featureforge generate \
   --config configs/synthetic_data.yaml \
-  --output data/generated
+  --output output/source_data
 ```
 
-The CLI performs:
+Compute a single user-feature snapshot:
 
-```text
-load YAML configuration
-        ↓
-validate configuration
-        ↓
-generate SyntheticDataset
-        ↓
-write Parquet tables
-        ↓
-print dataset summary
+```bash
+featureforge compute-features \
+  --input output/source_data \
+  --output output/single_snapshot \
+  --observation-time 2026-03-12T00:00:00+00:00 \
+  --window-days 7
 ```
 
-The terminal summary reports:
+Run a multi-day User-and-Content-feature backfill:
 
-- row count for each Parquet table
-- total event deliveries
-- duplicate event count
-- late event count
-- output paths
+```bash
+featureforge backfill \
+  --input output/source_data \
+  --output output/offline_store \
+  --start-date 2026-03-10 \
+  --end-date 2026-03-12 \
+  --window-days 7
+```
 
 ## Temporal Correctness
 
@@ -352,15 +583,26 @@ Labels use `event_time`, not `ingested_at`:
 observation_time < event_time <= label_window_end
 ```
 
-This keeps labels aligned with actual user behavior and provides a clean basis
-for later point-in-time-correct historical feature retrieval.
+This keeps labels aligned with actual behavior and provides a correct basis for
+later point-in-time historical retrieval.
 
-When feature transformations are added, no event occurring after an
-observation timestamp may influence a feature value at that timestamp.
+### Feature-Time Correctness
+
+Feature calculations use event time and explicit observation timestamps:
+
+```text
+observation_time - window_days < event_time <= observation_time
+```
+
+An event after the observation timestamp cannot influence a feature value for
+that observation timestamp.
+
+This behavior is tested for both user and content feature views.
 
 ## Data Contracts
 
-Pydantic models provide executable contracts for all generated records:
+Pydantic models provide executable contracts for generated records and feature
+outputs:
 
 - `User`
 - `Content`
@@ -368,11 +610,12 @@ Pydantic models provide executable contracts for all generated records:
 - `ObservationLabel`
 - `SyntheticDataset`
 - `SyntheticDataConfig`
+- `UserEngagementFeatures`
+- `UserFeatureBatch`
+- `ContentPopularityFeatures`
+- `ContentFeatureBatch`
 
-The contracts validate structural and semantic rules before invalid records
-reach Parquet output or later feature-serving components.
-
-Examples include:
+Examples of validated rules include:
 
 - required non-empty identifiers
 - valid content duration
@@ -381,12 +624,15 @@ Examples include:
 - valid event-time and ingestion-time ordering
 - configuration-rate bounds
 - valid generation time range
+- non-negative feature metrics
+- typed-event counts that do not exceed total event or view counts
+- consistent timestamps and windows inside each feature batch
 
 ## Testing Strategy
 
 FeatureForge treats tests as part of the feature contract.
 
-The current suite covers:
+The current suite includes unit and integration coverage for:
 
 - configuration loading and validation
 - cross-field validation for late-event settings
@@ -407,32 +653,45 @@ The current suite covers:
 - label-window correctness
 - label values derived from matching events
 - full dataset orchestration
-- Parquet file creation and read-back validation
-- Parquet timestamp and quality-flag preservation
+- source Parquet file creation and read-back validation
+- timestamp and quality-flag preservation in Parquet
+- user engagement feature aggregation
+- content popularity feature aggregation
+- point-in-time feature-window boundaries
+- zero-activity feature records
+- feature window validation
+- inclusive backfill date ranges
+- invalid/reversed backfill date ranges
+- UTC observation timestamps for daily partitions
+- partitioned User and Content feature output
+- Parquet feature roundtrips
+- idempotent feature-partition outputs
+- backfill manifest metadata and partition records
 - CLI argument parsing
-- CLI integration from configuration to Parquet output
+- CLI generation integration
+- CLI backfill integration and idempotency
 
-Run the full suite with:
+Run the full suite:
 
 ```bash
 pytest -v
 ```
 
-Run format and lint checks with:
+Run formatting and lint checks:
 
 ```bash
-ruff format --check src tests
-ruff check src tests
+ruff format --check .
+ruff check .
 ```
 
 ## Future Architecture
 
-The current Parquet datasets are the input foundation for the remaining
-FeatureForge stages.
+The current local Python/Pandas implementation is the reference path for the
+remaining FeatureForge stages.
 
 ```mermaid
 flowchart LR
-    A[Raw Parquet Datasets] --> B[PySpark Feature Transformations]
+    A[Source Parquet Datasets] --> B[PySpark Feature Transformations]
     B --> C[Partitioned Offline Feature Tables]
     C --> D[Feast Data Sources and Feature Views]
 
@@ -445,7 +704,7 @@ flowchart LR
     I --> J[Online Feature Lookup]
     J --> K[Inference or Ranking Demo]
 
-    B --> L[Data Quality Checks]
+    B --> L[Data Quality Gates]
     H --> M[Freshness Checks]
     L --> N[Operational Reports]
     M --> N
@@ -453,7 +712,8 @@ flowchart LR
 
 ### PySpark Transformations
 
-Future PySpark jobs will transform raw behavioral data into feature tables.
+Future PySpark jobs will transform source behavioral data into scalable feature
+tables.
 
 The transformations must be:
 
@@ -463,19 +723,23 @@ The transformations must be:
 - testable
 - parameterized by explicit time ranges
 - safe for historical backfills
+- validated against the local reference implementation
 
 ### Offline Feature Store
 
-The planned offline storage profile uses partitioned Parquet data.
+The planned production-oriented offline profile uses S3-backed partitioned
+Parquet data.
 
 ```text
 s3://featureforge/
-  raw/
-  offline/
-    feature_view=user_engagement/
-      event_date=YYYY-MM-DD/
-  observations/
-  manifests/
+├── raw/
+├── offline/
+│   ├── feature_view=user_engagement_features/
+│   │   └── observation_date=YYYY-MM-DD/
+│   └── feature_view=content_popularity_features/
+│       └── observation_date=YYYY-MM-DD/
+├── observations/
+└── manifests/
 ```
 
 The offline store will support:
@@ -484,14 +748,14 @@ The offline store will support:
 - training-dataset generation
 - reproducible backfills
 - audits
-- feature provenance
+- lineage and feature provenance
 
 ### Feast
 
 Feast will provide:
 
 - entities
-- data sources
+- batch data sources
 - feature views
 - feature services
 - historical retrieval
@@ -509,8 +773,8 @@ DynamoDB is the documented AWS production alternative.
 
 ### Materialization
 
-Materialization will move current feature values from the offline feature store
-into the online store.
+Materialization will move validated current feature values from the offline
+feature store into the online store.
 
 The materialization process must support:
 
@@ -519,6 +783,7 @@ The materialization process must support:
 - retry-safe execution
 - freshness reporting
 - structured run manifests
+- online/offline parity tests
 
 ### Data Quality
 
@@ -544,7 +809,7 @@ Failed quality checks must block materialization.
 - Preserve input immutability where practical.
 - Record run metadata.
 - Keep local development reproducible.
-- Separate generation, storage, and interface concerns.
+- Separate generation, feature computation, storage, and interface concerns.
 - Document production trade-offs.
 
 ## V1 Non-Goals
