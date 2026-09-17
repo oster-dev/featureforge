@@ -1,13 +1,16 @@
+"""Command-line interface for FeatureForge."""
+
 from __future__ import annotations
 
 import argparse
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pandas as pd
 from rich.console import Console
 from rich.table import Table
 
+from featureforge.backfill import run_backfill
 from featureforge.config import load_synthetic_data_config
 from featureforge.features import compute_user_engagement_features
 from featureforge.manifest import GenerationRunManifest
@@ -17,14 +20,14 @@ from featureforge.synthetic_data import generate_synthetic_dataset
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build and return the FeatureForge command-line parser."""
     parser = argparse.ArgumentParser(
         prog="featureforge",
-        description="Generate deterministic synthetic feature-store datasets.",
+        description="Generate deterministic synthetic feature-store datasets and backfill features.",
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    # generate command
     generate_parser = subparsers.add_parser(
         "generate",
         help="Generate and persist a synthetic dataset as Parquet files.",
@@ -39,10 +42,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--output",
         type=Path,
         required=True,
-        help="Directory where Parquet files will be written.",
+        help="Directory where source Parquet files will be written.",
     )
 
-    # compute-features command
     compute_parser = subparsers.add_parser(
         "compute-features",
         help="Compute user engagement features from a generated dataset.",
@@ -51,7 +53,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--input",
         type=Path,
         required=True,
-        help="Directory containing the generated Parquet files.",
+        help="Directory containing the generated source Parquet files.",
     )
     compute_parser.add_argument(
         "--output",
@@ -63,9 +65,44 @@ def build_parser() -> argparse.ArgumentParser:
         "--observation-time",
         type=str,
         required=True,
-        help="Observation time for feature computation (ISO 8601 format).",
+        help="Observation time for feature computation in ISO 8601 format.",
     )
     compute_parser.add_argument(
+        "--window-days",
+        type=int,
+        default=7,
+        help="Lookback window in days (default: 7).",
+    )
+
+    backfill_parser = subparsers.add_parser(
+        "backfill",
+        help="Compute and persist point-in-time feature batches for a date range.",
+    )
+    backfill_parser.add_argument(
+        "--input",
+        type=Path,
+        required=True,
+        help="Directory containing the generated source Parquet files.",
+    )
+    backfill_parser.add_argument(
+        "--output",
+        type=Path,
+        required=True,
+        help="Root directory for partitioned feature datasets and manifests.",
+    )
+    backfill_parser.add_argument(
+        "--start-date",
+        type=date.fromisoformat,
+        required=True,
+        help="First observation date, inclusive, in YYYY-MM-DD format.",
+    )
+    backfill_parser.add_argument(
+        "--end-date",
+        type=date.fromisoformat,
+        required=True,
+        help="Last observation date, inclusive, in YYYY-MM-DD format.",
+    )
+    backfill_parser.add_argument(
         "--window-days",
         type=int,
         default=7,
@@ -86,6 +123,7 @@ def print_generation_summary(
     label_count: int,
     manifest_path: Path | None = None,
 ) -> None:
+    """Print a summary of a completed synthetic-data generation run."""
     table = Table(title="FeatureForge dataset generated")
     table.add_column("Table", style="cyan")
     table.add_column("Rows", justify="right", style="green")
@@ -105,16 +143,13 @@ def print_generation_summary(
 
 
 def run_generate(config_path: Path, output_dir: Path) -> None:
+    """Generate, validate, persist, and describe a synthetic dataset."""
     config = load_synthetic_data_config(config_path)
     dataset = generate_synthetic_dataset(config)
 
-    # Quality validation
     quality_report = validate_synthetic_dataset(dataset, config)
-
-    # Persist Parquet files
     output_paths = write_synthetic_dataset(dataset, output_dir)
 
-    # Write run manifest
     manifest = GenerationRunManifest.from_run(
         config=config,
         dataset=dataset,
@@ -143,7 +178,7 @@ def run_compute_features(
     observation_time: str,
     window_days: int,
 ) -> None:
-    """Compute and persist user engagement features."""
+    """Compute and persist user engagement features for one observation time."""
     dataset = read_synthetic_dataset(input_dir)
     obs_time = datetime.fromisoformat(observation_time).replace(tzinfo=UTC)
 
@@ -153,19 +188,46 @@ def run_compute_features(
         window_days=window_days,
     )
 
-    # Write features as Parquet
     output_dir.mkdir(parents=True, exist_ok=True)
-    features_df = pd.DataFrame([f.model_dump() for f in batch.features])
-    features_df.to_parquet(output_dir / "user_engagement_features.parquet", index=False)
+    features_path = output_dir / "user_engagement_features.parquet"
+    features_df = pd.DataFrame([feature.model_dump() for feature in batch.features])
+    features_df.to_parquet(features_path, index=False)
 
     console = Console()
     console.print(f"[green]✓[/green] Computed features for {len(batch.features)} users")
-    console.print(f"Observation time: {obs_time}")
+    console.print(f"Observation time: {obs_time.isoformat()}")
     console.print(f"Window: {batch.window_days} days")
-    console.print(f"Output: {output_dir / 'user_engagement_features.parquet'}")
+    console.print(f"Output: {features_path}")
+
+
+def run_backfill_command(
+    input_dir: Path,
+    output_dir: Path,
+    start_date: date,
+    end_date: date,
+    window_days: int,
+) -> None:
+    """Run a date-parameterized offline feature backfill."""
+    dataset = read_synthetic_dataset(input_dir)
+
+    results, manifest_path = run_backfill(
+        dataset=dataset,
+        start_date=start_date,
+        end_date=end_date,
+        window_days=window_days,
+        output_dir=output_dir,
+    )
+
+    console = Console()
+    console.print(f"[green]✓[/green] Backfilled {len(results)} observation-date partition(s)")
+    console.print(f"Date range: {start_date.isoformat()} to {end_date.isoformat()}")
+    console.print(f"Window: {window_days} days")
+    console.print(f"Output: {output_dir}")
+    console.print(f"Run manifest: {manifest_path}")
 
 
 def main() -> None:
+    """Parse command-line arguments and run the selected command."""
     parser = build_parser()
     args = parser.parse_args()
 
@@ -173,8 +235,16 @@ def main() -> None:
         run_generate(args.config, args.output)
     elif args.command == "compute-features":
         run_compute_features(
-            args.input,
-            args.output,
-            args.observation_time,
-            args.window_days,
+            input_dir=args.input,
+            output_dir=args.output,
+            observation_time=args.observation_time,
+            window_days=args.window_days,
+        )
+    elif args.command == "backfill":
+        run_backfill_command(
+            input_dir=args.input,
+            output_dir=args.output,
+            start_date=args.start_date,
+            end_date=args.end_date,
+            window_days=args.window_days,
         )

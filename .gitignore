@@ -24,3 +24,5 @@ data/processed/*
 !data/processed/.gitkeep
 data/manifests/
 *.parquet
+
+output/

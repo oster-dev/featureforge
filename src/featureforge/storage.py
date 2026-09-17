@@ -57,3 +57,23 @@ def read_synthetic_dataset(input_dir: Path) -> SyntheticDataset:
         events=events,
         labels=labels,
     )
+
+
+def write_feature_batch(
+    records: list[dict],
+    feature_view: str,
+    observation_date: str,
+    output_dir: Path,
+) -> Path:
+    """Write a feature batch as a partitioned Parquet file.
+
+    Layout: {output_dir}/{feature_view}/observation_date={date}/features.parquet
+    Overwrites the partition deterministically to guarantee idempotency.
+    """
+    partition_dir = output_dir / feature_view / f"observation_date={observation_date}"
+    partition_dir.mkdir(parents=True, exist_ok=True)
+
+    features_path = partition_dir / "features.parquet"
+    pd.DataFrame(records).to_parquet(features_path, index=False)
+
+    return features_path
