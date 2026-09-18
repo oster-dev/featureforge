@@ -23,6 +23,12 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
 ```
 
+Install PySpark for the parity-tested feature-computation engine:
+
+```bash
+python -m pip install pyspark
+```
+
 Verify the CLI:
 
 ```bash
@@ -124,7 +130,31 @@ output/offline_store/
 
 Backfills overwrite the same canonical feature partitions when invoked with
 the same input data, date range, window, and code. This provides the current
-V1 idempotency behavior.
+V1 idempotency behavior. The backfill runner currently executes on the Pandas
+reference engine.
+
+### Run the PySpark Parity Suite
+
+`src/featureforge/spark_features.py` computes the same two feature views as
+`features.py` using PySpark instead of Pandas. Before changing either
+implementation, run the parity suite:
+
+```bash
+pytest tests/unit/test_spark_features.py -v
+```
+
+If you modify feature logic in `features.py`, the equivalent change must also
+be made in `spark_features.py`, and the parity suite must still pass. A change
+that passes `test_features.py` but breaks `test_spark_features.py` is not
+complete — the two engines are required to stay provably identical.
+
+When working with timestamps inside `spark_features.py`, never pass a Python
+`datetime` directly into a Spark `TimestampType` column and never rely on
+`spark.sql.session.timeZone` alone to guarantee UTC correctness. Convert to
+UTC epoch microseconds (`_to_epoch_micros`) before the value enters Spark, and
+convert back (`_from_epoch_micros`) only after `collect()`. This project hit a
+real one-hour timezone bug from skipping this step; see
+[ARCHITECTURE.md](ARCHITECTURE.md#pyspark-parity-layer) for the full story.
 
 ## Validation Before a Commit
 
@@ -161,6 +191,7 @@ Use `tests/unit/` for isolated contracts and domain logic:
 - partition-path behavior
 - manifest content
 - idempotency at the backfill-function level
+- Pandas-vs-PySpark parity for feature calculations
 
 Use `tests/integration/` for executable multi-component paths:
 
@@ -170,8 +201,8 @@ Use `tests/integration/` for executable multi-component paths:
 - CLI-to-manifest flow
 - end-to-end idempotency behavior
 
-Do not remove a temporal, quality, or idempotency test merely to make a failing
-suite pass. Understand and fix the underlying contract violation.
+Do not remove a temporal, quality, idempotency, or parity test merely to make
+a failing suite pass. Understand and fix the underlying contract violation.
 
 ## Development Principles
 
@@ -183,6 +214,10 @@ suite pass. Understand and fix the underlying contract violation.
 - Keep generation and transformations deterministic.
 - Prefer idempotent writes for backfills and materialization.
 - Add tests for new behavior and failure modes.
+- Keep the Pandas reference and PySpark engine provably equivalent, not just
+  similar.
+- Never trust implicit timezone handling across a process or JVM boundary;
+  encode time as UTC epoch integers at those boundaries instead.
 - Update documentation when architecture or behavior changes.
 - Keep data contracts versioned and reviewable.
 - Never commit credentials, private data, or generated local artifacts.
@@ -216,8 +251,11 @@ Use short, imperative Conventional Commit-style messages:
 ```text
 feat: add idempotent partitioned feature backfills
 feat: add point-in-time content popularity features
+feat: add PySpark parity layer for point-in-time features
 fix: prevent future events from entering feature windows
+fix: convert Spark timestamps to UTC epoch micros to avoid timezone drift
 test: add backfill manifest coverage
+test: add Pandas-vs-PySpark feature parity suite
 docs: document offline feature partition layout
 chore: ignore generated pipeline outputs
 ```
@@ -233,7 +271,7 @@ A pull request should explain:
 1. What changed.
 2. Why the change was needed.
 3. How it was tested.
-4. Which data, feature, temporal, or idempotency contract is affected.
+4. Which data, feature, temporal, idempotency, or parity contract is affected.
 5. Whether an architecture decision changed.
 6. Whether documentation was updated.
 7. Any backward-compatibility or migration concern.
@@ -245,7 +283,9 @@ For changes affecting feature computation, include:
 - behavior for missing activity,
 - validation rules,
 - expected partitioning behavior,
-- tests for time-boundary cases where applicable.
+- tests for time-boundary cases where applicable,
+- confirmation that Pandas and PySpark outputs still match, where both
+  engines implement the affected feature.
 
 ## Data and Privacy
 

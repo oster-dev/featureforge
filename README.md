@@ -17,6 +17,7 @@ hard parts that make feature platforms trustworthy:
 - audit manifests
 - quality validation
 - unit and integration tests
+- engine-independent feature correctness (Pandas and PySpark parity)
 
 ## Project Goal
 
@@ -33,7 +34,8 @@ The target architecture will use:
 - GitHub Actions for continuous integration
 
 The current implementation establishes the local reference foundation needed
-to build those components correctly.
+to build those components correctly, and now includes a parity-tested PySpark
+execution engine alongside the original Pandas reference.
 
 ## Current Status
 
@@ -62,6 +64,8 @@ to build those components correctly.
 - JSON run manifests for generation and backfill auditability
 - CLI commands for generation, single snapshot feature calculation, and
   multi-day backfills
+- A PySpark implementation of both feature views, parity-tested against the
+  Pandas reference implementation
 - Local Redis service through Docker Compose for the future online-serving stage
 - Unit and integration tests
 - Ruff formatting and linting
@@ -75,7 +79,7 @@ ruff format --check .
 ruff check .
 pytest -v
 
-80 passed
+89 passed
 ```
 
 ## Current Data Flow
@@ -93,7 +97,7 @@ quality validation
         ↓
 source Parquet datasets
         ↓
-point-in-time feature computation
+point-in-time feature computation (Pandas reference, PySpark parity-tested)
         ↓
 partitioned offline feature datasets
         ↓
@@ -109,13 +113,13 @@ JSON run manifests
 | Platform language | Python | Pipeline orchestration, contracts, CLI, tests |
 | Data contracts | Pydantic | Executable validation for source and feature records |
 | Local transformation reference | Pandas | Deterministic feature aggregation and Parquet inspection |
+| Scalable transformation engine | PySpark | Parity-tested feature computation for future scale |
 | Source and offline format | Parquet with PyArrow | Typed, columnar offline datasets |
 | Configuration | YAML | Reproducible synthetic-data generation |
 | CLI display | Rich | Human-readable local command output |
 | Testing | pytest | Unit and integration coverage |
 | Code quality | Ruff | Formatting and linting |
 | Local online-store preparation | Redis via Docker Compose | Future low-latency feature serving |
-| Planned batch compute | PySpark | Scalable transforms and historical backfills |
 | Planned feature platform | Feast | Feature definitions, historical retrieval, materialization |
 | Planned cloud profile | AWS S3 and DynamoDB | Offline and online production-oriented storage |
 
@@ -130,7 +134,7 @@ JSON run manifests
 ### Clone and Install
 
 ```bash
-git clone [https://github.com/oster-dev/featureforge.git](https://github.com/oster-dev/featureforge.git)
+git clone https://github.com/oster-dev/featureforge.git
 cd featureforge
 
 python3 -m venv .venv
@@ -138,6 +142,7 @@ source .venv/bin/activate
 
 python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
+python -m pip install pyspark
 ```
 
 Verify the CLI:
@@ -209,7 +214,9 @@ output/single_snapshot/
 
 ### Feature Views
 
-FeatureForge currently provides two local reference feature views.
+FeatureForge currently provides two local reference feature views. Both are
+implemented twice: once in Pandas (`features.py`, the correctness reference)
+and once in PySpark (`spark_features.py`, parity-tested against it).
 
 #### User Engagement Features
 
@@ -286,6 +293,31 @@ output/offline_store/
 ```
 
 Each partition represents a feature snapshot for a single observation date.
+The backfill runner currently executes this using the Pandas reference engine.
+
+## PySpark Parity Layer
+
+`src/featureforge/spark_features.py` computes the same two feature views using
+PySpark DataFrames instead of Pandas. It exists to prove that feature logic is
+engine-independent before Spark becomes the production execution path.
+
+Run just the parity suite:
+
+```bash
+pytest tests/unit/test_spark_features.py -v
+```
+
+The parity tests assert that `compute_user_engagement_features_spark` and
+`compute_content_popularity_features_spark` return output identical to their
+Pandas counterparts across empty datasets, exact window boundaries, typed
+event counts, floating-point averages, and randomized multi-entity datasets.
+
+Building this layer surfaced a real timezone bug: Spark's `TimestampType`
+silently shifted timestamps by one hour when round-tripped through the JVM on
+a non-UTC machine, independent of the `spark.sql.session.timeZone` setting.
+The fix encodes every timestamp as UTC epoch microseconds — a plain integer —
+before it enters Spark, removing the ambiguity at the source. Full details are
+in [ARCHITECTURE.md](ARCHITECTURE.md#pyspark-parity-layer).
 
 ## Temporal Semantics
 
@@ -334,7 +366,8 @@ observation_time=2026-03-12T00:00:00+00:00
 ```
 
 Therefore, the partition represents the feature state available as of that
-timestamp.
+timestamp. This boundary is enforced identically in both the Pandas and
+PySpark implementations.
 
 ### Label Window
 
@@ -475,11 +508,16 @@ make docker-down
 - Parameterized, idempotent local backfills.
 - Generation and backfill audit manifests.
 - CLI and test foundation.
+- PySpark implementation of both feature views.
+- Parity tests between the Pandas reference implementation and Spark output.
 
 ### Next Steps
 
-1. Add a scalable PySpark implementation of the current feature transforms.
-2. Add parity tests between the local reference implementation and Spark output.
+1. Read source Parquet directly as Spark DataFrames instead of constructing
+   them from an in-memory `SyntheticDataset`.
+2. Add an engine parameter to the backfill runner so backfills can execute on
+   either the Pandas or the Spark implementation, with the manifest recording
+   which engine produced each partition.
 3. Create Feast entities, batch sources, feature views, and a feature service.
 4. Build point-in-time historical retrieval against observation labels.
 5. Add Redis materialization and online feature lookup.

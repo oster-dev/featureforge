@@ -16,6 +16,7 @@ Infrastructure, and ML Platform Engineering fundamentals:
 - reproducible, date-parameterized backfills
 - auditable run metadata
 - quality validation and automated tests
+- engine-independent feature correctness (Pandas and PySpark parity)
 
 The longer-term architecture will build on this foundation to prevent
 training-serving skew, future-data leakage, stale online features, and
@@ -60,8 +61,8 @@ flowchart LR
     Q --> T
     R --> T
 
-    T --> U[Point-in-Time User Features]
-    T --> V[Point-in-Time Content Features]
+    T --> U[Point-in-Time User Features - Pandas]
+    T --> V[Point-in-Time Content Features - Pandas]
 
     U --> W[Partitioned User Feature Parquet]
     V --> X[Partitioned Content Feature Parquet]
@@ -70,14 +71,22 @@ flowchart LR
 
     Z[featureforge backfill] --> T
 
-    W -. future input .-> AA[PySpark Feature Transformations]
-    X -. future input .-> AB[Feast Batch Sources and Feature Views]
+    O -. parity verified .-> AD[Point-in-Time User Features - PySpark]
+    Q -. parity verified .-> AD
+    O -. parity verified .-> AE[Point-in-Time Content Features - PySpark]
+    Q -. parity verified .-> AE
+
+    AD -. future backfill integration .-> W
+    AE -. future backfill integration .-> X
+
+    W -. future input .-> AB[Feast Batch Sources and Feature Views]
     AB -. future materialization .-> AC[Redis Online Store]
 ```
 
 ## Current Data Flow
 
-FeatureForge currently provides two executable local flows.
+FeatureForge currently provides two executable local flows, plus a
+parity-tested second execution engine for feature computation.
 
 ### Synthetic Dataset Generation
 
@@ -381,11 +390,130 @@ That means:
 This explicit event-time contract prevents future events from entering a
 feature value computed as of an earlier observation timestamp.
 
-### Parquet Persistence
+## PySpark Parity Layer
+
+FeatureForge now includes a second execution engine for both feature views:
+`src/featureforge/spark_features.py`.
+
+This module does not introduce new feature semantics. It computes the exact
+same `UserEngagementFeatures` and `ContentPopularityFeatures` contracts as
+`src/featureforge/features.py`, using PySpark DataFrames instead of Pandas.
+
+### Why a Second Engine Exists
+
+The Pandas implementation is the correctness reference. It is simple, easy to
+read, and easy to verify by hand. It does not scale past a single process,
+however, and every future Spark ETL job in this project must produce results
+that are provably identical to that reference — not merely similar.
+
+Introducing the Spark engine now, while the dataset is still small and fully
+understood, keeps the migration honest: any discrepancy between the two
+engines is a bug to find today, not a silent correctness regression to
+discover later at production scale.
+
+### Parity Testing Strategy
+
+`tests/unit/test_spark_features.py` never re-validates feature *semantics* —
+that is already covered by `tests/unit/test_features.py`. It validates
+*engine equivalence*: that `compute_user_engagement_features_spark` and
+`compute_content_popularity_features_spark` return batches that are equal,
+field for field, to their Pandas counterparts, across:
+
+- empty datasets
+- exact window-boundary events (`observation_time`, `observation_time + 1s`,
+  `observation_time - window_days`)
+- typed event-count aggregation across multiple users and content items
+- `average_watch_seconds` floating-point division
+- randomized datasets with hundreds of events across many entities
+- identical rejection of non-positive `window_days`
+
+A parity suite is only useful if it can actually fail. Early runs of this
+suite did fail, and the failure was informative rather than a test-authoring
+mistake — see below.
+
+### A Real Timezone Bug, and Why the Fix Is Structural
+
+The first working version of `spark_features.py` passed Python `datetime`
+objects with `tzinfo=UTC` directly into a Spark DataFrame using
+`TimestampType`. Four of the nine parity tests failed with a **consistent
+one-hour offset** in `days_since_last_activity` and `days_since_last_view`.
+
+The root cause: Spark's `TimestampType` round-trips through the JVM during
+Python-to-JVM and JVM-to-Python conversion (via py4j/Arrow). That conversion
+path is independent of the `spark.sql.session.timeZone` SQL setting — setting
+it to `"UTC"` did not fix the offset. The conversion instead depends on the
+JVM's default timezone, which is inherited from the host machine's local
+timezone. On a machine whose local timezone is not UTC, this silently shifts
+timestamps by the local UTC offset during the Python-to-JVM-to-Python
+round-trip.
+
+This is exactly the class of bug that a feature platform must catch before it
+reaches training data: not a crash, but a quietly wrong `days_since_last_view`
+value that would still validate against every Pydantic constraint.
+
+**The fix removes the ambiguity at the source instead of patching it after
+the fact.** `spark_features.py` never hands a `datetime` object to Spark.
+Every `event_time` is converted to UTC epoch microseconds — a plain
+`LongType` integer — before entering Spark, and converted back to a
+timezone-aware UTC `datetime` only after `collect()`:
+
+```python
+def _to_epoch_micros(value: datetime) -> int:
+    if value.tzinfo is None:
+        raise ValueError("event_time must be timezone-aware")
+    return int(value.astimezone(UTC).timestamp() * 1_000_000)
+
+def _from_epoch_micros(value: int) -> datetime:
+    return datetime.fromtimestamp(value / 1_000_000, tz=UTC)
+```
+
+An integer has no timezone to misinterpret. The window filter in
+`_filter_window` compares epoch-microsecond longs directly, so the point-in-time
+boundary `(observation_time - window_days, observation_time]` is evaluated
+without ever depending on how Spark or the JVM would otherwise interpret a
+timestamp column.
+
+This is the same lesson production Spark pipelines learn the hard way: never
+trust `TimestampType` round-trips to be timezone-safe across machines. Encode
+time as UTC epoch integers at every system boundary instead.
+
+### Current Parity Guarantee
+
+```text
+featureforge.features.compute_user_engagement_features
+    ==
+featureforge.spark_features.compute_user_engagement_features_spark
+
+featureforge.features.compute_content_popularity_features
+    ==
+featureforge.spark_features.compute_content_popularity_features_spark
+```
+
+Both equalities are enforced by automated tests on every run, not asserted
+by inspection. Any future change to either engine that breaks this equality
+fails the test suite before it can reach a backfill or a Feast batch source.
+
+### What This Enables Next
+
+The Spark engine currently runs locally against in-memory `SyntheticDataset`
+objects, the same way the Pandas reference does. It does not yet read
+partitioned source Parquet directly, and it is not yet wired into
+`run_backfill`. Those are the next two steps before Spark becomes the
+production execution path:
+
+1. Read `users.parquet` / `content.parquet` / `events.parquet` directly as
+   Spark DataFrames instead of constructing them from an in-memory
+   `SyntheticDataset`.
+2. Give the backfill runner an engine parameter so the same date-range
+   backfill can execute against either the Pandas or the Spark
+   implementation, with the manifest recording which engine produced each
+   partition.
+
+## Parquet Persistence
 
 The storage layer has two responsibilities.
 
-#### Source Dataset Persistence
+### Source Dataset Persistence
 
 A `SyntheticDataset` is written to four source Parquet tables:
 
@@ -400,7 +528,7 @@ A `SyntheticDataset` is written to four source Parquet tables:
 Parquet is used because it is columnar, typed, efficient for analytical reads,
 and consumable by Pandas, PyArrow, PySpark, and later Feast batch sources.
 
-#### Feature Batch Persistence
+### Feature Batch Persistence
 
 Feature batches are written into deterministic, partitioned paths:
 
@@ -423,7 +551,7 @@ Feature batches are written into deterministic, partitioned paths:
 The partition key is `observation_date`, because each file represents the
 feature state at a specific point in time.
 
-### Backfills
+## Backfills
 
 `run_backfill(...)` computes and persists user and content features for an
 inclusive date range.
@@ -453,7 +581,7 @@ observation_time=2026-03-12T00:00:00+00:00
 The date partition therefore represents features available as of UTC midnight
 on that date.
 
-#### Idempotency Semantics
+### Idempotency Semantics
 
 Feature backfills use deterministic partition paths:
 
@@ -471,7 +599,7 @@ backfill twice and asserting equal Parquet DataFrames.
 The backfill manifest is intentionally updated for the same date range because
 it records real execution timestamps.
 
-### Run Manifests
+## Run Manifests
 
 FeatureForge writes machine-readable JSON manifests for both generation and
 backfill runs.
@@ -504,7 +632,7 @@ The current deterministic backfill manifest path is:
 <output>/manifests/backfill-<start-date>-to-<end-date>.json
 ```
 
-### Command-Line Interface
+## Command-Line Interface
 
 FeatureForge currently provides three commands.
 
@@ -597,7 +725,8 @@ observation_time - window_days < event_time <= observation_time
 An event after the observation timestamp cannot influence a feature value for
 that observation timestamp.
 
-This behavior is tested for both user and content feature views.
+This behavior is tested for both user and content feature views, and now for
+both the Pandas and PySpark execution engines identically.
 
 ## Data Contracts
 
@@ -670,6 +799,10 @@ The current suite includes unit and integration coverage for:
 - CLI argument parsing
 - CLI generation integration
 - CLI backfill integration and idempotency
+- Pandas-vs-PySpark parity for user engagement features
+- Pandas-vs-PySpark parity for content popularity features
+- Pandas-vs-PySpark parity for window-boundary edge cases
+- Pandas-vs-PySpark parity for invalid `window_days` rejection
 
 Run the full suite:
 
@@ -687,7 +820,9 @@ ruff check .
 ## Future Architecture
 
 The current local Python/Pandas implementation is the reference path for the
-remaining FeatureForge stages.
+remaining FeatureForge stages. The PySpark engine described above is the first
+concrete step of this migration and is already parity-tested against that
+reference.
 
 ```mermaid
 flowchart LR
@@ -713,7 +848,8 @@ flowchart LR
 ### PySpark Transformations
 
 Future PySpark jobs will transform source behavioral data into scalable feature
-tables.
+tables, building directly on the parity-tested engine already implemented in
+`spark_features.py`.
 
 The transformations must be:
 
@@ -724,6 +860,8 @@ The transformations must be:
 - parameterized by explicit time ranges
 - safe for historical backfills
 - validated against the local reference implementation
+- timezone-safe across machines (UTC epoch integers at every Spark boundary,
+  not `TimestampType` round-trips)
 
 ### Offline Feature Store
 
@@ -811,6 +949,7 @@ Failed quality checks must block materialization.
 - Keep local development reproducible.
 - Separate generation, feature computation, storage, and interface concerns.
 - Document production trade-offs.
+- Never trust implicit timezone handling across process or JVM boundaries.
 
 ## V1 Non-Goals
 
