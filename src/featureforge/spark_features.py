@@ -25,11 +25,26 @@ integers) before being handed to Spark, and converted back to
 timezone-aware UTC ``datetime`` objects after ``collect()``. Integers
 have no timezone to misinterpret, which removes the entire class of
 bug at the source instead of patching it after the fact.
+
+Two input paths
+-----------------
+This module supports two ways of getting events into Spark:
+
+- ``compute_*_features_spark`` builds the DataFrame from an in-memory
+  ``SyntheticDataset`` (used by the parity tests against the pandas
+  reference).
+- ``compute_*_features_from_parquet`` reads ``users.parquet`` /
+  ``content.parquet`` / ``events.parquet`` directly from disk, matching
+  the same source layout written by ``storage.write_synthetic_dataset``.
+  This is the path a real backfill will use at scale.
+
+Both paths share the same window-filtering and aggregation logic.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
@@ -93,6 +108,41 @@ def _events_to_spark_dataframe(spark: SparkSession, dataset: SyntheticDataset) -
     return spark.createDataFrame(records, schema=_EVENTS_SCHEMA)
 
 
+def read_events_parquet_as_spark(spark: SparkSession, input_dir: Path) -> DataFrame:
+    """Read source events from Spark-compatible Parquet.
+
+    The FeatureForge Parquet writer coerces timestamps to microseconds, so
+    Spark can read the schema as TimestampType. Convert event_time to UTC epoch
+    microseconds inside Spark, avoiding Python UDFs and any Python/JVM timezone
+    round-trip for the feature-computation path.
+    """
+    raw = spark.read.parquet(str(Path(input_dir) / "events.parquet"))
+
+    return raw.select(
+        F.col("event_id"),
+        F.col("user_id"),
+        F.col("content_id"),
+        F.col("event_type"),
+        (F.col("event_time").cast("double") * F.lit(1_000_000))
+        .cast(LongType())
+        .alias("event_time_micros"),
+        F.col("watch_seconds").cast(LongType()).alias("watch_seconds"),
+    )
+
+
+def _read_entity_ids_from_parquet(
+    spark: SparkSession, input_dir: Path, filename: str, id_column: str
+) -> list[str]:
+    """Read just the entity ID column from a source Parquet file.
+
+    Users/content act as the dimension side of the aggregation: every
+    entity must appear in the output batch even with zero in-window
+    events, matching the pandas reference behavior exactly.
+    """
+    df = spark.read.parquet(str(Path(input_dir) / filename))
+    return [row[id_column] for row in df.select(id_column).distinct().collect()]
+
+
 def _filter_window(
     events_df: DataFrame, window_start: datetime, observation_time: datetime
 ) -> DataFrame:
@@ -105,49 +155,44 @@ def _filter_window(
     )
 
 
-def compute_user_engagement_features_spark(
-    spark: SparkSession,
-    dataset: SyntheticDataset,
-    observation_time: datetime,
-    window_days: int,
-) -> UserFeatureBatch:
-    """Compute point-in-time-correct user engagement features using Spark.
-
-    Mirrors ``featureforge.features.compute_user_engagement_features``
-    exactly. Only events with event_time in
-    (observation_time - window_days, observation_time] are included.
-    """
-    if window_days <= 0:
-        raise ValueError(f"window_days must be positive, got {window_days}")
-
-    window_start = observation_time - timedelta(days=window_days)
-    events_df = _events_to_spark_dataframe(spark, dataset)
-    in_window = _filter_window(events_df, window_start, observation_time)
-
-    aggregated = (
-        in_window.groupBy("user_id")
-        .agg(
-            F.count(F.lit(1)).alias("event_count"),
-            F.countDistinct("content_id").alias("unique_content_count"),
-            F.sum("watch_seconds").alias("total_watch_seconds"),
-            F.sum(F.when(F.col("event_type") == "search", 1).otherwise(0)).alias("search_count"),
-            F.sum(F.when(F.col("event_type") == "play", 1).otherwise(0)).alias("play_count"),
-            F.sum(F.when(F.col("event_type") == "watch", 1).otherwise(0)).alias("watch_count"),
-            F.max("event_time_micros").alias("last_event_time_micros"),
-        )
-        .collect()
+def _aggregate_user_events(in_window: DataFrame) -> DataFrame:
+    return in_window.groupBy("user_id").agg(
+        F.count(F.lit(1)).alias("event_count"),
+        F.countDistinct("content_id").alias("unique_content_count"),
+        F.sum("watch_seconds").alias("total_watch_seconds"),
+        F.sum(F.when(F.col("event_type") == "search", 1).otherwise(0)).alias("search_count"),
+        F.sum(F.when(F.col("event_type") == "play", 1).otherwise(0)).alias("play_count"),
+        F.sum(F.when(F.col("event_type") == "watch", 1).otherwise(0)).alias("watch_count"),
+        F.max("event_time_micros").alias("last_event_time_micros"),
     )
 
-    stats_by_user = {row["user_id"]: row for row in aggregated}
 
+def _aggregate_content_events(in_window: DataFrame) -> DataFrame:
+    return in_window.groupBy("content_id").agg(
+        F.count(F.lit(1)).alias("view_count"),
+        F.countDistinct("user_id").alias("unique_viewer_count"),
+        F.sum("watch_seconds").alias("total_watch_seconds"),
+        F.sum(F.when(F.col("event_type") == "search", 1).otherwise(0)).alias("search_count"),
+        F.sum(F.when(F.col("event_type") == "play", 1).otherwise(0)).alias("play_count"),
+        F.sum(F.when(F.col("event_type") == "watch", 1).otherwise(0)).alias("watch_count"),
+        F.max("event_time_micros").alias("last_event_time_micros"),
+    )
+
+
+def _build_user_feature_records(
+    stats_by_user: dict,
+    user_ids: list[str],
+    observation_time: datetime,
+    window_days: int,
+) -> list[UserEngagementFeatures]:
     feature_records: list[UserEngagementFeatures] = []
-    for user in dataset.users:
-        stats = stats_by_user.get(user.user_id)
+    for user_id in user_ids:
+        stats = stats_by_user.get(user_id)
 
         if stats is None or stats["event_count"] == 0:
             feature_records.append(
                 UserEngagementFeatures(
-                    user_id=user.user_id,
+                    user_id=user_id,
                     observation_time=observation_time,
                     window_days=window_days,
                     event_count=0,
@@ -166,7 +211,7 @@ def compute_user_engagement_features_spark(
 
         feature_records.append(
             UserEngagementFeatures(
-                user_id=user.user_id,
+                user_id=user_id,
                 observation_time=observation_time,
                 window_days=window_days,
                 event_count=int(stats["event_count"]),
@@ -179,56 +224,23 @@ def compute_user_engagement_features_spark(
             )
         )
 
-    return UserFeatureBatch(
-        observation_time=observation_time,
-        window_days=window_days,
-        features=feature_records,
-    )
+    return feature_records
 
 
-def compute_content_popularity_features_spark(
-    spark: SparkSession,
-    dataset: SyntheticDataset,
+def _build_content_feature_records(
+    stats_by_content: dict,
+    content_ids: list[str],
     observation_time: datetime,
     window_days: int,
-) -> ContentFeatureBatch:
-    """Compute point-in-time-correct content popularity features using Spark.
-
-    Mirrors ``featureforge.features.compute_content_popularity_features``
-    exactly. Only events with event_time in
-    (observation_time - window_days, observation_time] are included.
-    """
-    if window_days <= 0:
-        raise ValueError(f"window_days must be positive, got {window_days}")
-
-    window_start = observation_time - timedelta(days=window_days)
-    events_df = _events_to_spark_dataframe(spark, dataset)
-    in_window = _filter_window(events_df, window_start, observation_time)
-
-    aggregated = (
-        in_window.groupBy("content_id")
-        .agg(
-            F.count(F.lit(1)).alias("view_count"),
-            F.countDistinct("user_id").alias("unique_viewer_count"),
-            F.sum("watch_seconds").alias("total_watch_seconds"),
-            F.sum(F.when(F.col("event_type") == "search", 1).otherwise(0)).alias("search_count"),
-            F.sum(F.when(F.col("event_type") == "play", 1).otherwise(0)).alias("play_count"),
-            F.sum(F.when(F.col("event_type") == "watch", 1).otherwise(0)).alias("watch_count"),
-            F.max("event_time_micros").alias("last_event_time_micros"),
-        )
-        .collect()
-    )
-
-    stats_by_content = {row["content_id"]: row for row in aggregated}
-
+) -> list[ContentPopularityFeatures]:
     feature_records: list[ContentPopularityFeatures] = []
-    for content in dataset.content_items:
-        stats = stats_by_content.get(content.content_id)
+    for content_id in content_ids:
+        stats = stats_by_content.get(content_id)
 
         if stats is None or stats["view_count"] == 0:
             feature_records.append(
                 ContentPopularityFeatures(
-                    content_id=content.content_id,
+                    content_id=content_id,
                     observation_time=observation_time,
                     window_days=window_days,
                     view_count=0,
@@ -251,7 +263,7 @@ def compute_content_popularity_features_spark(
 
         feature_records.append(
             ContentPopularityFeatures(
-                content_id=content.content_id,
+                content_id=content_id,
                 observation_time=observation_time,
                 window_days=window_days,
                 view_count=view_count,
@@ -264,6 +276,140 @@ def compute_content_popularity_features_spark(
                 days_since_last_view=days_since_last_view,
             )
         )
+
+    return feature_records
+
+
+def compute_user_engagement_features_spark(
+    spark: SparkSession,
+    dataset: SyntheticDataset,
+    observation_time: datetime,
+    window_days: int,
+) -> UserFeatureBatch:
+    """Compute point-in-time-correct user engagement features using Spark.
+
+    Mirrors ``featureforge.features.compute_user_engagement_features``
+    exactly, reading events from an in-memory ``SyntheticDataset``.
+    """
+    if window_days <= 0:
+        raise ValueError(f"window_days must be positive, got {window_days}")
+
+    window_start = observation_time - timedelta(days=window_days)
+    events_df = _events_to_spark_dataframe(spark, dataset)
+    in_window = _filter_window(events_df, window_start, observation_time)
+    aggregated = _aggregate_user_events(in_window).collect()
+    stats_by_user = {row["user_id"]: row for row in aggregated}
+
+    feature_records = _build_user_feature_records(
+        stats_by_user,
+        [user.user_id for user in dataset.users],
+        observation_time,
+        window_days,
+    )
+
+    return UserFeatureBatch(
+        observation_time=observation_time,
+        window_days=window_days,
+        features=feature_records,
+    )
+
+
+def compute_content_popularity_features_spark(
+    spark: SparkSession,
+    dataset: SyntheticDataset,
+    observation_time: datetime,
+    window_days: int,
+) -> ContentFeatureBatch:
+    """Compute point-in-time-correct content popularity features using Spark.
+
+    Mirrors ``featureforge.features.compute_content_popularity_features``
+    exactly, reading events from an in-memory ``SyntheticDataset``.
+    """
+    if window_days <= 0:
+        raise ValueError(f"window_days must be positive, got {window_days}")
+
+    window_start = observation_time - timedelta(days=window_days)
+    events_df = _events_to_spark_dataframe(spark, dataset)
+    in_window = _filter_window(events_df, window_start, observation_time)
+    aggregated = _aggregate_content_events(in_window).collect()
+    stats_by_content = {row["content_id"]: row for row in aggregated}
+
+    feature_records = _build_content_feature_records(
+        stats_by_content,
+        [content.content_id for content in dataset.content_items],
+        observation_time,
+        window_days,
+    )
+
+    return ContentFeatureBatch(
+        observation_time=observation_time,
+        window_days=window_days,
+        features=feature_records,
+    )
+
+
+def compute_user_engagement_features_from_parquet(
+    spark: SparkSession,
+    input_dir: Path,
+    observation_time: datetime,
+    window_days: int,
+) -> UserFeatureBatch:
+    """Compute user engagement features by reading source data directly from Parquet.
+
+    Parquet-native counterpart to ``compute_user_engagement_features_spark``.
+    Reads ``users.parquet`` and ``events.parquet`` from ``input_dir`` instead
+    of requiring an in-memory ``SyntheticDataset``. Produces output identical
+    to the pandas reference for the same source data, observation time, and
+    window.
+    """
+    if window_days <= 0:
+        raise ValueError(f"window_days must be positive, got {window_days}")
+
+    window_start = observation_time - timedelta(days=window_days)
+    events_df = read_events_parquet_as_spark(spark, input_dir)
+    in_window = _filter_window(events_df, window_start, observation_time)
+    aggregated = _aggregate_user_events(in_window).collect()
+    stats_by_user = {row["user_id"]: row for row in aggregated}
+
+    user_ids = _read_entity_ids_from_parquet(spark, input_dir, "users.parquet", "user_id")
+    feature_records = _build_user_feature_records(
+        stats_by_user, user_ids, observation_time, window_days
+    )
+
+    return UserFeatureBatch(
+        observation_time=observation_time,
+        window_days=window_days,
+        features=feature_records,
+    )
+
+
+def compute_content_popularity_features_from_parquet(
+    spark: SparkSession,
+    input_dir: Path,
+    observation_time: datetime,
+    window_days: int,
+) -> ContentFeatureBatch:
+    """Compute content popularity features by reading source data directly from Parquet.
+
+    Parquet-native counterpart to
+    ``compute_content_popularity_features_spark``. Reads ``content.parquet``
+    and ``events.parquet`` from ``input_dir`` instead of requiring an
+    in-memory ``SyntheticDataset``. Produces output identical to the pandas
+    reference for the same source data, observation time, and window.
+    """
+    if window_days <= 0:
+        raise ValueError(f"window_days must be positive, got {window_days}")
+
+    window_start = observation_time - timedelta(days=window_days)
+    events_df = read_events_parquet_as_spark(spark, input_dir)
+    in_window = _filter_window(events_df, window_start, observation_time)
+    aggregated = _aggregate_content_events(in_window).collect()
+    stats_by_content = {row["content_id"]: row for row in aggregated}
+
+    content_ids = _read_entity_ids_from_parquet(spark, input_dir, "content.parquet", "content_id")
+    feature_records = _build_content_feature_records(
+        stats_by_content, content_ids, observation_time, window_days
+    )
 
     return ContentFeatureBatch(
         observation_time=observation_time,

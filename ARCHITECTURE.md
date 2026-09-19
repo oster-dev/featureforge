@@ -463,6 +463,7 @@ def _to_epoch_micros(value: datetime) -> int:
         raise ValueError("event_time must be timezone-aware")
     return int(value.astimezone(UTC).timestamp() * 1_000_000)
 
+
 def _from_epoch_micros(value: int) -> datetime:
     return datetime.fromtimestamp(value / 1_000_000, tz=UTC)
 ```

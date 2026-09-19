@@ -70,6 +70,7 @@ class BackfillRunManifest:
     window_days: int
     output_dir: str
     partitions: list[dict[str, Any]]
+    engine: str = "pandas"
 
     @classmethod
     def from_run(
@@ -81,6 +82,7 @@ class BackfillRunManifest:
         started_at: datetime,
         completed_at: datetime,
         partitions: list[dict[str, Any]],
+        engine: str = "pandas",
     ) -> BackfillRunManifest:
         """Create a manifest from a successful completed backfill run."""
         return cls(
@@ -93,6 +95,7 @@ class BackfillRunManifest:
             window_days=window_days,
             output_dir=str(output_dir),
             partitions=partitions,
+            engine=engine,
         )
 
     def write(self, output_dir: Path) -> Path:

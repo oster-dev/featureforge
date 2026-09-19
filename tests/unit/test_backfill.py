@@ -13,6 +13,7 @@ from featureforge.backfill import (
     run_backfill,
 )
 from featureforge.models import Content, Event, SyntheticDataset, User
+from featureforge.storage import write_synthetic_dataset
 
 
 def _make_user(user_id: str) -> User:
@@ -220,7 +221,7 @@ def test_backfill_manifest_contains_run_metadata(tmp_path: Path):
         output_dir=output_dir,
     )
 
-    with open(manifest_path, encoding="utf-8") as file:
+    with manifest_path.open(encoding="utf-8") as file:
         manifest = json.load(file)
 
     assert manifest["run_type"] == "feature_backfill"
@@ -231,6 +232,7 @@ def test_backfill_manifest_contains_run_metadata(tmp_path: Path):
     assert manifest["output_dir"] == str(output_dir)
     assert manifest["started_at"]
     assert manifest["completed_at"]
+    assert manifest["engine"] == "pandas"
 
 
 def test_backfill_manifest_records_every_partition(tmp_path: Path):
@@ -245,7 +247,7 @@ def test_backfill_manifest_records_every_partition(tmp_path: Path):
         output_dir=output_dir,
     )
 
-    with open(manifest_path, encoding="utf-8") as file:
+    with manifest_path.open(encoding="utf-8") as file:
         manifest = json.load(file)
 
     assert len(manifest["partitions"]) == 2
@@ -256,3 +258,114 @@ def test_backfill_manifest_records_every_partition(tmp_path: Path):
     assert first_partition["content_feature_count"] == 1
     assert Path(first_partition["user_features_path"]).exists()
     assert Path(first_partition["content_features_path"]).exists()
+
+
+def test_spark_backfill_writes_partitions_and_records_engine(
+    tmp_path: Path,
+):
+    """Spark backfill writes canonical partitions and records its engine."""
+    dataset = _make_dataset()
+    input_dir = tmp_path / "source_data"
+    output_dir = tmp_path / "spark_offline_store"
+
+    write_synthetic_dataset(dataset, input_dir)
+
+    results, manifest_path = run_backfill(
+        dataset=dataset,
+        start_date=date(2026, 3, 10),
+        end_date=date(2026, 3, 11),
+        window_days=7,
+        output_dir=output_dir,
+        engine="spark",
+        input_dir=input_dir,
+    )
+
+    assert len(results) == 2
+    assert manifest_path.exists()
+
+    for observation_date in ("2026-03-10", "2026-03-11"):
+        user_path = (
+            output_dir
+            / "user_engagement_features"
+            / f"observation_date={observation_date}"
+            / "features.parquet"
+        )
+        content_path = (
+            output_dir
+            / "content_popularity_features"
+            / f"observation_date={observation_date}"
+            / "features.parquet"
+        )
+
+        assert user_path.exists()
+        assert content_path.exists()
+
+    with manifest_path.open(encoding="utf-8") as file:
+        manifest = json.load(file)
+
+    assert manifest["engine"] == "spark"
+
+
+def test_spark_and_pandas_backfills_write_identical_features(
+    tmp_path: Path,
+):
+    """Pandas and Spark backfills must persist identical feature values."""
+    dataset = _make_dataset()
+    input_dir = tmp_path / "source_data"
+    pandas_output_dir = tmp_path / "pandas_offline_store"
+    spark_output_dir = tmp_path / "spark_offline_store"
+
+    write_synthetic_dataset(dataset, input_dir)
+
+    run_backfill(
+        dataset=dataset,
+        start_date=date(2026, 3, 10),
+        end_date=date(2026, 3, 11),
+        window_days=7,
+        output_dir=pandas_output_dir,
+        engine="pandas",
+    )
+    run_backfill(
+        dataset=dataset,
+        start_date=date(2026, 3, 10),
+        end_date=date(2026, 3, 11),
+        window_days=7,
+        output_dir=spark_output_dir,
+        engine="spark",
+        input_dir=input_dir,
+    )
+
+    for observation_date in ("2026-03-10", "2026-03-11"):
+        pandas_user_features = pd.read_parquet(
+            pandas_output_dir
+            / "user_engagement_features"
+            / f"observation_date={observation_date}"
+            / "features.parquet"
+        )
+        spark_user_features = pd.read_parquet(
+            spark_output_dir
+            / "user_engagement_features"
+            / f"observation_date={observation_date}"
+            / "features.parquet"
+        )
+        pandas_content_features = pd.read_parquet(
+            pandas_output_dir
+            / "content_popularity_features"
+            / f"observation_date={observation_date}"
+            / "features.parquet"
+        )
+        spark_content_features = pd.read_parquet(
+            spark_output_dir
+            / "content_popularity_features"
+            / f"observation_date={observation_date}"
+            / "features.parquet"
+        )
+
+        pd.testing.assert_frame_equal(
+            pandas_user_features.sort_values("user_id").reset_index(drop=True),
+            spark_user_features.sort_values("user_id").reset_index(drop=True),
+        )
+        pd.testing.assert_frame_equal(
+            pandas_content_features.sort_values("content_id").reset_index(drop=True),
+            spark_content_features.sort_values("content_id").reset_index(drop=True),
+        )

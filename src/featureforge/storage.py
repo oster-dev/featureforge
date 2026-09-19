@@ -5,20 +5,39 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 from .models import Content, Event, ObservationLabel, SyntheticDataset, User
+
+
+def _write_parquet_compatible(dataframe: pd.DataFrame, path: Path) -> None:
+    """Write Parquet using Spark-compatible UTC timestamp precision.
+
+    Pandas/PyArrow can otherwise write timezone-aware timestamps as
+    TIMESTAMP(NANOS, true), which Spark 4.x cannot read. Coercing to
+    microseconds creates a portable Parquet contract consumable by Pandas,
+    PyArrow, and PySpark.
+    """
+    table = pa.Table.from_pandas(dataframe, preserve_index=False)
+    pq.write_table(
+        table,
+        path,
+        coerce_timestamps="us",
+        allow_truncated_timestamps=False,
+    )
 
 
 def write_synthetic_dataset(
     dataset: SyntheticDataset,
     output_dir: Path,
 ) -> dict[str, Path]:
-    """Write a synthetic dataset to Parquet files."""
+    """Write a synthetic dataset to Spark-compatible Parquet files."""
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    users_df = pd.DataFrame([u.model_dump() for u in dataset.users])
-    content_df = pd.DataFrame([c.model_dump() for c in dataset.content_items])
-    events_df = pd.DataFrame([e.model_dump() for e in dataset.events])
+    users_df = pd.DataFrame([user.model_dump() for user in dataset.users])
+    content_df = pd.DataFrame([content.model_dump() for content in dataset.content_items])
+    events_df = pd.DataFrame([event.model_dump() for event in dataset.events])
     labels_df = pd.DataFrame([label.model_dump() for label in dataset.labels])
 
     users_path = output_dir / "users.parquet"
@@ -26,10 +45,10 @@ def write_synthetic_dataset(
     events_path = output_dir / "events.parquet"
     labels_path = output_dir / "labels.parquet"
 
-    users_df.to_parquet(users_path, index=False)
-    content_df.to_parquet(content_path, index=False)
-    events_df.to_parquet(events_path, index=False)
-    labels_df.to_parquet(labels_path, index=False)
+    _write_parquet_compatible(users_df, users_path)
+    _write_parquet_compatible(content_df, content_path)
+    _write_parquet_compatible(events_df, events_path)
+    _write_parquet_compatible(labels_df, labels_path)
 
     return {
         "users": users_path,
@@ -65,15 +84,12 @@ def write_feature_batch(
     observation_date: str,
     output_dir: Path,
 ) -> Path:
-    """Write a feature batch as a partitioned Parquet file.
-
-    Layout: {output_dir}/{feature_view}/observation_date={date}/features.parquet
-    Overwrites the partition deterministically to guarantee idempotency.
-    """
+    """Write a feature batch as a deterministic partitioned Parquet file."""
     partition_dir = output_dir / feature_view / f"observation_date={observation_date}"
     partition_dir.mkdir(parents=True, exist_ok=True)
 
     features_path = partition_dir / "features.parquet"
-    pd.DataFrame(records).to_parquet(features_path, index=False)
+    features_df = pd.DataFrame(records)
+    _write_parquet_compatible(features_df, features_path)
 
     return features_path
