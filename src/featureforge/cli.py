@@ -248,3 +248,7 @@ def main() -> None:
             end_date=args.end_date,
             window_days=args.window_days,
         )
+
+
+if __name__ == "__main__":
+    main()

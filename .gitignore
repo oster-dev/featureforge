@@ -26,3 +26,8 @@ data/manifests/
 *.parquet
 
 output/
+
+
+data/generated/
+
+feature_repo/data/
