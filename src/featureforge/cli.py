@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import Literal
 
 import pandas as pd
 from rich.console import Console
@@ -18,12 +19,16 @@ from featureforge.quality import validate_synthetic_dataset
 from featureforge.storage import read_synthetic_dataset, write_synthetic_dataset
 from featureforge.synthetic_data import generate_synthetic_dataset
 
+BackfillEngine = Literal["pandas", "spark"]
+
 
 def build_parser() -> argparse.ArgumentParser:
     """Build and return the FeatureForge command-line parser."""
     parser = argparse.ArgumentParser(
         prog="featureforge",
-        description="Generate deterministic synthetic feature-store datasets and backfill features.",
+        description=(
+            "Generate deterministic synthetic feature-store datasets and backfill features."
+        ),
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -108,6 +113,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=7,
         help="Lookback window in days (default: 7).",
     )
+    backfill_parser.add_argument(
+        "--engine",
+        choices=("pandas", "spark"),
+        default="pandas",
+        help="Feature-computation engine (default: pandas).",
+    )
 
     return parser
 
@@ -180,11 +191,11 @@ def run_compute_features(
 ) -> None:
     """Compute and persist user engagement features for one observation time."""
     dataset = read_synthetic_dataset(input_dir)
-    obs_time = datetime.fromisoformat(observation_time).replace(tzinfo=UTC)
+    observation_datetime = datetime.fromisoformat(observation_time).replace(tzinfo=UTC)
 
     batch = compute_user_engagement_features(
         dataset,
-        observation_time=obs_time,
+        observation_time=observation_datetime,
         window_days=window_days,
     )
 
@@ -195,7 +206,7 @@ def run_compute_features(
 
     console = Console()
     console.print(f"[green]✓[/green] Computed features for {len(batch.features)} users")
-    console.print(f"Observation time: {obs_time.isoformat()}")
+    console.print(f"Observation time: {observation_datetime.isoformat()}")
     console.print(f"Window: {batch.window_days} days")
     console.print(f"Output: {features_path}")
 
@@ -206,8 +217,11 @@ def run_backfill_command(
     start_date: date,
     end_date: date,
     window_days: int,
+    engine: BackfillEngine,
 ) -> None:
     """Run a date-parameterized offline feature backfill."""
+    # run_backfill still receives the dataset for its current API contract.
+    # In Spark mode, feature computation itself reads source Parquet from input_dir.
     dataset = read_synthetic_dataset(input_dir)
 
     results, manifest_path = run_backfill(
@@ -216,12 +230,15 @@ def run_backfill_command(
         end_date=end_date,
         window_days=window_days,
         output_dir=output_dir,
+        engine=engine,
+        input_dir=input_dir if engine == "spark" else None,
     )
 
     console = Console()
     console.print(f"[green]✓[/green] Backfilled {len(results)} observation-date partition(s)")
     console.print(f"Date range: {start_date.isoformat()} to {end_date.isoformat()}")
     console.print(f"Window: {window_days} days")
+    console.print(f"Engine: {engine}")
     console.print(f"Output: {output_dir}")
     console.print(f"Run manifest: {manifest_path}")
 
@@ -247,6 +264,7 @@ def main() -> None:
             start_date=args.start_date,
             end_date=args.end_date,
             window_days=args.window_days,
+            engine=args.engine,
         )
 
 

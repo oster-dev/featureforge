@@ -2,12 +2,10 @@
 
 from datetime import timedelta
 
+from entities import content, user
 from feast import FeatureView, Field
 from feast.types import Float64, Int64
-
-from entities import content, user
 from sources import content_features_source, user_features_source
-
 
 user_engagement_features = FeatureView(
     name="user_engagement_features",

@@ -13,3 +13,7 @@ late_event_rate: 0.03
 
 label_horizon_days: 7
 max_late_arrival_hours: 72
+
+# "independent" preserves the original uniform event generator.
+# "behavioral" generates persistent user activity patterns for ML training.
+event_generation_mode: behavioral

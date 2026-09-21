@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+from collections import Counter
 from datetime import timedelta
 
 from featureforge.config import SyntheticDataConfig
@@ -13,6 +16,7 @@ from featureforge.synthetic_data import (
 
 
 def build_test_config() -> SyntheticDataConfig:
+    """Build a small deterministic config for synthetic-data unit tests."""
     return SyntheticDataConfig(
         seed=42,
         start_time="2026-01-01T00:00:00Z",
@@ -368,3 +372,45 @@ def test_synthetic_dataset_labels_match_event_activity() -> None:
         )
 
         assert label.is_active_next_7d is expected_value
+
+
+def test_behavioral_generation_is_deterministic() -> None:
+    """Behavioral mode must produce identical events for the same config."""
+    config = build_test_config().model_copy(update={"event_generation_mode": "behavioral"})
+    users = generate_users(config)
+    content_items = generate_content(config)
+
+    first_run = generate_base_events(config, users, content_items)
+    second_run = generate_base_events(config, users, content_items)
+
+    assert first_run == second_run
+
+
+def test_behavioral_generation_preserves_base_event_count() -> None:
+    """Behavioral mode must respect the configured event-count contract."""
+    config = build_test_config().model_copy(update={"event_generation_mode": "behavioral"})
+    users = generate_users(config)
+    content_items = generate_content(config)
+
+    events = generate_base_events(config, users, content_items)
+
+    assert len(events) == config.num_base_events
+
+
+def test_behavioral_generation_creates_uneven_user_activity() -> None:
+    """Behavioral mode must create meaningful per-user activity variation."""
+    config = build_test_config().model_copy(
+        update={
+            "event_generation_mode": "behavioral",
+            "num_users": 20,
+            "num_base_events": 1_000,
+        }
+    )
+    users = generate_users(config)
+    content_items = generate_content(config)
+
+    events = generate_base_events(config, users, content_items)
+    event_counts = Counter(event.user_id for event in events)
+
+    assert len(event_counts) > 1
+    assert max(event_counts.values()) > min(event_counts.values()) * 2

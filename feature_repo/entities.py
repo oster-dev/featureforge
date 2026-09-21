@@ -3,7 +3,6 @@
 from feast import Entity
 from feast.value_type import ValueType
 
-
 user = Entity(
     name="user",
     join_keys=["user_id"],

@@ -20,8 +20,23 @@ GENRES = ("drama", "comedy", "documentary", "action", "sci_fi", "thriller")
 EVENT_TYPES = ("impression", "click", "play", "watch", "like", "search")
 DEVICE_TYPES = ("web", "ios", "android", "tv")
 
+ACTIVITY_SEGMENTS = ("dormant", "casual", "engaged", "power")
+
+ACTIVITY_SEGMENT_PROBABILITIES = np.array(
+    [0.20, 0.45, 0.25, 0.10],
+    dtype=float,
+)
+
+ACTIVITY_SEGMENT_WEIGHTS = {
+    "dormant": 0.15,
+    "casual": 1.0,
+    "engaged": 3.5,
+    "power": 8.0,
+}
+
 
 def generate_users(config: SyntheticDataConfig) -> list[User]:
+    """Generate deterministic synthetic users."""
     rng = np.random.default_rng(config.seed)
     total_seconds = int((config.end_time - config.start_time).total_seconds())
 
@@ -45,6 +60,7 @@ def generate_users(config: SyntheticDataConfig) -> list[User]:
 
 
 def generate_content(config: SyntheticDataConfig) -> list[Content]:
+    """Generate deterministic synthetic content items."""
     rng = np.random.default_rng(config.seed + 1)
     total_seconds = int((config.end_time - config.start_time).total_seconds())
 
@@ -67,16 +83,46 @@ def generate_content(config: SyntheticDataConfig) -> list[Content]:
     return content_items
 
 
+def generate_user_activity_weights(
+    config: SyntheticDataConfig,
+    users: list[User],
+) -> dict[str, float]:
+    """Assign deterministic latent activity weights for behavioral generation."""
+    rng = np.random.default_rng(config.seed + 20)
+
+    segments = rng.choice(
+        ACTIVITY_SEGMENTS,
+        size=len(users),
+        p=ACTIVITY_SEGMENT_PROBABILITIES,
+    )
+
+    return {
+        user.user_id: ACTIVITY_SEGMENT_WEIGHTS[str(segment)]
+        for user, segment in zip(users, segments, strict=True)
+    }
+
+
 def generate_base_events(
     config: SyntheticDataConfig,
     users: list[User],
     content_items: list[Content],
 ) -> list[Event]:
+    """Generate deterministic base events using the configured generation mode."""
     rng = np.random.default_rng(config.seed + 2)
     total_seconds = int((config.end_time - config.start_time).total_seconds())
 
     user_ids = [user.user_id for user in users]
     content_ids = [item.content_id for item in content_items]
+
+    if config.event_generation_mode == "behavioral":
+        activity_weights = generate_user_activity_weights(config, users)
+        user_probabilities = np.array(
+            [activity_weights[user_id] for user_id in user_ids],
+            dtype=float,
+        )
+        user_probabilities /= user_probabilities.sum()
+    else:
+        user_probabilities = None
 
     events: list[Event] = []
 
@@ -88,10 +134,12 @@ def generate_base_events(
         content_id = None if event_type == "search" else str(rng.choice(content_ids))
         watch_seconds = int(rng.integers(30, 3_601)) if event_type in {"play", "watch"} else 0
 
+        user_id = str(rng.choice(user_ids, p=user_probabilities))
+
         events.append(
             Event(
                 event_id=f"event_{index:08d}",
-                user_id=str(rng.choice(user_ids)),
+                user_id=user_id,
                 content_id=content_id,
                 event_type=event_type,
                 event_time=event_time,
@@ -109,6 +157,7 @@ def inject_duplicates(
     config: SyntheticDataConfig,
     events: list[Event],
 ) -> list[Event]:
+    """Inject deterministic duplicate events without mutating input events."""
     rng = np.random.default_rng(config.seed + 3)
     duplicate_count = int(len(events) * config.duplicate_rate)
 
@@ -139,6 +188,7 @@ def inject_late_events(
     config: SyntheticDataConfig,
     events: list[Event],
 ) -> list[Event]:
+    """Mark a deterministic subset of events as late-arriving."""
     rng = np.random.default_rng(config.seed + 4)
     late_event_count = int(len(events) * config.late_event_rate)
 
@@ -184,6 +234,7 @@ def generate_observation_labels(
     users: list[User],
     events: list[Event],
 ) -> list[ObservationLabel]:
+    """Generate labels from real event activity in the future horizon."""
     rng = np.random.default_rng(config.seed + 5)
     label_horizon = timedelta(days=config.label_horizon_days)
     latest_observation_time = config.end_time - label_horizon
@@ -219,6 +270,7 @@ def generate_observation_labels(
 def generate_synthetic_dataset(
     config: SyntheticDataConfig,
 ) -> SyntheticDataset:
+    """Generate the complete deterministic synthetic dataset."""
     users = generate_users(config)
     content_items = generate_content(config)
     base_events = generate_base_events(config, users, content_items)
