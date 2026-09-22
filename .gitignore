@@ -26,6 +26,7 @@ data/manifests/
 *.parquet
 
 output/
+output_e2e/
 
 
 data/generated/

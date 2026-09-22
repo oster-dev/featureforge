@@ -145,9 +145,7 @@ class MaterializationRunManifest:
             status="completed",
             mode=mode,
             repo_path=str(repo_path),
-            start_time=(
-                None if start_time is None else start_time.astimezone(UTC).isoformat()
-            ),
+            start_time=(None if start_time is None else start_time.astimezone(UTC).isoformat()),
             end_time=end_time.astimezone(UTC).isoformat(),
             manifest_output_dir=str(manifest_output_dir),
         )

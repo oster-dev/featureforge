@@ -1,9 +1,7 @@
 """Feast feature-service definitions for FeatureForge."""
 
 from feast import FeatureService
-
 from feature_views import content_popularity_features, user_engagement_features
-
 
 user_engagement_service = FeatureService(
     name="user_engagement_service",
@@ -18,10 +16,7 @@ user_engagement_service = FeatureService(
 content_popularity_service = FeatureService(
     name="content_popularity_service",
     features=[content_popularity_features],
-    description=(
-        "Content popularity signals for candidate selection and "
-        "ranking decisions."
-    ),
+    description=("Content popularity signals for candidate selection and ranking decisions."),
 )
 
 
