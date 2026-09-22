@@ -109,3 +109,65 @@ class BackfillRunManifest:
             json.dump(asdict(self), file, indent=2, default=str)
 
         return manifest_path
+
+
+@dataclass(frozen=True)
+class MaterializationRunManifest:
+    """Metadata for a Feast materialization run."""
+
+    run_type: str
+    started_at: str
+    completed_at: str
+    status: str
+    mode: str
+    repo_path: str
+    start_time: str | None
+    end_time: str
+    manifest_output_dir: str
+
+    @classmethod
+    def from_run(
+        cls,
+        *,
+        mode: str,
+        repo_path: Path,
+        start_time: datetime | None,
+        end_time: datetime,
+        manifest_output_dir: Path,
+        started_at: datetime,
+        completed_at: datetime,
+    ) -> MaterializationRunManifest:
+        """Create a completed materialization manifest with UTC timestamps."""
+        return cls(
+            run_type="feast_materialization",
+            started_at=started_at.astimezone(UTC).isoformat(),
+            completed_at=completed_at.astimezone(UTC).isoformat(),
+            status="completed",
+            mode=mode,
+            repo_path=str(repo_path),
+            start_time=(
+                None if start_time is None else start_time.astimezone(UTC).isoformat()
+            ),
+            end_time=end_time.astimezone(UTC).isoformat(),
+            manifest_output_dir=str(manifest_output_dir),
+        )
+
+    def write(self, output_dir: Path) -> Path:
+        """Write the materialization manifest with a deterministic file name."""
+        manifests_dir = output_dir / "materialization_manifests"
+        manifests_dir.mkdir(parents=True, exist_ok=True)
+
+        end_label = self.end_time.replace(":", "").replace("+00:00", "Z")
+
+        if self.start_time is None:
+            filename = f"materialize-incremental-to-{end_label}.json"
+        else:
+            start_label = self.start_time.replace(":", "").replace("+00:00", "Z")
+            filename = f"materialize-{start_label}-to-{end_label}.json"
+
+        manifest_path = manifests_dir / filename
+
+        with open(manifest_path, "w", encoding="utf-8") as file:
+            json.dump(asdict(self), file, indent=2, default=str)
+
+        return manifest_path

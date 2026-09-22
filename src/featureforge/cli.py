@@ -15,9 +15,13 @@ from featureforge.backfill import run_backfill
 from featureforge.config import load_synthetic_data_config
 from featureforge.features import compute_user_engagement_features
 from featureforge.manifest import GenerationRunManifest
+from featureforge.materialization import materialize, materialize_incremental
 from featureforge.quality import validate_synthetic_dataset
 from featureforge.storage import read_synthetic_dataset, write_synthetic_dataset
 from featureforge.synthetic_data import generate_synthetic_dataset
+
+# Opt-in to future pandas behavior to silence Dask/Feast downcasting warnings.
+pd.set_option("future.no_silent_downcasting", True)
 
 BackfillEngine = Literal["pandas", "spark"]
 
@@ -27,7 +31,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="featureforge",
         description=(
-            "Generate deterministic synthetic feature-store datasets and backfill features."
+            "Generate deterministic feature-store datasets, backfill features, "
+            "and materialize online feature values."
         ),
     )
 
@@ -118,6 +123,58 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("pandas", "spark"),
         default="pandas",
         help="Feature-computation engine (default: pandas).",
+    )
+
+    materialize_parser = subparsers.add_parser(
+        "materialize",
+        help="Materialize Feast offline feature values into the online store.",
+    )
+    materialize_parser.add_argument(
+        "--repo",
+        type=Path,
+        default=Path("feature_repo"),
+        help="Path to the Feast repository (default: feature_repo).",
+    )
+    materialize_parser.add_argument(
+        "--start-time",
+        type=str,
+        required=True,
+        help="Inclusive UTC start time in ISO 8601 format.",
+    )
+    materialize_parser.add_argument(
+        "--end-time",
+        type=str,
+        required=True,
+        help="Exclusive UTC end time in ISO 8601 format.",
+    )
+    materialize_parser.add_argument(
+        "--manifest-output",
+        type=Path,
+        default=Path("output"),
+        help="Directory where materialization manifests are written (default: output).",
+    )
+
+    incremental_materialize_parser = subparsers.add_parser(
+        "materialize-incremental",
+        help="Materialize feature values newer than Feast's stored watermark.",
+    )
+    incremental_materialize_parser.add_argument(
+        "--repo",
+        type=Path,
+        default=Path("feature_repo"),
+        help="Path to the Feast repository (default: feature_repo).",
+    )
+    incremental_materialize_parser.add_argument(
+        "--end-time",
+        type=str,
+        required=True,
+        help="UTC end time in ISO 8601 format.",
+    )
+    incremental_materialize_parser.add_argument(
+        "--manifest-output",
+        type=Path,
+        default=Path("output"),
+        help="Directory where materialization manifests are written (default: output).",
     )
 
     return parser
@@ -220,8 +277,6 @@ def run_backfill_command(
     engine: BackfillEngine,
 ) -> None:
     """Run a date-parameterized offline feature backfill."""
-    # run_backfill still receives the dataset for its current API contract.
-    # In Spark mode, feature computation itself reads source Parquet from input_dir.
     dataset = read_synthetic_dataset(input_dir)
 
     results, manifest_path = run_backfill(
@@ -241,6 +296,57 @@ def run_backfill_command(
     console.print(f"Engine: {engine}")
     console.print(f"Output: {output_dir}")
     console.print(f"Run manifest: {manifest_path}")
+
+
+def parse_utc_datetime(value: str) -> datetime:
+    """Parse an ISO 8601 timestamp and require an explicit timezone."""
+    parsed = datetime.fromisoformat(value)
+
+    if parsed.tzinfo is None:
+        raise ValueError("Timestamp must include an explicit timezone, for example +00:00.")
+
+    return parsed.astimezone(UTC)
+
+
+def run_materialize_command(
+    repo_path: Path,
+    start_time: str,
+    end_time: str,
+    manifest_output_dir: Path,
+) -> None:
+    """Materialize a full explicit Feast time range and print its manifest."""
+    result = materialize(
+        repo_path=repo_path,
+        start_time=parse_utc_datetime(start_time),
+        end_time=parse_utc_datetime(end_time),
+        manifest_output_dir=manifest_output_dir,
+    )
+
+    console = Console()
+    console.print("[green]✓[/green] Feast full materialization completed")
+    console.print(f"Repository: {result.repo_path}")
+    console.print(f"Start time: {result.start_time.isoformat()}")
+    console.print(f"End time: {result.end_time.isoformat()}")
+    console.print(f"Run manifest: {result.manifest_path}")
+
+
+def run_materialize_incremental_command(
+    repo_path: Path,
+    end_time: str,
+    manifest_output_dir: Path,
+) -> None:
+    """Materialize new Feast data up to an explicit UTC end time."""
+    result = materialize_incremental(
+        repo_path=repo_path,
+        end_time=parse_utc_datetime(end_time),
+        manifest_output_dir=manifest_output_dir,
+    )
+
+    console = Console()
+    console.print("[green]✓[/green] Feast incremental materialization completed")
+    console.print(f"Repository: {result.repo_path}")
+    console.print(f"End time: {result.end_time.isoformat()}")
+    console.print(f"Run manifest: {result.manifest_path}")
 
 
 def main() -> None:
@@ -265,6 +371,19 @@ def main() -> None:
             end_date=args.end_date,
             window_days=args.window_days,
             engine=args.engine,
+        )
+    elif args.command == "materialize":
+        run_materialize_command(
+            repo_path=args.repo,
+            start_time=args.start_time,
+            end_time=args.end_time,
+            manifest_output_dir=args.manifest_output,
+        )
+    elif args.command == "materialize-incremental":
+        run_materialize_incremental_command(
+            repo_path=args.repo,
+            end_time=args.end_time,
+            manifest_output_dir=args.manifest_output,
         )
 
 
