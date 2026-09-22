@@ -12,7 +12,6 @@ user_engagement_features = FeatureView(
     entities=[user],
     ttl=timedelta(days=30),
     schema=[
-        Field(name="window_days", dtype=Int64),
         Field(name="event_count", dtype=Int64),
         Field(name="unique_content_count", dtype=Int64),
         Field(name="total_watch_seconds", dtype=Int64),
@@ -35,7 +34,6 @@ content_popularity_features = FeatureView(
     entities=[content],
     ttl=timedelta(days=30),
     schema=[
-        Field(name="window_days", dtype=Int64),
         Field(name="view_count", dtype=Int64),
         Field(name="unique_viewer_count", dtype=Int64),
         Field(name="total_watch_seconds", dtype=Int64),

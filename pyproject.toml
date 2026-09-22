@@ -52,7 +52,7 @@ dev = [
 ]
 
 feature-store = [
-  "feast>=0.45,<1.0",
+  "feast[redis]>=0.45,<1.0",
 ]
 
 spark = [
@@ -66,6 +66,9 @@ include = ["src*"]
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-ra"
+filterwarnings = [
+  "ignore:The 'generic' unit for NumPy timedelta is deprecated:DeprecationWarning:feast\\.type_map",
+]
 
 [tool.ruff]
 line-length = 100
