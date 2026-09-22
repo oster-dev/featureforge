@@ -1,115 +1,117 @@
 # FeatureForge Architecture
 
-
 ## Purpose
 
-
 FeatureForge is a production-inspired feature platform for reproducible offline
-training data and future low-latency online ML feature serving.
+training data and low-latency online ML feature serving.
 
-
-The project is designed to prove end-to-end Data Infrastructure, Feature
+The project demonstrates end-to-end Data Infrastructure, Feature
 Infrastructure, and ML Platform Engineering fundamentals:
 
-
-- executable data contracts
-- deterministic synthetic data generation (independent and behavioral modes)
-- event-time-aware feature computation
-- point-in-time correctness
-- partitioned offline feature datasets
-- reproducible, date-parameterized backfills
-- auditable run metadata
-- quality validation and automated tests
-- engine-independent feature correctness (Pandas and PySpark parity)
-- Feast integration for historical retrieval and online serving
+- Executable data contracts
+- Deterministic synthetic data generation in independent and behavioral modes
+- Event-time-aware feature computation
+- Point-in-time correctness
+- Partitioned offline feature datasets
+- Reproducible, date-parameterized backfills
+- Auditable generation, backfill, and materialization manifests
+- Data-quality validation and automated tests
+- Engine-independent feature correctness through Pandas/PySpark parity
+- Feast historical retrieval and online serving
+- Full and incremental online materialization into Redis
+- Online feature retrieval and deterministic candidate ranking
 - ML-ready training pipelines with time-based evaluation
+- A reproducible one-command local demonstration
 
+FeatureForge is intentionally local-first. Its goal is not to imitate every
+production component, but to prove the contracts, reliability properties, and
+operational boundaries that make a feature platform trustworthy.
 
-The longer-term architecture will build on this foundation to prevent
-training-serving skew, future-data leakage, stale online features, and
-unreproducible backfills.
+## Platform Guarantees
 
+FeatureForge currently provides the following verified properties:
+
+| Concern | Current guarantee |
+|---|---|
+| Reproducibility | Fixed seeds, deterministic output layouts, explicit dates and windows |
+| Point-in-time correctness | Features use \( (observation\_time - window, observation\_time] \) |
+| Timezone safety | UTC contracts at the Python boundary; Spark uses UTC epoch microseconds |
+| Backfill idempotency | Repeated identical runs overwrite deterministic feature partitions |
+| Engine correctness | Pandas reference output is parity-tested against PySpark |
+| Online serving | Feast materializes user and content feature views into Redis |
+| Consumer behavior | Online lookup and ranking use only materialized Feast feature values |
+| Operational evidence | JSON manifests record generation, backfill, and materialization runs |
+| Developer experience | `docker compose up -d && make demo` runs the local vertical slice |
+| Test coverage | Unit and integration tests validate contracts, temporal behavior, and serving |
 
 ## Current Architecture
 
-
 ```mermaid
 flowchart LR
-    A[YAML Configuration] --> B[Config Validation]
-    B --> C[Synthetic Dataset Generator]
+    Config[YAML Configuration] --> Validate[Config Validation]
+    Validate --> Generate[Synthetic Dataset Generator]
 
+    Generate --> Users[Users]
+    Generate --> Content[Content]
+    Generate --> BaseEvents[Base Behavioral Events]
 
-    C --> D[Users]
-    C --> E[Content]
-    C --> F[Base Behavioral Events]
+    BaseEvents --> Duplicate[Duplicate Injection]
+    Duplicate --> Late[Late-Event Injection]
+    Late --> Events[Delivered Events]
 
+    Users --> Labels[Observation Label Generation]
+    Events --> Labels
 
-    F --> G[Duplicate Injection]
-    G --> H[Final Events]
-    H --> I[Late-Event Injection]
-    I --> J[Final Delivered Events]
+    Users --> Dataset[SyntheticDataset]
+    Content --> Dataset
+    Events --> Dataset
+    Labels --> Dataset
 
+    Dataset --> Quality[Source Quality Validation]
+    Quality --> SourceParquet[Source Parquet Writer]
 
-    D --> K[Observation Label Generation]
-    J --> K
+    SourceParquet --> UsersParquet[users.parquet]
+    SourceParquet --> ContentParquet[content.parquet]
+    SourceParquet --> EventsParquet[events.parquet]
+    SourceParquet --> LabelsParquet[labels.parquet]
+    SourceParquet --> GenerationManifest[Generation Manifest]
 
+    UsersParquet --> PandasBackfill[Pandas Backfill Engine]
+    ContentParquet --> PandasBackfill
+    EventsParquet --> PandasBackfill
 
-    D --> L[SyntheticDataset]
-    E --> L
-    J --> L
-    K --> L
+    UsersParquet -. parity checked .-> SparkBackfill[PySpark Feature Engine]
+    ContentParquet -. parity checked .-> SparkBackfill
+    EventsParquet -. parity checked .-> SparkBackfill
 
+    PandasBackfill --> UserFeatures[User Engagement Feature Partitions]
+    PandasBackfill --> ContentFeatures[Content Popularity Feature Partitions]
+    PandasBackfill --> BackfillManifest[Backfill Manifest]
 
-    L --> M[Quality Validation]
-    M --> N[Source Parquet Writer]
+    UserFeatures --> FeastSources[Feast FileSources]
+    ContentFeatures --> FeastSources
 
+    FeastSources --> FeatureViews[Feast Feature Views]
+    FeatureViews --> Historical[Historical Retrieval]
+    LabelsParquet --> Historical
+    Historical --> Training[Point-in-Time Training Dataset]
+    Training --> Model[sklearn Pipeline Training]
+    Model --> Artifacts[Model + Metrics]
 
-    N --> O[users.parquet]
-    N --> P[content.parquet]
-    N --> Q[events.parquet]
-    N --> R[labels.parquet]
+    FeatureViews --> Materialize[Full or Incremental Materialization]
+    Materialize --> Redis[Redis Online Store]
+    Materialize --> MaterializationManifest[Materialization Manifest]
 
-
-    S[featureforge generate] --> B
-
-
-    O -. parity verified .-> AD[Point-in-Time User Features - PySpark]
-    Q -. parity verified .-> AD
-    O -. parity verified .-> AE[Point-in-Time Content Features - PySpark]
-    Q -. parity verified .-> AE
-
-
-    AD -. future backfill integration .-> W
-    AE -. future backfill integration .-> X
-
-
-    W -. future input .-> AB[Feast Batch Sources and Feature Views]
-    AB -. future materialization .-> AC[Redis Online Store]
-
-
-    W --> AF[Feast FileSource]
-    X --> AF
-
-
-    AF --> AG[Feast Feature Views]
-    AG --> AH[Historical Retrieval]
-    R --> AH
-
-
-    AH --> AI[Point-in-Time Training Dataset]
-    AI --> AJ[sklearn Pipeline Training]
-    AJ --> AK[Persisted Model + Metrics]
+    Redis --> Lookup[Online Feature Lookup]
+    Lookup --> Ranking[Deterministic Candidate Ranking]
+    Ranking --> Consumer[Personalization Consumer Demo]
 ```
 
+## Main Data Flows
 
-## Current Data Flow
+FeatureForge exposes four executable local flows.
 
-
-FeatureForge currently provides three executable local flows:
-
-
-### Synthetic Dataset Generation
-
+### 1. Synthetic Dataset Generation
 
 ```text
 YAML configuration
@@ -129,9 +131,7 @@ source Parquet datasets
 generation run manifest
 ```
 
-
-Run the generation flow:
-
+Run generation directly:
 
 ```bash
 featureforge generate \
@@ -139,31 +139,36 @@ featureforge generate \
   --output output/source_data
 ```
 
+Output:
 
-### Offline Feature Backfill
+```text
+output/source_data/
+├── users.parquet
+├── content.parquet
+├── events.parquet
+├── labels.parquet
+└── run_manifest.json
+```
 
+### 2. Offline Feature Backfill
 
 ```text
 source Parquet datasets
         ↓
-read SyntheticDataset
-        ↓
 inclusive date-range iteration
         ↓
-UTC observation timestamp per day
+UTC observation timestamp per date
         ↓
 point-in-time user feature aggregation
         ↓
 point-in-time content feature aggregation
         ↓
-partitioned Parquet feature datasets
+partitioned feature Parquet datasets
         ↓
 backfill run manifest
 ```
 
-
-Run an offline feature backfill:
-
+Run a backfill:
 
 ```bash
 featureforge backfill \
@@ -171,163 +176,156 @@ featureforge backfill \
   --output output/offline_store \
   --start-date 2026-03-10 \
   --end-date 2026-03-12 \
-  --window-days 7
+  --window-days 7 \
+  --engine pandas
 ```
 
+The Spark engine is also available:
 
-### Historical Retrieval and ML Training
+```bash
+featureforge backfill \
+  --input output/source_data \
+  --output output/offline_store \
+  --start-date 2026-03-10 \
+  --end-date 2026-03-12 \
+  --window-days 7 \
+  --engine spark
+```
 
+### 3. Feast Materialization and Online Serving
 
 ```text
-partitioned feature Parquet + labels
+partitioned offline feature data
         ↓
-Feast FileSource configuration
+Feast FileSource and Feature Views
         ↓
-point-in-time historical retrieval
+full or incremental Feast materialization
         ↓
-time-based train/val/test split
+Redis online store
         ↓
-sklearn Pipeline training
+online feature lookup
         ↓
-persisted model + metrics JSON
+deterministic ranking / personalization decision
 ```
 
-
-Run historical retrieval:
-
+Full materialization uses an explicit UTC interval:
 
 ```bash
-python feature_repo/historical_retrieval_demo.py
+featureforge materialize \
+  --repo feature_repo \
+  --start-time 2026-03-20T00:00:00+00:00 \
+  --end-time 2026-03-25T00:00:00+00:00 \
+  --manifest-output output
 ```
 
-
-Train baseline model:
-
+Incremental materialization uses Feasts stored materialization watermark:
 
 ```bash
-python scripts/train_baseline.py
+featureforge materialize-incremental \
+  --repo feature_repo \
+  --end-time 2026-03-25T00:00:00+00:00 \
+  --manifest-output output
 ```
 
+### 4. One-Command Platform Demonstration
 
-## Components
+Start Redis:
 
+```bash
+docker compose up -d
+```
 
-### Configuration
+Run the complete local workflow:
 
+```bash
+make demo
+```
 
-`SyntheticDataConfig` loads and validates YAML configuration before data
-generation begins.
+The command executes:
 
+```text
+generate
+  → backfill
+  → Feast full materialization into Redis
+  → user online-feature lookup
+  → deterministic content-candidate ranking
+```
+
+The demo defaults are configurable:
+
+```bash
+make demo USER_ID=user_000290 TOP_K=5
+```
+
+The E2E output directory is also configurable:
+
+```bash
+make demo OUTPUT_DIR=output_demo
+```
+
+## Configuration
+
+`SyntheticDataConfig` loads and validates YAML configuration before generation.
 
 The configuration controls:
 
-
-- random seed
-- synthetic-data time range
-- number of users, content items, base events, and observations
-- duplicate event rate
-- late-event rate
-- maximum late-arrival duration
-- label horizon
-- event generation mode (`independent` or `behavioral`)
-
-
-Configuration validation fails early when inputs are invalid.
-
+- Random seed
+- Synthetic-data time range
+- Number of users, content items, events, and observations
+- Duplicate event rate
+- Late-event rate
+- Maximum late-arrival duration
+- Label horizon
+- Event generation mode: `independent` or `behavioral`
 
 Examples of enforced rules:
 
-
 - `end_time` must be after `start_time`
-- event rates must be between `0.0` and `1.0`
-- entity and event counts must be positive
-- `max_late_arrival_hours` must be greater than zero when
-  `late_event_rate` is positive
+- Rates must be between `0.0` and `1.0`
+- Entity and event counts must be positive
+- `max_late_arrival_hours` must be positive when late events are enabled
 
+## Synthetic Data
 
-### Synthetic Data Generation
-
-
-The synthetic-data module generates deterministic, production-inspired
-behavioral data.
-
+### Generation Model
 
 Every generation stage uses a separate random-number-generator seed derived
-from the configured base seed. This makes complete runs reproducible while
-keeping individual stages independent.
+from the configured base seed. This keeps individual stages independent while
+making the overall run reproducible.
 
+Generated datasets contain:
 
-The current generator produces:
+- Users
+- Content catalog entries
+- Base behavioral events
+- Duplicate event deliveries
+- Late-arriving event deliveries
+- Observation labels
 
+### Behavioral Mode
 
-- users
-- content catalog entries
-- base behavioral events
-- duplicate event deliveries
-- late-arriving events
-- observation labels
+Behavioral mode adds persistent user-level activity propensity.
 
+- Every user receives one fixed `activity_weight`.
+- Event counts are drawn from a distribution influenced by that weight.
+- Higher-weight users consistently produce more events.
+- Engagement features therefore carry genuine predictive signal for future
+  activity without leaking label information.
 
-For the same configuration and seed, FeatureForge produces the same entities,
-events, labels, and source Parquet output structure.
+Typical baseline-model results in behavioral mode are approximately:
 
+| Split | Rows | Positive rate | AUC | Precision@25 |
+|---|---:|---:|---:|---:|
+| Train | 625 | 57.4% | 0.7725 | 1.00 |
+| Validation | 134 | 56.7% | 0.7688 | 0.88 |
+| Test | 134 | 50.0% | 0.6973 | 0.84 |
 
-### Behavioral Mode (Day-9 Addition)
+These values are example outputs from the configured synthetic dataset rather
+than a production-model performance claim.
 
+### Event Semantics
 
-The behavioral generation mode introduces persistent latent activity propensity
-per user, creating realistic behavioral differences:
-
-
-- Each user receives a fixed `activity_weight` sampled once at generation time
-- Event counts are drawn from `Poisson(activity_weight * base_rate)`
-- Users with higher weights generate more events consistently
-- This creates predictable engagement heterogeneity without label leakage
-
-
-Result: historical engagement features gain genuine predictive signal for
-future activity (test AUC ~0.70, Precision@25 ~0.84).
-
-
-### Users and Content
-
-
-Users and content items are independent reference datasets.
-
-
-User records include:
-
-
-- `user_id`
-- `signup_at`
-- `country`
-- `plan_tier`
-- `acquisition_channel`
-- `activity_weight` (behavioral mode only)
-
-
-Content records include:
-
-
-- `content_id`
-- `title`
-- `genre`
-- `released_at`
-- `duration_seconds`
-
-
-Event and label records reference generated user IDs. Non-search events also
-reference generated content IDs.
-
-
-### Behavioral Events
-
-
-Base events represent normal deliveries of behavioral activity.
-
-
-Supported event types are:
-
+Supported event types:
 
 - `impression`
 - `click`
@@ -336,139 +334,61 @@ Supported event types are:
 - `like`
 - `search`
 
-
-A search event has no content reference:
-
+Search events have no content reference:
 
 ```text
 event_type=search
 content_id=None
 ```
 
-
-Watch-duration semantics are explicit:
-
+Watch-duration rules are explicit:
 
 ```text
-event_type in {play, watch}  -> watch_seconds > 0
-all other event types        -> watch_seconds == 0
+event_type in {play, watch}  → watch_seconds > 0
+all other event types        → watch_seconds == 0
 ```
 
+### Duplicate Events
 
-### Duplicate Injection
-
-
-Duplicate injection models repeated delivery of the same behavioral event.
-
-
-A duplicate event:
-
-
-- receives a unique delivery ID with a `_duplicate_XX` suffix
-- has `is_duplicate=True`
-- preserves the original behavioral payload
-- does not replace or mutate the original event
-- is appended as an additional event delivery
-
-
-Example:
-
+A duplicate event represents repeated delivery of the same behavioral action.
 
 ```text
 original:
 event_id=event_00000042
 is_duplicate=false
 
-
 duplicate:
 event_id=event_00000042_duplicate_01
 is_duplicate=true
 ```
 
+The duplicate retains the original payload but has a unique delivery ID. This
+allows downstream data-quality and deduplication behavior to be tested.
 
-This allows downstream quality checks and later transformations to test
-deduplication behavior explicitly.
+### Late Events
 
-
-### Late-Event Injection
-
-
-Late-event injection models events that occurred at one time but arrive at the
-platform later.
-
-
-A late event:
-
-
-- preserves its original `event_time`
-- receives a later `ingested_at`
-- has `is_late=True`
-- keeps all behavioral payload fields unchanged
-- has a delay bounded by `max_late_arrival_hours`
-
-
-Late-event injection returns a new event collection and leaves the input
-collection unchanged.
-
-
-### Observation Labels
-
-
-Observation labels convert behavioral events into an ML-oriented target.
-
-
-Each label answers:
-
-
-> Did this user have at least one behavioral event during the configured future
-> label window?
-
-
-A label contains:
-
-
-- `label_id`
-- `user_id`
-- `observation_time`
-- `label_window_end`
-- `is_active_next_7d`
-
-
-The configured label horizon determines the window end:
-
+Late events preserve their original `event_time` but arrive with a later
+`ingested_at`.
 
 ```text
-label_window_end = observation_time + label_horizon_days
+event_time   = when the user action occurred
+ingested_at  = when FeatureForge received the event
 ```
 
-
-The target is calculated with event time:
-
+A late event satisfies:
 
 ```text
-observation_time < event_time <= label_window_end
+ingested_at > event_time
+is_late == true
 ```
 
+## Feature Contracts
 
-Labels represent future user behavior, not the time at which the platform
-received an event.
+FeatureForge currently defines two feature views.
 
+### User Engagement Features
 
-### Feature Contracts
-
-
-FeatureForge currently exposes two point-in-time feature contracts.
-
-
-#### User Engagement Features
-
-
-`UserEngagementFeatures` is computed once per `user_id` for an observation
-timestamp and lookback window.
-
-
-Current fields:
-
+Computed once per `user_id` and observation time:
 
 - `event_count`
 - `unique_content_count`
@@ -478,20 +398,9 @@ Current fields:
 - `watch_count`
 - `days_since_last_activity`
 
+### Content Popularity Features
 
-`UserFeatureBatch` validates that all rows share one observation time and one
-window size.
-
-
-#### Content Popularity Features
-
-
-`ContentPopularityFeatures` is computed once per `content_id` for an
-observation timestamp and lookback window.
-
-
-Current fields:
-
+Computed once per `content_id` and observation time:
 
 - `view_count`
 - `unique_viewer_count`
@@ -502,205 +411,84 @@ Current fields:
 - `watch_count`
 - `days_since_last_view`
 
+All feature batches validate that their records share one observation timestamp
+and one lookback window.
 
-`ContentFeatureBatch` validates that all rows share one observation time and
-one window size.
+## Temporal Correctness
 
+FeatureForge uses event time for both label and feature semantics.
 
-### Point-in-Time Feature Computation
-
-
-The feature layer contains domain logic only. It does not know about CLI
-arguments, directory paths, or Parquet storage.
-
-
-Both current feature functions accept:
-
-
-```python
-dataset
-observation_time
-window_days
-```
-
-
-The event window is:
-
+### Label Window
 
 ```text
-(observation_time - window_days, observation_time]
+observation_time < event_time <= label_window_end
 ```
 
+Labels answer whether a user becomes active during a configured future window.
 
-That means:
+### Feature Window
 
+```text
+observation_time - window_days < event_time <= observation_time
+```
 
-- events at the lower boundary are excluded
-- events at the observation timestamp are included
-- events after the observation timestamp are excluded
-- each feature record carries its `observation_time` and `window_days`
+Therefore:
 
+- Events at the lower boundary are excluded.
+- Events at the observation time are included.
+- Events after the observation time are excluded.
+- Future events cannot affect earlier feature values.
 
-This explicit event-time contract prevents future events from entering a
-feature value computed as of an earlier observation timestamp.
+### Daily Backfill Time
 
+For every observation date, FeatureForge uses UTC midnight:
 
-## PySpark Parity Layer
+```text
+observation_date=2026-03-12
+observation_time=2026-03-12T00:00:00+00:00
+```
 
+The resulting partition represents the feature state available at that instant.
 
-FeatureForge now includes a second execution engine for both feature views:
-`src/featureforge/spark_features.py`.
+## Pandas and PySpark Parity
 
+Pandas is the readable reference implementation. PySpark is the scalable
+execution path. They must produce identical feature contracts.
 
-This module does not introduce new feature semantics. It computes the exact
-same `UserEngagementFeatures` and `ContentPopularityFeatures` contracts as
-`src/featureforge/features.py`, using PySpark DataFrames instead of Pandas.
+The parity suite covers:
 
+- Empty datasets
+- Exact time-window boundaries
+- Multiple users and content IDs
+- Typed event counts
+- Floating-point averages
+- Randomized multi-entity datasets
+- Invalid `window_days` rejection
 
-### Why a Second Engine Exists
+### Timezone-Safe Spark Representation
 
+Spark timestamp round trips can depend on host and JVM timezone behavior.
+FeatureForge therefore avoids sending Python `datetime` values into Spark
+`TimestampType` for feature computation.
 
-The Pandas implementation is the correctness reference. It is simple, easy to
-read, and easy to verify by hand. It does not scale past a single process,
-however, and every future Spark ETL job in this project must produce results
-that are provably identical to that reference — not merely similar.
-
-
-Introducing the Spark engine now, while the dataset is still small and fully
-understood, keeps the migration honest: any discrepancy between the two
-engines is a bug to find today, not a silent correctness regression to
-discover later at production scale.
-
-
-### Parity Testing Strategy
-
-
-`tests/unit/test_spark_features.py` never re-validates feature *semantics* —
-that is already covered by `tests/unit/test_features.py`. It validates
-*engine equivalence*: that `compute_user_engagement_features_spark` and
-`compute_content_popularity_features_spark` return batches that are equal,
-field for field, to their Pandas counterparts, across:
-
-
-- empty datasets
-- exact window-boundary events (`observation_time`, `observation_time + 1s`,
-  `observation_time - window_days`)
-- typed event-count aggregation across multiple users and content items
-- `average_watch_seconds` floating-point division
-- randomized datasets with hundreds of events across many entities
-- identical rejection of non-positive `window_days`
-
-
-A parity suite is only useful if it can actually fail. Early runs of this
-suite did fail, and the failure was informative rather than a test-authoring
-mistake — see below.
-
-
-### A Real Timezone Bug, and Why the Fix Is Structural
-
-
-The first working version of `spark_features.py` passed Python `datetime`
-objects with `tzinfo=UTC` directly into a Spark DataFrame using
-`TimestampType`. Four of the nine parity tests failed with a **consistent
-one-hour offset** in `days_since_last_activity` and `days_since_last_view`.
-
-
-The root cause: Spark's `TimestampType` round-trips through the JVM during
-Python-to-JVM and JVM-to-Python conversion (via py4j/Arrow). That conversion
-path is independent of the `spark.sql.session.timeZone` SQL setting — setting
-it to `"UTC"` did not fix the offset. The conversion instead depends on the
-JVM's default timezone, which is inherited from the host machine's local
-timezone. On a machine whose local timezone is not UTC, this silently shifts
-timestamps by the local UTC offset during the Python-to-JVM-to-Python
-round-trip.
-
-
-This is exactly the class of bug that a feature platform must catch before it
-reaches training data: not a crash, but a quietly wrong `days_since_last_view`
-value that would still validate against every Pydantic constraint.
-
-
-**The fix removes the ambiguity at the source instead of patching it after
-the fact.** `spark_features.py` never hands a `datetime` object to Spark.
-Every `event_time` is converted to UTC epoch microseconds — a plain
-`LongType` integer — before entering Spark, and converted back to a
-timezone-aware UTC `datetime` only after `collect()`:
-
+Instead, event timestamps are converted to UTC epoch microseconds:
 
 ```python
 def _to_epoch_micros(value: datetime) -> int:
     if value.tzinfo is None:
         raise ValueError("event_time must be timezone-aware")
     return int(value.astimezone(UTC).timestamp() * 1_000_000)
-
-
-def _from_epoch_micros(value: int) -> datetime:
-    return datetime.fromtimestamp(value / 1_000_000, tz=UTC)
 ```
 
+Window filtering operates on integer epoch microseconds. UTC-aware Python
+datetimes are reconstructed only after Spark collection.
 
-An integer has no timezone to misinterpret. The window filter in
-`_filter_window` compares epoch-microsecond longs directly, so the point-in-time
-boundary `(observation_time - window_days, observation_time]` is evaluated
-without ever depending on how Spark or the JVM would otherwise interpret a
-timestamp column.
+This prevents host-local timezone shifts from silently changing recency
+features such as `days_since_last_activity`.
 
+## Offline Storage and Backfills
 
-This is the same lesson production Spark pipelines learn the hard way: never
-trust `TimestampType` round-trips to be timezone-safe across machines. Encode
-time as UTC epoch integers at every system boundary instead.
-
-
-### Current Parity Guarantee
-
-
-```text
-featureforge.features.compute_user_engagement_features
-    ==
-featureforge.spark_features.compute_user_engagement_features_spark
-
-
-featureforge.features.compute_content_popularity_features
-    ==
-featureforge.spark_features.compute_content_popularity_features_spark
-```
-
-
-Both equalities are enforced by automated tests on every run, not asserted
-by inspection. Any future change to either engine that breaks this equality
-fails the test suite before it can reach a backfill or a Feast batch source.
-
-
-### What This Enables Next
-
-
-The Spark engine currently runs locally against in-memory `SyntheticDataset`
-objects, the same way the Pandas reference does. It does not yet read
-partitioned source Parquet directly, and it is not yet wired into
-`run_backfill`. Those are the next two steps before Spark becomes the
-production execution path:
-
-
-1. Read `users.parquet` / `content.parquet` / `events.parquet` directly as
-   Spark DataFrames instead of constructing them from an in-memory
-   `SyntheticDataset`.
-2. Give the backfill runner an engine parameter so the same date-range
-   backfill can execute against either the Pandas or the Spark
-   implementation, with the manifest recording which engine produced each
-   partition.
-
-
-## Parquet Persistence
-
-
-The storage layer has two responsibilities.
-
-
-### Source Dataset Persistence
-
-
-A `SyntheticDataset` is written to four source Parquet tables:
-
+Source datasets are persisted as Parquet:
 
 ```text
 <output>/
@@ -710,837 +498,465 @@ A `SyntheticDataset` is written to four source Parquet tables:
 └── labels.parquet
 ```
 
-
-Parquet is used because it is columnar, typed, efficient for analytical reads,
-and consumable by Pandas, PyArrow, PySpark, and later Feast batch sources.
-
-
-### Feature Batch Persistence
-
-
-Feature batches are written into deterministic, partitioned paths:
-
+Feature batches use deterministic partition paths:
 
 ```text
 <output>/
 ├── user_engagement_features/
-│   ├── observation_date=2026-03-10/
-│   │   └── features.parquet
-│   └── observation_date=2026-03-11/
+│   └── observation_date=YYYY-MM-DD/
 │       └── features.parquet
 ├── content_popularity_features/
-│   ├── observation_date=2026-03-10/
-│   │   └── features.parquet
-│   └── observation_date=2026-03-11/
+│   └── observation_date=YYYY-MM-DD/
 │       └── features.parquet
 └── manifests/
-    └── backfill-2026-03-10-to-2026-03-11.json
+    └── backfill-YYYY-MM-DD-to-YYYY-MM-DD.json
 ```
 
+### Idempotency
 
-The partition key is `observation_date`, because each file represents the
-feature state at a specific point in time.
-
-
-## Backfills
-
-
-`run_backfill(...)` computes and persists user and content features for an
-inclusive date range.
-
-
-A backfill accepts:
-
-
-```text
-start_date
-end_date
-window_days
-output_dir
-```
-
-
-For every backfill date, FeatureForge constructs this observation timestamp:
-
-
-```text
-YYYY-MM-DDT00:00:00+00:00
-```
-
-
-For example:
-
-
-```text
-observation_date=2026-03-12
-observation_time=2026-03-12T00:00:00+00:00
-```
-
-
-The date partition therefore represents features available as of UTC midnight
-on that date.
-
-
-### Idempotency Semantics
-
-
-Feature backfills use deterministic partition paths:
-
+A repeated backfill with identical source data, code, date range, and window
+writes to the same canonical partitions.
 
 ```text
 <output>/<feature_view>/observation_date=YYYY-MM-DD/features.parquet
 ```
 
+The job overwrites that deterministic path rather than appending random
+artifacts. Idempotency is verified by tests that compare repeated Parquet
+outputs.
 
-A repeated backfill with the same source data, dates, window, and code
-overwrites the same canonical feature partitions. It does not append duplicate
-files or create random output names.
-
-
-The feature-value idempotency contract is tested by running an identical
-backfill twice and asserting equal Parquet DataFrames.
-
-
-The backfill manifest is intentionally updated for the same date range because
-it records real execution timestamps.
-
-
-## Run Manifests
-
-
-FeatureForge writes machine-readable JSON manifests for both generation and
-backfill runs.
-
-
-A generation manifest includes:
-
-
-- generation timestamp
-- full configuration
-- row counts
-- quality report
-- source output paths
-
-
-A backfill manifest includes:
-
-
-- `run_type`
-- `started_at`
-- `completed_at`
-- `status`
-- `start_date`
-- `end_date`
-- `window_days`
-- `output_dir`
-- one entry per observation-date partition
-- user and content feature row counts
-- concrete feature output paths
-
-
-The current deterministic backfill manifest path is:
-
-
-```text
-<output>/manifests/backfill-<start-date>-to-<end-date>.json
-```
-
-
-## Feast Integration (Day-9 Addition)
-
-
-FeatureForge integrates with Feast for production-ready feature serving and
-historical retrieval.
-
+## Feast Layer
 
 ### Entities
 
-
-- `user`: User entity with `user_id` as join key
-- `content`: Content entity with `content_id` as join key
-
-
-### Batch Sources
-
-
-- `user_features_source`: FileSource pointing to partitioned user features
-- `content_features_source`: FileSource pointing to partitioned content features
-
-
-Sources read from `output/offline_store` with explicit schema and timestamp
-fields.
-
+- `user` with join key `user_id`
+- `content` with join key `content_id`
 
 ### Feature Views
 
-
-- `user_engagement_features`: 7-day lookback window, aggregating user behavior
-- `content_popularity_features`: 7-day lookback window, aggregating content engagement
-
-
-Feature views define:
-
-
-- entity bindings
-- feature schemas
-- TTL (time-to-live)
-- aggregation logic
-
+- `user_engagement_features`
+- `content_popularity_features`
 
 ### Feature Services
 
+- `user_engagement_service`
+- `content_popularity_service`
 
-Feature services expose curated feature subsets for specific use cases:
-
-
-- `user_engagement_service`: All user engagement features
-- `content_popularity_service`: All content popularity features
-
+Feature services expose curated feature sets to online consumers instead of
+requiring every client to repeat feature-view and field selection.
 
 ### Historical Retrieval
 
-
-The historical retrieval flow:
-
-
 ```text
-labels.parquet (observation_time, user_id, is_active_next_7d)
+labels.parquet
         ↓
 Feast get_historical_features()
         ↓
-point-in-time join with feature views
+point-in-time join
         ↓
-training DataFrame with features at observation times
+training DataFrame
 ```
 
+Historical retrieval joins labels to feature values available at each label
+observation time. This protects training data from future-data leakage.
 
-This ensures:
-
-
-- No future data leakage
-- Correct event-time alignment
-- Reproducible training datasets
-
-
-Run historical retrieval:
-
+Run it with:
 
 ```bash
 python feature_repo/historical_retrieval_demo.py
 ```
 
+## Materialization
 
-Output: `data/historical_features.parquet`
+FeatureForge wraps Feast materialization behind explicit UTC contracts.
 
+### Full Materialization
 
-## ML Training Pipeline (Day-9 Addition)
+`materialize(...)` requires:
 
+- A timezone-aware `start_time`
+- A timezone-aware `end_time`
+- `start_time < end_time`
+- A Feast repository path
+- A manifest output directory
 
-FeatureForge includes a complete ML training pipeline for baseline model
-development.
+It calls Feast materialization for the explicit interval.
 
+### Incremental Materialization
 
-### Historical Features Dataset
+`materialize_incremental(...)` requires:
 
+- A timezone-aware `end_time`
+- A Feast repository path
+- A manifest output directory
 
-The retrieval demo produces:
+Feast determines the lower boundary from its materialization watermark.
 
+### Materialization Manifest
 
-```text
-data/historical_features.parquet
-```
-
-
-Contains:
-
-
-- 893 point-in-time-correct feature rows (from 1,000 input labels)
-- 56.2% positive rate
-- Time range: 2026-01-10 to 2026-03-24
-- All user engagement features with full feature names
-
-
-### Time-Based Splitting
-
-
-The training script performs chronological splits:
-
+Every successful materialization writes a JSON manifest under:
 
 ```text
-Train:       625 rows (70%) | 57.4% positive
-Validation:  134 rows (15%) | 56.7% positive
-Test:        134 rows (15%) | 50.0% positive
+<manifest-output>/materialization_manifests/
 ```
 
-
-This prevents temporal leakage and tests true out-of-time generalization.
-
-
-### Model Architecture
-
-
-The baseline model is a sklearn Pipeline:
-
-
-```python
-Pipeline(
-    steps=[
-        ("scaler", StandardScaler()),
-        (
-            "classifier",
-            LogisticRegression(
-                max_iter=1_000,
-                class_weight="balanced",
-                random_state=42,
-            ),
-        ),
-    ]
-)
-```
-
-
-Benefits:
-
-
-- StandardScaler handles different feature scales
-- Balanced class weights address class imbalance
-- Single persisted artifact (Pipeline) includes preprocessing
-
-
-### Feature Engineering
-
-
-Deterministic missing-value handling:
-
-
-- `days_since_last_activity` filled with `999.0` for users with no events
-- All other features naturally zero for inactive users
-
-
-Removed features:
-
-
-- `window_days`: constant value (always 7), no predictive signal
-
-
-### Evaluation Metrics
-
-
-The pipeline reports:
-
-
-- AUC (ROC-AUC)
-- Precision / Recall
-- Precision@K / Recall@K (K=25)
-- Positive rate per split
-- Time range per split
-
-
-Typical results (behavioral mode):
-
-
-| Split | Rows | Positive Rate | AUC | Precision@25 | Recall@25 |
-|---|---:|---:|---:|---:|---:|
-| Train | 625 | 57.4% | 0.7725 | 1.00 | 0.0696 |
-| Validation | 134 | 56.7% | 0.7688 | 0.88 | 0.2895 |
-| Test | 134 | 50.0% | 0.6973 | 0.84 | 0.3134 |
-
-
-### Persisted Artifacts
-
-
-Training produces:
-
+Full run naming:
 
 ```text
-output/models/baseline_logreg_pipeline.joblib
-output/models/baseline_logreg_metrics.json
+materialize-<start>-to-<end>.json
 ```
 
+Incremental run naming:
 
-The Pipeline artifact can be loaded and used for inference:
-
-
-```python
-import joblib
-
-model = joblib.load("output/models/baseline_logreg_pipeline.joblib")
-probabilities = model.predict_proba(X)[:, 1]
+```text
+materialize-incremental-to-<end>.json
 ```
 
+The manifest records:
 
-### Diagnostic Tools
+- Run type
+- Start and completion timestamps
+- Status
+- Mode: `full` or `incremental`
+- Feast repository path
+- Explicit start time for full runs
+- End time
+- Manifest-output directory
 
+## Online Serving and Ranking
 
-`scripts/diagnose_baseline.py` provides:
+### Online Lookup
 
+`src/featureforge/serving.py` retrieves current feature values through Feast
+feature services.
 
-- Feature distribution analysis
-- Train vs test drift detection
-- Coefficient stability checks
-- Precision/Recall curves
-- Calibration analysis
+It provides typed dataclasses:
 
+- `UserEngagementOnlineFeatures`
+- `ContentPopularityOnlineFeatures`
+- `RankedContent`
+- `RankingResult`
+
+Lookup helpers validate non-empty entity IDs and return `None` when the
+expected materialized record is absent.
+
+### Transparent Scores
+
+The user engagement score is a bounded weighted combination of:
+
+- Event activity
+- Distinct-content activity
+- Watch time
+- Search, play, and watch counts
+- Recent activity
+
+The content popularity score similarly uses:
+
+- View volume
+- Unique viewers
+- Watch time
+- Average watch duration
+- Typed interaction counts
+- Recency
+
+Scores are normalized and rounded for deterministic behavior.
+
+### Ranking
+
+The ranking score combines user engagement and content popularity:
+
+```text
+ranking_score =
+    0.45 × user_engagement_score +
+    0.55 × content_popularity_score
+```
+
+Candidates are sorted by:
+
+1. Descending overall score
+2. Ascending `content_id` as a stable tie-breaker
+
+This is deliberately simple and transparent. It demonstrates how a consumer
+uses online feature values; it is not intended as a production recommendation
+model.
+
+Run the demos directly:
+
+```bash
+python feature_repo/online_lookup_demo.py --user-id user_000290
+
+python feature_repo/personalization_demo.py \
+  --user-id user_000290 \
+  --top-k 5
+```
+
+## ML Training
+
+The baseline ML pipeline uses point-in-time historical features and
+chronological evaluation.
+
+```text
+historical feature dataset
+        ↓
+time-based train / validation / test split
+        ↓
+sklearn Pipeline
+        ↓
+logistic regression baseline
+        ↓
+persisted model and metrics
+```
+
+The persisted pipeline includes preprocessing and model state together to
+reduce training-serving skew.
+
+Training artifacts:
+
+```text
+output/models/
+├── baseline_logreg_pipeline.joblib
+└── baseline_logreg_metrics.json
+```
+
+Run the baseline training flow:
+
+```bash
+python scripts/train_baseline.py
+```
 
 Run diagnostics:
-
 
 ```bash
 python scripts/diagnose_baseline.py
 ```
 
+## Run Manifests
+
+FeatureForge writes machine-readable JSON manifests.
+
+### Generation Manifest
+
+Contains:
+
+- Generation timestamp
+- Full configuration
+- Table row counts
+- Quality report
+- Output paths
+
+### Backfill Manifest
+
+Contains:
+
+- Run type
+- Start and completion timestamps
+- Status
+- Start date and end date
+- Lookback window
+- Execution engine
+- Output directory
+- One record for each observation-date partition
+- User/content row counts
+- Concrete feature output paths
+
+### Materialization Manifest
+
+Contains:
+
+- Run type
+- Start and completion timestamps
+- Status
+- Materialization mode
+- Feast repository path
+- Time range or incremental end time
+- Manifest output directory
 
 ## Command-Line Interface
 
-
-FeatureForge currently provides three commands.
-
-
-Generate source data:
-
+FeatureForge commands:
 
 ```bash
+# Generate source datasets.
 featureforge generate \
   --config configs/synthetic_data.yaml \
   --output output/source_data
-```
 
-
-Compute a single user-feature snapshot:
-
-
-```bash
+# Compute one user engagement snapshot.
 featureforge compute-features \
   --input output/source_data \
   --output output/single_snapshot \
   --observation-time 2026-03-12T00:00:00+00:00 \
   --window-days 7
-```
 
-
-Run a multi-day User-and-Content-feature backfill:
-
-
-```bash
+# Compute partitioned offline feature batches.
 featureforge backfill \
   --input output/source_data \
   --output output/offline_store \
   --start-date 2026-03-10 \
   --end-date 2026-03-12 \
-  --window-days 7
+  --window-days 7 \
+  --engine pandas
+
+# Full Feast materialization.
+featureforge materialize \
+  --repo feature_repo \
+  --start-time 2026-03-20T00:00:00+00:00 \
+  --end-time 2026-03-25T00:00:00+00:00 \
+  --manifest-output output
+
+# Incremental Feast materialization.
+featureforge materialize-incremental \
+  --repo feature_repo \
+  --end-time 2026-03-25T00:00:00+00:00 \
+  --manifest-output output
 ```
 
-
-Additional Python scripts:
-
+## Makefile Workflows
 
 ```bash
-# Historical retrieval
-python feature_repo/historical_retrieval_demo.py
+# Install local dependencies.
+make setup
 
-# Model training
-python scripts/train_baseline.py
+# Start local Redis infrastructure.
+make docker-up
 
-# Diagnostic analysis
-python scripts/diagnose_baseline.py
+# Run checks.
+make lint
+make test
+make check
+
+# Run deterministic E2E pipeline without incremental materialization.
+make e2e
+
+# Run E2E pipeline and incremental materialization.
+make e2e-no-skip
+
+# Clean E2E output and run again.
+make e2e-clean
+
+# Materialize from Feast watermark until current UTC time.
+make materialize-incremental
+
+# Run full pipeline, online lookup, and ranking demo.
+make demo
 ```
 
+Useful demo overrides:
 
-## Temporal Correctness
-
-
-### Event Time and Ingestion Time
-
-
-FeatureForge explicitly models two clocks:
-
-
-| Field | Meaning |
-|---|---|
-| `event_time` | When the user action actually occurred |
-| `ingested_at` | When the platform received or processed the event |
-
-
-For normal base events:
-
-
-```text
-event_time == ingested_at
-is_late == false
+```bash
+make demo USER_ID=user_000290 TOP_K=5
+make demo OUTPUT_DIR=output_demo
 ```
-
-
-For late events:
-
-
-```text
-ingested_at > event_time
-is_late == true
-```
-
-
-The event contract rejects invalid time relationships:
-
-
-```text
-ingested_at < event_time
-```
-
-
-It also rejects a late-event flag without a real ingestion delay:
-
-
-```text
-is_late == true
-ingested_at <= event_time
-```
-
-
-### Label-Time Correctness
-
-
-Labels use `event_time`, not `ingested_at`:
-
-
-```text
-observation_time < event_time <= label_window_end
-```
-
-
-This keeps labels aligned with actual behavior and provides a correct basis for
-later point-in-time historical retrieval.
-
-
-### Feature-Time Correctness
-
-
-Feature calculations use event time and explicit observation timestamps:
-
-
-```text
-observation_time - window_days < event_time <= observation_time
-```
-
-
-An event after the observation timestamp cannot influence a feature value for
-that observation timestamp.
-
-
-This behavior is tested for both user and content feature views, and now for
-both the Pandas and PySpark execution engines identically.
-
-
-### Training-Time Correctness
-
-
-The ML pipeline enforces:
-
-
-- Chronological train/val/test splits (no temporal overlap)
-- Point-in-time feature retrieval (no future leakage)
-- Deterministic missing-value handling (reproducible preprocessing)
-- Pipeline persistence (preprocessing + model as one artifact)
-
-
-## Data Contracts
-
-
-Pydantic models provide executable contracts for generated records and feature
-outputs:
-
-
-- `User`
-- `Content`
-- `Event`
-- `ObservationLabel`
-- `SyntheticDataset`
-- `SyntheticDataConfig`
-- `UserEngagementFeatures`
-- `UserFeatureBatch`
-- `ContentPopularityFeatures`
-- `ContentFeatureBatch`
-
-
-Examples of validated rules include:
-
-
-- required non-empty identifiers
-- valid content duration
-- non-negative watch duration
-- valid observation windows
-- valid event-time and ingestion-time ordering
-- configuration-rate bounds
-- valid generation time range
-- non-negative feature metrics
-- typed-event counts that do not exceed total event or view counts
-- consistent timestamps and windows inside each feature batch
-
 
 ## Testing Strategy
 
+FeatureForge treats tests as enforceable parts of its feature and platform
+contracts.
 
-FeatureForge treats tests as part of the feature contract.
+The test suite covers:
 
+- Configuration validation
+- Event, label, and feature-model validation
+- Deterministic generation
+- Duplicate-event semantics
+- Late-event semantics
+- Observation-label correctness
+- Source Parquet read/write round trips
+- User and content feature aggregation
+- Point-in-time window boundaries
+- Feature batch validation
+- Date-range backfills
+- Backfill idempotency
+- Backfill manifests
+- CLI generation and backfill integration
+- Pandas/PySpark feature parity
+- Spark timezone safety
+- Feast materialization timestamp contracts
+- Deterministic materialization manifests
+- Online feature lookup behavior
+- Missing online entities
+- Online ranking behavior and stable tie-breaking
 
-The current suite includes unit and integration coverage for:
-
-
-- configuration loading and validation
-- cross-field validation for late-event settings
-- event and label model validation
-- deterministic user generation
-- deterministic content generation
-- deterministic base-event generation
-- referential integrity for generated events
-- base-event time and watch-duration semantics
-- deterministic duplicate injection
-- duplicate payload preservation
-- duplicate-input immutability
-- deterministic late-event injection
-- valid late-event delays
-- late-event payload preservation
-- late-event-input immutability
-- deterministic observation-label generation
-- label-window correctness
-- label values derived from matching events
-- full dataset orchestration
-- source Parquet file creation and read-back validation
-- timestamp and quality-flag preservation in Parquet
-- user engagement feature aggregation
-- content popularity feature aggregation
-- point-in-time feature-window boundaries
-- zero-activity feature records
-- feature window validation
-- inclusive backfill date ranges
-- invalid/reversed backfill date ranges
-- UTC observation timestamps for daily partitions
-- partitioned User and Content feature output
-- Parquet feature roundtrips
-- idempotent feature-partition outputs
-- backfill manifest metadata and partition records
-- CLI argument parsing
-- CLI generation integration
-- CLI backfill integration and idempotency
-- Pandas-vs-PySpark parity for user engagement features
-- Pandas-vs-PySpark parity for content popularity features
-- Pandas-vs-PySpark parity for window-boundary edge cases
-- Pandas-vs-PySpark parity for invalid `window_days` rejection
-- Behavioral mode produces distinct event counts per user
-- Behavioral mode respects configured event-count contract
-
-
-Run the full suite:
-
+Run all tests:
 
 ```bash
-pytest -v
+make test
 ```
 
-
-Run formatting and lint checks:
-
+Run repository-wide formatting and lint validation:
 
 ```bash
 ruff format --check .
 ruff check .
 ```
 
+## Reliability Principles
+
+- Prefer idempotent jobs.
+- Use explicit time boundaries.
+- Require timezone-aware materialization timestamps.
+- Use event time for feature and label semantics.
+- Make data contracts executable.
+- Keep output paths deterministic.
+- Keep Pandas and Spark behavior parity-tested.
+- Fail before invalid data reaches serving.
+- Record machine-readable run metadata.
+- Keep local development reproducible.
+- Separate generation, storage, computation, materialization, and serving.
+- Use stable ranking tie-breakers.
+- Never trust implicit timezone handling across Python/JVM boundaries.
+- Persist preprocessing with models to reduce training-serving skew.
+
+## Current Limitations
+
+The project intentionally remains a focused local platform implementation.
+
+- Redis is a local development online store.
+- DynamoDB is the documented AWS production alternative, not yet deployed.
+- Offline storage is local Parquet; S3 is the planned production profile.
+- Materialization currently records successful runs; explicit blocked/failed
+  manifests and pre-materialization quality gates are future work.
+- Freshness SLO enforcement is planned, but not yet implemented.
+- The ranking function is a transparent deterministic demo, not a learned
+  production ranking model.
+- No Kafka, Flink, Kubernetes, Terraform-heavy infrastructure, or
+  production-scale distributed serving is included in V1.
 
 ## Future Architecture
 
-
-The current local Python/Pandas implementation is the reference path for the
-remaining FeatureForge stages. The PySpark engine described above is the first
-concrete step of this migration and is already parity-tested against that
-reference.
-
-
 ```mermaid
 flowchart LR
-    A[Source Parquet Datasets] --> B[PySpark Feature Transformations]
-    B --> C[Partitioned Offline Feature Tables]
-    C --> D[Feast Data Sources and Feature Views]
+    Source[Source Parquet or S3 Data] --> Spark[PySpark Feature Transformations]
+    Spark --> Offline[Partitioned Offline Feature Tables]
 
+    Offline --> Gate[Pre-Materialization Quality Gate]
+    Gate --> Feast[Feast Sources, Views, and Services]
 
-    E[Observation Labels] --> F[Historical Retrieval]
-    D --> F
-    F --> G[Point-in-Time Training Dataset]
+    Labels[Observation Labels] --> Historical[Historical Retrieval]
+    Feast --> Historical
+    Historical --> Training[Point-in-Time Training Dataset]
+    Training --> ML[Training and Evaluation]
 
+    Feast --> Materialize[Full or Incremental Materialization]
+    Materialize --> Online[Redis Local / DynamoDB AWS]
+    Online --> Serving[Online Feature Lookup]
+    Serving --> Consumer[Inference or Ranking Consumer]
 
-    D --> H[Feature Materialization]
-    H --> I[Redis Online Store]
-    I --> J[Online Feature Lookup]
-    J --> K[Inference or Ranking Demo]
-
-
-    B --> L[Data Quality Gates]
-    H --> M[Freshness Checks]
-    L --> N[Operational Reports]
-    M --> N
+    Gate --> Reports[Quality Reports and Runbooks]
+    Materialize --> Freshness[Freshness Checks]
+    Freshness --> Reports
 ```
 
-
-### PySpark Transformations
-
-
-Future PySpark jobs will transform source behavioral data into scalable feature
-tables, building directly on the parity-tested engine already implemented in
-`spark_features.py`.
-
-
-The transformations must be:
-
-
-- event-time aware
-- deterministic
-- idempotent
-- testable
-- parameterized by explicit time ranges
-- safe for historical backfills
-- validated against the local reference implementation
-- timezone-safe across machines (UTC epoch integers at every Spark boundary,
-  not `TimestampType` round-trips)
-
-
-### Offline Feature Store
-
-
-The planned production-oriented offline profile uses S3-backed partitioned
-Parquet data.
-
+The next reliability milestone is a pre-materialization quality gate:
 
 ```text
-s3://featureforge/
-├── raw/
-├── offline/
-│   ├── feature_view=user_engagement_features/
-│   │   └── observation_date=YYYY-MM-DD/
-│   └── feature_view=content_popularity_features/
-│       └── observation_date=YYYY-MM-DD/
-├── observations/
-└── manifests/
+invalid offline feature data
+        ↓
+quality validation fails
+        ↓
+materialization is blocked
+        ↓
+blocked manifest and clear failure evidence
+        ↓
+no invalid values reach Redis
 ```
-
-
-The offline store will support:
-
-
-- historical feature retrieval
-- training-dataset generation
-- reproducible backfills
-- audits
-- lineage and feature provenance
-
-
-### Feast
-
-
-Feast will provide:
-
-
-- entities
-- batch data sources
-- feature views
-- feature services
-- historical retrieval
-- online materialization
-- online feature lookup
-
-
-Feature definitions will remain version-controlled Python code.
-
-
-### Online Feature Store
-
-
-Redis is the planned local online store because it supports low-latency
-key-value access and runs reproducibly through Docker Compose.
-
-
-DynamoDB is the documented AWS production alternative.
-
-
-### Materialization
-
-
-Materialization will move validated current feature values from the offline
-feature store into the online store.
-
-
-The materialization process must support:
-
-
-- full materialization
-- incremental materialization
-- retry-safe execution
-- freshness reporting
-- structured run manifests
-- online/offline parity tests
-
-
-### Data Quality
-
-
-Before materialization, FeatureForge will validate:
-
-
-- required schema
-- non-null entity keys
-- duplicate entity and timestamp pairs
-- valid feature ranges
-- referential integrity
-- input volume anomalies
-- feature freshness
-
-
-Failed quality checks must block materialization.
-
-
-### ML Pipeline Extensions
-
-
-Future ML pipeline improvements:
-
-
-- Hyperparameter tuning (GridSearch, Optuna)
-- Advanced models (XGBoost, LightGBM, neural networks)
-- MLflow experiment tracking
-- Model registry and versioning
-- A/B testing framework
-- Online learning capabilities
-
-
-## Reliability Principles
-
-
-- Prefer idempotent jobs.
-- Make time boundaries explicit.
-- Make data contracts executable.
-- Fail before invalid data reaches serving.
-- Keep transformations deterministic.
-- Preserve input immutability where practical.
-- Record run metadata.
-- Keep local development reproducible.
-- Separate generation, feature computation, storage, and interface concerns.
-- Document production trade-offs.
-- Never trust implicit timezone handling across process or JVM boundaries.
-- Validate point-in-time correctness at every stage.
-- Persist preprocessing with models to prevent training-serving skew.
-
-
-## V1 Non-Goals
-
-
-The first version intentionally does not include:
-
-
-- Kafka or Flink
-- Kubernetes
-- Terraform-heavy infrastructure
-- a complex ML model
-- multiple microservices
-- production-scale distributed serving
-
-
-These topics belong to later roadmap projects or future FeatureForge
-extensions.
