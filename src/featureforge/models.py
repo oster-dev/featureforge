@@ -96,3 +96,30 @@ class DatasetQualityReport(BaseModel):
     label_count_matches_expected: bool
 
     passed: bool
+
+
+class FeatureQualityCheck(BaseModel):
+    """Result of one offline feature-store quality check."""
+
+    name: str = Field(min_length=1)
+    passed: bool
+    message: str = Field(min_length=1)
+    affected_row_count: int = Field(ge=0, default=0)
+
+
+class OfflineFeatureQualityReport(BaseModel):
+    """Validation report for persisted offline feature partitions."""
+
+    offline_store_dir: str = Field(min_length=1)
+    checked_partition_paths: list[str]
+    checks: list[FeatureQualityCheck]
+
+    @property
+    def passed(self) -> bool:
+        """Return whether every quality check passed."""
+        return all(check.passed for check in self.checks)
+
+    @property
+    def failed_checks(self) -> list[str]:
+        """Return stable names for all failed checks."""
+        return [check.name for check in self.checks if not check.passed]

@@ -113,7 +113,7 @@ class BackfillRunManifest:
 
 @dataclass(frozen=True)
 class MaterializationRunManifest:
-    """Metadata for a Feast materialization run."""
+    """Metadata for a Feast materialization run or pre-materialization block."""
 
     run_type: str
     started_at: str
@@ -121,21 +121,26 @@ class MaterializationRunManifest:
     status: str
     mode: str
     repo_path: str
+    offline_store_dir: str
     start_time: str | None
     end_time: str
     manifest_output_dir: str
+    failed_checks: list[str]
+    quality_report: dict[str, Any]
 
     @classmethod
-    def from_run(
+    def completed(
         cls,
         *,
         mode: str,
         repo_path: Path,
+        offline_store_dir: Path,
         start_time: datetime | None,
         end_time: datetime,
         manifest_output_dir: Path,
         started_at: datetime,
         completed_at: datetime,
+        quality_report: dict[str, Any],
     ) -> MaterializationRunManifest:
         """Create a completed materialization manifest with UTC timestamps."""
         return cls(
@@ -145,23 +150,58 @@ class MaterializationRunManifest:
             status="completed",
             mode=mode,
             repo_path=str(repo_path),
+            offline_store_dir=str(offline_store_dir),
             start_time=(None if start_time is None else start_time.astimezone(UTC).isoformat()),
             end_time=end_time.astimezone(UTC).isoformat(),
             manifest_output_dir=str(manifest_output_dir),
+            failed_checks=[],
+            quality_report=quality_report,
+        )
+
+    @classmethod
+    def blocked(
+        cls,
+        *,
+        mode: str,
+        repo_path: Path,
+        offline_store_dir: Path,
+        start_time: datetime | None,
+        end_time: datetime,
+        manifest_output_dir: Path,
+        started_at: datetime,
+        blocked_at: datetime,
+        failed_checks: list[str],
+        quality_report: dict[str, Any],
+    ) -> MaterializationRunManifest:
+        """Create a blocked manifest when offline feature validation fails."""
+        return cls(
+            run_type="feast_materialization",
+            started_at=started_at.astimezone(UTC).isoformat(),
+            completed_at=blocked_at.astimezone(UTC).isoformat(),
+            status="blocked",
+            mode=mode,
+            repo_path=str(repo_path),
+            offline_store_dir=str(offline_store_dir),
+            start_time=(None if start_time is None else start_time.astimezone(UTC).isoformat()),
+            end_time=end_time.astimezone(UTC).isoformat(),
+            manifest_output_dir=str(manifest_output_dir),
+            failed_checks=failed_checks,
+            quality_report=quality_report,
         )
 
     def write(self, output_dir: Path) -> Path:
-        """Write the materialization manifest with a deterministic file name."""
+        """Write a deterministic materialization manifest."""
         manifests_dir = output_dir / "materialization_manifests"
         manifests_dir.mkdir(parents=True, exist_ok=True)
 
         end_label = self.end_time.replace(":", "").replace("+00:00", "Z")
+        blocked_label = "-blocked" if self.status == "blocked" else ""
 
         if self.start_time is None:
-            filename = f"materialize-incremental-to-{end_label}.json"
+            filename = f"materialize-incremental{blocked_label}-to-{end_label}.json"
         else:
             start_label = self.start_time.replace(":", "").replace("+00:00", "Z")
-            filename = f"materialize-{start_label}-to-{end_label}.json"
+            filename = f"materialize{blocked_label}-{start_label}-to-{end_label}.json"
 
         manifest_path = manifests_dir / filename
 

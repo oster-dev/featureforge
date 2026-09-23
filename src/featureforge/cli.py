@@ -15,13 +15,18 @@ from featureforge.backfill import run_backfill
 from featureforge.config import load_synthetic_data_config
 from featureforge.features import compute_user_engagement_features
 from featureforge.manifest import GenerationRunManifest
-from featureforge.materialization import materialize, materialize_incremental
+from featureforge.materialization import (
+    MaterializationBlockedError,
+    materialize,
+    materialize_incremental,
+)
 from featureforge.quality import validate_synthetic_dataset
 from featureforge.storage import read_synthetic_dataset, write_synthetic_dataset
 from featureforge.synthetic_data import generate_synthetic_dataset
 
 # Opt-in to future pandas behavior to silence Dask/Feast downcasting warnings.
 pd.set_option("future.no_silent_downcasting", True)
+
 
 BackfillEngine = Literal["pandas", "spark"]
 
@@ -153,6 +158,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path("output"),
         help="Directory where materialization manifests are written (default: output).",
     )
+    materialize_parser.add_argument(
+        "--offline-store-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Path to the offline feature store directory for quality validation "
+            "(default: output/offline_store)."
+        ),
+    )
 
     incremental_materialize_parser = subparsers.add_parser(
         "materialize-incremental",
@@ -175,6 +189,15 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("output"),
         help="Directory where materialization manifests are written (default: output).",
+    )
+    incremental_materialize_parser.add_argument(
+        "--offline-store-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Path to the offline feature store directory for quality validation "
+            "(default: output/offline_store)."
+        ),
     )
 
     return parser
@@ -313,14 +336,23 @@ def run_materialize_command(
     start_time: str,
     end_time: str,
     manifest_output_dir: Path,
+    offline_store_dir: Path | None = None,
 ) -> None:
     """Materialize a full explicit Feast time range and print its manifest."""
-    result = materialize(
-        repo_path=repo_path,
-        start_time=parse_utc_datetime(start_time),
-        end_time=parse_utc_datetime(end_time),
-        manifest_output_dir=manifest_output_dir,
-    )
+    try:
+        result = materialize(
+            repo_path=repo_path,
+            start_time=parse_utc_datetime(start_time),
+            end_time=parse_utc_datetime(end_time),
+            manifest_output_dir=manifest_output_dir,
+            offline_store_dir=offline_store_dir,
+        )
+    except MaterializationBlockedError as exc:
+        console = Console()
+        console.print("[red]✗[/red] Feast materialization blocked by quality gate")
+        console.print(f"Failed checks: {', '.join(exc.failed_checks)}")
+        console.print(f"Blocked manifest: {exc.manifest_path}")
+        raise SystemExit(1) from exc
 
     console = Console()
     console.print("[green]✓[/green] Feast full materialization completed")
@@ -334,13 +366,22 @@ def run_materialize_incremental_command(
     repo_path: Path,
     end_time: str,
     manifest_output_dir: Path,
+    offline_store_dir: Path | None = None,
 ) -> None:
     """Materialize new Feast data up to an explicit UTC end time."""
-    result = materialize_incremental(
-        repo_path=repo_path,
-        end_time=parse_utc_datetime(end_time),
-        manifest_output_dir=manifest_output_dir,
-    )
+    try:
+        result = materialize_incremental(
+            repo_path=repo_path,
+            end_time=parse_utc_datetime(end_time),
+            manifest_output_dir=manifest_output_dir,
+            offline_store_dir=offline_store_dir,
+        )
+    except MaterializationBlockedError as exc:
+        console = Console()
+        console.print("[red]✗[/red] Feast materialization blocked by quality gate")
+        console.print(f"Failed checks: {', '.join(exc.failed_checks)}")
+        console.print(f"Blocked manifest: {exc.manifest_path}")
+        raise SystemExit(1) from exc
 
     console = Console()
     console.print("[green]✓[/green] Feast incremental materialization completed")
@@ -378,12 +419,14 @@ def main() -> None:
             start_time=args.start_time,
             end_time=args.end_time,
             manifest_output_dir=args.manifest_output,
+            offline_store_dir=args.offline_store_dir,
         )
     elif args.command == "materialize-incremental":
         run_materialize_incremental_command(
             repo_path=args.repo,
             end_time=args.end_time,
             manifest_output_dir=args.manifest_output,
+            offline_store_dir=args.offline_store_dir,
         )
 
 
