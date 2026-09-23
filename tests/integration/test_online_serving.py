@@ -30,19 +30,6 @@ PROJECT_ROOT = Path(__file__).parents[2]
 FEATURE_REPO_PATH = PROJECT_ROOT / "feature_repo"
 OFFLINE_STORE_PATH = PROJECT_ROOT / "output" / "offline_store"
 
-USER_FEATURES_PATH = (
-    OFFLINE_STORE_PATH
-    / "user_engagement_features"
-    / "observation_date=2026-03-24"
-    / "features.parquet"
-)
-CONTENT_FEATURES_PATH = (
-    OFFLINE_STORE_PATH
-    / "content_popularity_features"
-    / "observation_date=2026-03-24"
-    / "features.parquet"
-)
-
 KNOWN_USER_ID = "user_000290"
 KNOWN_CONTENT_ID = "content_000016"
 UNKNOWN_USER_ID = "user_unknown_999"
@@ -70,12 +57,39 @@ CONTENT_FEATURE_COLUMNS = (
 )
 
 
+def _latest_feature_snapshot_path(
+    offline_store_path: Path,
+    feature_view: str,
+) -> Path | None:
+    """Return the newest available canonical feature partition path."""
+    feature_view_dir = offline_store_path / feature_view
+
+    candidates = sorted(
+        feature_view_dir.glob("observation_date=*/features.parquet"),
+        key=lambda path: path.parent.name,
+    )
+
+    if not candidates:
+        return None
+
+    return candidates[-1]
+
+
 def _local_serving_environment_available() -> bool:
     """Return whether required local files and Redis are available."""
     if not FEATURE_REPO_PATH.is_dir():
         return False
 
-    if not USER_FEATURES_PATH.is_file() or not CONTENT_FEATURES_PATH.is_file():
+    user_features_path = _latest_feature_snapshot_path(
+        OFFLINE_STORE_PATH,
+        "user_engagement_features",
+    )
+    content_features_path = _latest_feature_snapshot_path(
+        OFFLINE_STORE_PATH,
+        "content_popularity_features",
+    )
+
+    if user_features_path is None or content_features_path is None:
         return False
 
     try:
@@ -95,14 +109,26 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def user_offline_snapshot() -> pd.DataFrame:
-    """Load the latest materialized user offline snapshot once per module."""
-    return pd.read_parquet(USER_FEATURES_PATH)
+    """Load the newest canonical user feature snapshot once per module."""
+    path = _latest_feature_snapshot_path(
+        OFFLINE_STORE_PATH,
+        "user_engagement_features",
+    )
+
+    assert path is not None
+    return pd.read_parquet(path)
 
 
 @pytest.fixture(scope="module")
 def content_offline_snapshot() -> pd.DataFrame:
-    """Load the latest materialized content offline snapshot once per module."""
-    return pd.read_parquet(CONTENT_FEATURES_PATH)
+    """Load the newest canonical content feature snapshot once per module."""
+    path = _latest_feature_snapshot_path(
+        OFFLINE_STORE_PATH,
+        "content_popularity_features",
+    )
+
+    assert path is not None
+    return pd.read_parquet(path)
 
 
 def _expected_row(
@@ -145,7 +171,7 @@ def _assert_online_value_matches_offline(
 def test_user_online_features_match_latest_offline_snapshot(
     user_offline_snapshot: pd.DataFrame,
 ) -> None:
-    """Materialized user features must equal the latest offline snapshot."""
+    """Materialized user features must equal the latest canonical offline snapshot."""
     online = get_user_engagement_features(
         KNOWN_USER_ID,
         repo_path=FEATURE_REPO_PATH,
@@ -171,7 +197,7 @@ def test_user_online_features_match_latest_offline_snapshot(
 def test_content_online_features_match_latest_offline_snapshot(
     content_offline_snapshot: pd.DataFrame,
 ) -> None:
-    """Materialized content features must equal the latest offline snapshot."""
+    """Materialized content features must equal the latest canonical offline snapshot."""
     online = get_content_popularity_features(
         KNOWN_CONTENT_ID,
         repo_path=FEATURE_REPO_PATH,

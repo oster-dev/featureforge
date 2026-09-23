@@ -6,6 +6,7 @@ PYTEST ?= $(PYTHON) -m pytest
 RUFF ?= $(PYTHON) -m ruff
 
 OUTPUT_DIR ?= output_e2e
+OFFLINE_STORE_DIR ?= output/offline_store
 CONFIG ?= configs/synthetic_data.yaml
 REPO ?= feature_repo
 BACKFILL_START ?= 2026-03-20
@@ -15,9 +16,9 @@ USER_ID ?= user_000290
 TOP_K ?= 5
 
 .PHONY: help setup install lint format check test test-unit test-integration \
-	validate clean docker-config docker-up docker-down \
-	e2e e2e-no-skip e2e-clean e2e-clean-all \
-	materialize-incremental demo
+        validate clean docker-config docker-up docker-down \
+        e2e e2e-no-skip e2e-clean e2e-clean-all \
+        materialize-incremental demo
 
 help:
 	@echo "FeatureForge development commands:"
@@ -38,13 +39,17 @@ help:
 	@echo "End-to-end orchestration:"
 	@echo "  make e2e                      Run generate → backfill → full materialization"
 	@echo "  make e2e-no-skip              Run e2e including incremental materialization"
-	@echo "  make e2e-clean                Clean generated outputs, then run e2e"
+	@echo "  make e2e-clean                Clean run artifacts, then run e2e"
 	@echo "  make materialize-incremental  Materialize current features to now (UTC)"
 	@echo "  make demo                     Run e2e, online lookup, and ranking demo"
 	@echo ""
+	@echo "Storage contract:"
+	@echo "  OUTPUT_DIR                    Run artifacts such as source data and manifests"
+	@echo "  OFFLINE_STORE_DIR             Canonical feature store read by Feast FileSources"
+	@echo ""
 	@echo "Examples:"
 	@echo "  make e2e BACKFILL_START=2026-03-20 BACKFILL_END=2026-03-25"
-	@echo "  make demo OUTPUT_DIR=output_demo USER_ID=user_000290 TOP_K=5"
+	@echo "  make demo OUTPUT_DIR=output_demo OFFLINE_STORE_DIR=output/offline_store USER_ID=user_000290 TOP_K=5"
 
 setup:
 	$(PIP) install --upgrade pip
@@ -95,6 +100,7 @@ e2e:
 	$(PYTHON) scripts/run_end_to_end.py \
 		--config $(CONFIG) \
 		--output-dir $(OUTPUT_DIR) \
+		--offline-store-dir $(OFFLINE_STORE_DIR) \
 		--backfill-start $(BACKFILL_START) \
 		--backfill-end $(BACKFILL_END) \
 		--window-days $(WINDOW_DAYS) \
@@ -105,6 +111,7 @@ e2e-no-skip:
 	$(PYTHON) scripts/run_end_to_end.py \
 		--config $(CONFIG) \
 		--output-dir $(OUTPUT_DIR) \
+		--offline-store-dir $(OFFLINE_STORE_DIR) \
 		--backfill-start $(BACKFILL_START) \
 		--backfill-end $(BACKFILL_END) \
 		--window-days $(WINDOW_DAYS) \

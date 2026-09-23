@@ -2,10 +2,17 @@
 """End-to-end orchestration for FeatureForge.
 
 This script runs a complete feature pipeline:
-1. Generate synthetic source data
-2. Backfill offline features for a date range
-3. Materialize features into the online store (Redis)
-4. Optionally run an incremental materialization
+
+1. Generate synthetic source data.
+2. Backfill offline features into the canonical offline feature store.
+3. Materialize features into the Redis online store through Feast.
+4. Optionally run incremental materialization.
+
+Run artifacts and the canonical offline feature store are intentionally separate:
+
+- ``output_dir`` contains run-scoped source data and materialization manifests.
+- ``offline_store_dir`` contains canonical partitioned feature data read by
+  Feast FileSources.
 
 All steps use explicit UTC timestamps and produce machine-readable manifests.
 """
@@ -25,7 +32,7 @@ def run_command(
     description: str,
     check: bool = True,
 ) -> None:
-    """Run a featureforge CLI command and print a status line."""
+    """Run a FeatureForge CLI command and print an execution summary."""
     print(f"\n[INFO] {description}")
     print(f"[INFO] Running: {' '.join(args)}\n")
 
@@ -56,35 +63,42 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path("configs/synthetic_data.yaml"),
         help="Path to the synthetic data YAML configuration file.",
     )
-
     parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path("output"),
-        help="Root directory for all generated artifacts.",
+        help=(
+            "Root directory for run-scoped artifacts such as source data and "
+            "materialization manifests (default: output)."
+        ),
     )
-
+    parser.add_argument(
+        "--offline-store-dir",
+        type=Path,
+        default=Path("output/offline_store"),
+        help=(
+            "Canonical offline feature store written by backfill and read by "
+            "Feast FileSources (default: output/offline_store)."
+        ),
+    )
     parser.add_argument(
         "--backfill-start",
         type=str,
         default="2026-03-20",
-        help="First backfill date (inclusive) in YYYY-MM-DD format.",
+        help="First backfill date, inclusive, in YYYY-MM-DD format.",
     )
-
     parser.add_argument(
         "--backfill-end",
         type=str,
         default="2026-03-25",
-        help="Last backfill date (inclusive) in YYYY-MM-DD format.",
+        help="Last backfill date, inclusive, in YYYY-MM-DD format.",
     )
-
     parser.add_argument(
         "--window-days",
         type=int,
         default=7,
         help="Lookback window in days for feature computation (default: 7).",
     )
-
     parser.add_argument(
         "--materialize-start",
         type=str,
@@ -94,24 +108,21 @@ def build_parser() -> argparse.ArgumentParser:
             "(default: backfill-start at midnight UTC)."
         ),
     )
-
     parser.add_argument(
         "--materialize-end",
         type=str,
         default=None,
         help=(
-            "End time for materialization in ISO 8601 format "
+            "End time for full materialization in ISO 8601 format "
             "(default: backfill-end at midnight UTC)."
         ),
     )
-
     parser.add_argument(
         "--repo",
         type=Path,
         default=Path("feature_repo"),
         help="Path to the Feast repository (default: feature_repo).",
     )
-
     parser.add_argument(
         "--skip-incremental",
         action="store_true",
@@ -122,22 +133,22 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    """Run the end-to-end feature pipeline."""
+    """Run the complete FeatureForge pipeline."""
     parser = build_parser()
     args = parser.parse_args()
 
     output_dir: Path = args.output_dir
-    output_dir.mkdir(parents=True, exist_ok=True)
+    offline_store_dir: Path = args.offline_store_dir
 
     data_dir = output_dir / "data"
-    features_dir = output_dir / "features"
     manifests_dir = output_dir / "manifests"
 
-    data_dir.mkdir(exist_ok=True)
-    features_dir.mkdir(exist_ok=True)
-    manifests_dir.mkdir(exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    data_dir.mkdir(parents=True, exist_ok=True)
+    manifests_dir.mkdir(parents=True, exist_ok=True)
+    offline_store_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Generate synthetic dataset
+    # 1. Generate deterministic synthetic source data.
     run_command(
         [
             "featureforge",
@@ -150,7 +161,7 @@ def main() -> None:
         description="Generate synthetic source dataset",
     )
 
-    # 2. Backfill offline features
+    # 2. Compute and persist canonical offline feature partitions.
     run_command(
         [
             "featureforge",
@@ -158,7 +169,7 @@ def main() -> None:
             "--input",
             str(data_dir),
             "--output",
-            str(features_dir),
+            str(offline_store_dir),
             "--start-date",
             args.backfill_start,
             "--end-date",
@@ -168,19 +179,20 @@ def main() -> None:
             "--engine",
             "pandas",
         ],
-        description="Backfill offline features for date range",
+        description="Backfill offline features into canonical offline store",
     )
 
-    # 3. Full materialization
-    if args.materialize_start is None:
-        materialize_start = f"{args.backfill_start}T00:00:00+00:00"
-    else:
-        materialize_start = args.materialize_start
-
-    if args.materialize_end is None:
-        materialize_end = f"{args.backfill_end}T00:00:00+00:00"
-    else:
-        materialize_end = args.materialize_end
+    # 3. Full materialization over the explicit UTC interval.
+    materialize_start = (
+        f"{args.backfill_start}T00:00:00+00:00"
+        if args.materialize_start is None
+        else args.materialize_start
+    )
+    materialize_end = (
+        f"{args.backfill_end}T00:00:00+00:00"
+        if args.materialize_end is None
+        else args.materialize_end
+    )
 
     run_command(
         [
@@ -195,13 +207,12 @@ def main() -> None:
             "--manifest-output",
             str(output_dir),
         ],
-        description="Materialize features into online store (full)",
+        description="Materialize canonical offline features into online store (full)",
     )
 
-    # 4. Optional incremental materialization
+    # 4. Optionally materialize records newer than Feast's stored watermark.
     if not args.skip_incremental:
-        now_utc = datetime.now(UTC)
-        incremental_end = now_utc.isoformat()
+        incremental_end = datetime.now(UTC).isoformat()
 
         run_command(
             [
@@ -218,10 +229,10 @@ def main() -> None:
         )
 
     print("\n[INFO] End-to-end pipeline completed successfully.")
-    print(f"[INFO] Artifacts written to: {output_dir}")
-    print(f"[INFO] Data: {data_dir}")
-    print(f"[INFO] Features: {features_dir}")
-    print(f"[INFO] Manifests: {manifests_dir}")
+    print(f"[INFO] Run artifacts: {output_dir}")
+    print(f"[INFO] Source data: {data_dir}")
+    print(f"[INFO] Offline serving features: {offline_store_dir}")
+    print(f"[INFO] Run manifests: {manifests_dir}")
 
 
 if __name__ == "__main__":
