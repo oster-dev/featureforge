@@ -15,14 +15,16 @@ hard parts that make feature platforms trustworthy:
 - reproducible backfills
 - idempotency
 - audit manifests
-- quality validation
+- pre-materialization feature-quality gates
+- canonical offline-store contracts
+- offline/online feature parity validation
 - unit and integration tests
 - engine-independent feature correctness (Pandas and PySpark parity)
 - Feast integration for historical retrieval and online serving
 - ML-ready training pipelines with time-based evaluation
-- Full and incremental online materialization into Redis
-- Online feature lookup and deterministic ranking
-- One-command end-to-end platform demonstration
+- full and incremental online materialization into Redis
+- online feature lookup and deterministic ranking
+- one-command end-to-end platform demonstration
 
 ## Project Goal
 
@@ -40,9 +42,11 @@ The target architecture will use:
 - sklearn / XGBoost for baseline and advanced models
 
 The current implementation establishes the local reference foundation needed
-to build those components correctly, and now includes a parity-tested PySpark
-execution engine alongside the original Pandas reference, plus a complete
-ML training pipeline with historical retrieval and online serving.
+to build those components correctly. It includes a parity-tested PySpark
+execution engine alongside the original Pandas reference, a complete ML
+training pipeline with historical retrieval and online serving, and a
+canonical local offline-store contract shared by backfill, validation, Feast,
+materialization, and serving-parity tests.
 
 ## Current Status
 
@@ -51,7 +55,7 @@ ML training pipeline with historical retrieval and online serving.
 - Pydantic contracts for users, content, events, observation labels, feature
   records, feature batches, and synthetic-data configuration
 - YAML-backed synthetic-data configuration with validation for time ranges,
-  event rates, late-arrival constraints, and event generation mode
+  event rates, late-arrival constraints, and event-generation mode
 - Deterministic synthetic user, content, event, duplicate-delivery, late-event,
   and observation-label generation
 - Behavioral mode with persistent per-user activity weights
@@ -69,31 +73,41 @@ ML training pipeline with historical retrieval and online serving.
 - Deterministic, partitioned offline feature datasets
 - Date-parameterized backfills
 - Idempotent feature-partition writes
-- JSON run manifests for generation and backfill auditability
-- CLI commands for generation, single snapshot feature calculation, and
-  multi-day backfills
+- JSON run manifests for generation, backfill, and materialization auditability
+- CLI commands for generation, single-snapshot feature calculation,
+  multi-day backfills, and Feast materialization
 - A PySpark implementation of both feature views, parity-tested against the
   Pandas reference implementation
 - Feast integration:
-  - Entities (`user`, `content`)
-  - Batch sources (FileSource from partitioned Parquet)
-  - Feature views (7-day lookback windows)
-  - Feature services
-  - Historical retrieval demo
-  - Full and incremental materialization into Redis
-  - Online feature lookup
+  - entities (`user`, `content`)
+  - batch sources (`FileSource` from partitioned Parquet)
+  - feature views with 7-day lookback windows
+  - feature services
+  - historical retrieval demo
+  - full and incremental materialization into Redis
+  - online feature lookup
 - ML training pipeline:
-  - Historical retrieval producing `data/historical_features.parquet`
-  - Time-based train/val/test splits
-  - sklearn Pipeline (StandardScaler + LogisticRegression)
-  - Persisted model and metrics JSON
-  - Diagnostic analysis script
+  - historical retrieval producing `data/historical_features.parquet`
+  - time-based train/validation/test splits
+  - sklearn `Pipeline` using `StandardScaler` and `LogisticRegression`
+  - persisted model and metrics JSON
+  - diagnostic analysis script
 - Online serving:
   - Redis local online store via Docker Compose
-  - Online feature lookup for user engagement and content popularity
-  - Deterministic content ranking with transparent scoring
-  - End-to-end demo with `make demo`
-- Local Redis service through Docker Compose for the online-serving stage
+  - online feature lookup for user engagement and content popularity
+  - deterministic content ranking with transparent scoring
+  - end-to-end demo with `make demo`
+- Canonical offline-store contract:
+  - `output/offline_store/` is the local canonical Feast source
+  - backfill, quality validation, Feast `FileSource` definitions,
+    materialization, and serving parity checks use the same source
+  - materialization cannot validate an arbitrary alternate directory
+- Pre-materialization feature-quality gate:
+  - invalid persisted offline feature partitions block Feast materialization
+  - blocked and completed materialization attempts write audit manifests
+  - invalid feature data cannot be intentionally promoted to Redis through the
+    FeatureForge materialization workflow
+- Offline/online serving parity integration tests
 - Unit and integration tests
 - Ruff formatting and linting
 
@@ -106,7 +120,8 @@ ruff format --check .
 ruff check .
 pytest -v
 
-121 passed
+122 passed
+7 integration tests passed
 ```
 
 ## Current Data Flow
@@ -114,40 +129,103 @@ pytest -v
 ```text
 validated YAML configuration
         ↓
-deterministic synthetic data generation (independent or behavioral mode)
+deterministic synthetic data generation
+(independent or behavioral mode)
         ↓
 duplicate and late-event injection
         ↓
 observation-label generation
         ↓
-quality validation
+source-data quality validation
         ↓
 source Parquet datasets
         ↓
-point-in-time feature computation (Pandas reference, PySpark parity-tested)
+point-in-time feature computation
+(Pandas reference, PySpark parity-tested)
         ↓
-partitioned offline feature datasets
+date-parameterized idempotent backfill
         ↓
-Feast FileSource configuration
+canonical offline feature store
+output/offline_store/
         ↓
-historical retrieval with point-in-time joins
+offline feature-quality validation
         ↓
-time-based train/val/test split
-        ↓
-sklearn Pipeline training
-        ↓
-persisted model + metrics JSON
-        ↓
-date-parameterized idempotent backfills
-        ↓
-Feast full or incremental materialization into Redis
-        ↓
-online feature lookup
-        ↓
-deterministic content ranking
-        ↓
-JSON run manifests for generation, backfill, and materialization
+Feast FileSource definitions
+        ├── historical retrieval with point-in-time joins
+        │       ↓
+        │   time-based train/validation/test split
+        │       ↓
+        │   sklearn Pipeline training
+        │       ↓
+        │   persisted model and metrics JSON
+        │
+        └── Feast full or incremental materialization
+                ↓
+            Redis online store
+                ↓
+            online feature lookup
+                ↓
+            deterministic content ranking
+                ↓
+            offline/online parity validation
 ```
+
+## Canonical Offline Store Contract
+
+FeatureForge uses one canonical local offline feature-store root:
+
+```text
+output/offline_store/
+```
+
+It has the following Hive-partitioned layout:
+
+```text
+output/offline_store/
+├── user_engagement_features/
+│   └── observation_date=YYYY-MM-DD/
+│       └── features.parquet
+├── content_popularity_features/
+│   └── observation_date=YYYY-MM-DD/
+│       └── features.parquet
+└── manifests/
+    └── backfill-YYYY-MM-DD-to-YYYY-MM-DD.json
+```
+
+This location is the shared contract for:
+
+| Component | Responsibility |
+|---|---|
+| Backfill | Writes idempotent, date-partitioned Parquet feature datasets |
+| Offline quality gate | Validates persisted feature-view partitions |
+| Feast `FileSource` definitions | Reads feature partitions for historical retrieval and materialization |
+| Materialization | Validates the canonical source before invoking Feast |
+| Serving parity tests | Compare Redis values with the latest canonical offline partition |
+| Makefile demo flow | Orchestrates the local end-to-end lifecycle |
+
+The central invariant is:
+
+```text
+Backfill output
+    =
+Quality-gate input
+    =
+Feast source
+    =
+Materialization source
+```
+
+This prevents a split-brain failure mode in which one feature dataset is
+validated while Feast reads or materializes another.
+
+The application-level materialization API always validates
+`output/offline_store/`. The generic offline-quality-validation library remains
+path-configurable for isolated testing and reusable validation workflows.
+
+See:
+
+- [ADR-001: Offline/Online Feature Store Split](docs/adr/ADR-001-offline-online-feature-store-split.md)
+- [ADR-002: Canonical Offline Store Contract](docs/adr/ADR-002-canonical-offline-store-contract.md)
 
 ## Core Architecture
 
@@ -158,13 +236,14 @@ JSON run manifests for generation, backfill, and materialization
 | Local transformation reference | Pandas | Deterministic feature aggregation and Parquet inspection |
 | Scalable transformation engine | PySpark | Parity-tested feature computation for future scale |
 | Source and offline format | Parquet with PyArrow | Typed, columnar offline datasets |
+| Canonical local offline store | `output/offline_store/` | Shared source for validation, Feast, and parity checks |
 | Configuration | YAML | Reproducible synthetic-data generation |
 | CLI display | Rich | Human-readable local command output |
 | Testing | pytest | Unit and integration coverage |
 | Code quality | Ruff | Formatting and linting |
 | Local online store | Redis via Docker Compose | Low-latency feature serving |
 | Feature platform | Feast | Feature definitions, historical retrieval, materialization, online serving |
-| ML training | sklearn | Baseline model with Pipeline persistence |
+| ML training | sklearn | Baseline model with pipeline persistence |
 | Planned cloud profile | AWS S3 and DynamoDB | Offline and online production-oriented storage |
 
 ## Quick Start
@@ -243,13 +322,13 @@ Generated artifacts are ignored by Git and can be recreated from configuration.
 The default configuration uses behavioral mode, which introduces persistent
 latent activity propensity per user:
 
-- Each user receives a fixed `activity_weight` sampled once at generation time
-- Event counts are drawn from `Poisson(activity_weight * base_rate)`
-- Users with higher weights generate more events consistently
-- This creates predictable engagement heterogeneity without label leakage
+- Each user receives a fixed `activity_weight` sampled once at generation time.
+- Event counts are drawn from `Poisson(activity_weight * base_rate)`.
+- Users with higher weights generate more events consistently.
+- This creates predictable engagement heterogeneity without label leakage.
 
 Result: historical engagement features gain genuine predictive signal for
-future activity (test AUC ~0.70, Precision@25 ~0.84).
+future activity.
 
 ## Compute Features
 
@@ -311,6 +390,8 @@ Computed once per `content_id`:
 
 Backfills build user and content feature partitions for an inclusive date range.
 
+For the local Feast workflow, write backfills to the canonical store:
+
 ```bash
 featureforge backfill \
   --input output/source_data \
@@ -326,6 +407,7 @@ Example command output:
 ✓ Backfilled 3 observation-date partition(s)
 Date range: 2026-03-10 to 2026-03-12
 Window: 7 days
+Engine: pandas
 Output: output/offline_store
 Run manifest: output/offline_store/manifests/backfill-2026-03-10-to-2026-03-12.json
 ```
@@ -352,8 +434,12 @@ output/offline_store/
     └── backfill-2026-03-10-to-2026-03-12.json
 ```
 
-Each partition represents a feature snapshot for a single observation date.
-The backfill runner currently executes this using the Pandas reference engine.
+Each partition represents a feature snapshot for one observation date. Re-running
+the same backfill with the same source data, dates, window, and code overwrites
+the same deterministic partition paths.
+
+The backfill runner supports the Pandas reference engine and a parity-tested
+PySpark engine.
 
 ## PySpark Parity Layer
 
@@ -361,28 +447,25 @@ The backfill runner currently executes this using the Pandas reference engine.
 PySpark DataFrames instead of Pandas. It exists to prove that feature logic is
 engine-independent before Spark becomes the production execution path.
 
-Run just the parity suite:
+Run the parity suite:
 
 ```bash
 pytest tests/unit/test_spark_features.py -v
+pytest tests/unit/test_spark_parquet_features.py -v
 ```
 
-The parity tests assert that `compute_user_engagement_features_spark` and
-`compute_content_popularity_features_spark` return output identical to their
-Pandas counterparts across empty datasets, exact window boundaries, typed
-event counts, floating-point averages, and randomized multi-entity datasets.
+The parity tests assert that user and content feature computations return output
+identical to their Pandas counterparts across empty datasets, exact window
+boundaries, typed event counts, floating-point averages, and randomized
+multi-entity datasets.
 
-Building this layer surfaced a real timezone bug: Spark's `TimestampType`
-silently shifted timestamps by one hour when round-tripped through the JVM on
-a non-UTC machine, independent of the `spark.sql.session.timeZone` setting.
-The fix encodes every timestamp as UTC epoch microseconds — a plain integer —
-before it enters Spark, removing the ambiguity at the source. Full details are
-in [ARCHITECTURE.md](ARCHITECTURE.md#pyspark-parity-layer).
+The Spark implementation avoids timezone ambiguity by encoding timestamps as
+UTC epoch microseconds before Spark processing.
 
 ## Feast Integration
 
-FeatureForge integrates with Feast for production-ready feature serving and
-historical retrieval.
+FeatureForge integrates with Feast for historical feature retrieval and online
+feature serving.
 
 ### Setup
 
@@ -390,6 +473,36 @@ Ensure Feast is installed:
 
 ```bash
 python -m pip install feast
+```
+
+Apply the feature repository after starting Redis:
+
+```bash
+docker compose up -d
+cd feature_repo
+feast apply
+cd ..
+```
+
+### Feature Repository Structure
+
+```text
+feature_repo/
+├── entities.py
+├── sources.py
+├── feature_views.py
+├── feature_services.py
+├── historical_retrieval_demo.py
+├── online_lookup_demo.py
+└── personalization_demo.py
+```
+
+`feature_repo/sources.py` defines FileSources rooted at the canonical local
+offline store:
+
+```text
+../output/offline_store/user_engagement_features
+../output/offline_store/content_popularity_features
 ```
 
 ### Historical Retrieval
@@ -406,25 +519,20 @@ This produces:
 data/historical_features.parquet
 ```
 
-Contains:
-
-- 893 point-in-time-correct feature rows (from 1,000 input labels)
-- 56.2% positive rate
-- Time range: 2026-01-10 to 2026-03-24
-- All user engagement features with full feature names
-
-### Feature Repository Structure
-
-```text
-feature_repo/
-├── entities.py           # User and Content entities
-├── sources.py            # FileSource definitions
-├── feature_views.py      # Feature view definitions
-├── feature_services.py   # Feature service definitions
-└── historical_retrieval_demo.py  # Historical retrieval demo
-```
+Historical retrieval uses Feast point-in-time joins to ensure each training row
+uses only feature values available at its observation timestamp.
 
 ### Materialization
+
+Before calling Feast, FeatureForge validates the canonical persisted offline
+feature partitions in:
+
+```text
+output/offline_store/
+```
+
+If validation fails, materialization is blocked and a blocked run manifest is
+written. Feast is not invoked.
 
 Run full materialization with an explicit UTC time range:
 
@@ -444,6 +552,29 @@ featureforge materialize-incremental \
   --end-time 2026-03-25T00:00:00+00:00 \
   --manifest-output output
 ```
+
+`materialize` and `materialize-incremental` intentionally do not accept an
+`--offline-store-dir` flag. This prevents the quality gate from validating a
+different path than the one Feast reads.
+
+### Materialization Manifests
+
+Completed and blocked materialization attempts write JSON manifests under:
+
+```text
+output/materialization_manifests/
+```
+
+These manifests include:
+
+- run type and status
+- full or incremental mode
+- Feast repository path
+- canonical offline-store path
+- requested time range
+- execution timestamps
+- quality-report payload
+- failed quality-check names for blocked runs
 
 ## ML Training Pipeline
 
@@ -467,7 +598,7 @@ output/models/baseline_logreg_metrics.json
 
 ### Training Results
 
-Typical results (behavioral mode):
+Typical results in behavioral mode:
 
 | Split | Rows | Positive Rate | AUC | Precision@25 | Recall@25 |
 |---|---:|---:|---:|---:|---:|
@@ -483,13 +614,13 @@ Run diagnostic analysis:
 python scripts/diagnose_baseline.py
 ```
 
-Provides:
+This provides:
 
-- Feature distribution analysis
-- Train vs test drift detection
-- Coefficient stability checks
-- Precision/Recall curves
-- Calibration analysis
+- feature-distribution analysis
+- train-versus-test drift detection
+- coefficient-stability checks
+- precision/recall curves
+- calibration analysis
 
 ## Online Serving
 
@@ -525,7 +656,7 @@ This retrieves current feature values from Feast and displays them.
 
 ### Personalization Ranking
 
-Run the deterministic content ranking demo:
+Run the deterministic content-ranking demo:
 
 ```bash
 python feature_repo/personalization_demo.py \
@@ -549,10 +680,12 @@ This executes:
 
 ```text
 generate
-  → backfill
+  → backfill into output/offline_store
+  → offline quality validation
   → Feast full materialization into Redis
   → online feature lookup
   → deterministic content ranking
+  → online/offline serving parity checks
 ```
 
 Customize the demo:
@@ -561,6 +694,15 @@ Customize the demo:
 make demo USER_ID=user_000290 TOP_K=5
 make demo OUTPUT_DIR=output_demo
 ```
+
+The canonical offline-store location remains:
+
+```text
+output/offline_store
+```
+
+`OUTPUT_DIR` is intended for run artifacts rather than replacing the Feast
+source contract.
 
 ## Temporal Semantics
 
@@ -597,9 +739,9 @@ Both feature views use this point-in-time event window:
 
 This means:
 
-- events at the lower lookback boundary are excluded
-- events exactly at `observation_time` are included
-- events after `observation_time` are excluded
+- events at the lower lookback boundary are excluded;
+- events exactly at `observation_time` are included;
+- events after `observation_time` are excluded.
 
 For a daily backfill, every partition is computed at UTC midnight:
 
@@ -608,9 +750,9 @@ observation_date=2026-03-12
 observation_time=2026-03-12T00:00:00+00:00
 ```
 
-Therefore, the partition represents the feature state available as of that
-timestamp. This boundary is enforced identically in both the Pandas and
-PySpark implementations.
+The partition therefore represents the feature state available as of that
+timestamp. This boundary is enforced identically in the Pandas and PySpark
+implementations.
 
 ### Label Window
 
@@ -628,14 +770,20 @@ feature windows.
 Backfill feature outputs use deterministic paths:
 
 ```text
-<output>/<feature_view>/observation_date=YYYY-MM-DD/features.parquet
+<offline-store-root>/<feature_view>/observation_date=YYYY-MM-DD/features.parquet
+```
+
+For the local Feast workflow, the offline-store root is:
+
+```text
+output/offline_store/
 ```
 
 Running the same backfill again with the same source data, dates, window, and
 code overwrites the same canonical files. It does not append duplicate part
 files or create random output names.
 
-Every backfill also writes a JSON manifest containing:
+Every backfill writes a JSON manifest containing:
 
 - run type
 - start and completion time
@@ -643,7 +791,8 @@ Every backfill also writes a JSON manifest containing:
 - date range
 - lookback window
 - output directory
-- per-date User and Content feature counts
+- execution engine
+- per-date user and content feature counts
 - concrete output paths
 
 Example shape:
@@ -667,27 +816,35 @@ Example shape:
 }
 ```
 
-Materialization runs also write JSON manifests under:
-
-```text
-<manifest-output>/materialization_manifests/
-```
-
 ## Quality Validation
 
-Every source generation run performs validation before persistence.
+### Source Data
+
+Every source-generation run performs validation before persistence.
 
 Current checks include:
 
 - Referential integrity: all user and content references exist.
 - Temporal validity: `ingested_at >= event_time`.
-- Event semantics: search events have no content reference; play/watch events
-  have positive watch duration.
+- Event semantics: search events have no content reference; play and watch
+  events have positive watch duration.
 - Late-event semantics: late events have an actual positive ingestion delay.
 - Label validity: label windows end after their observation timestamps.
 - Volume validation: event and label counts match configured expectations.
 
 Generation results are included in `run_manifest.json`.
+
+### Persisted Offline Features
+
+Before Feast materialization, FeatureForge validates persisted feature-store
+partitions in the canonical offline store.
+
+The quality gate checks the offline feature data before a write to the Redis
+online store is attempted. Invalid partitions block materialization and produce
+a blocked materialization manifest.
+
+This prevents the FeatureForge materialization workflow from promoting known
+invalid feature data into the online serving layer.
 
 ## Validation
 
@@ -711,6 +868,14 @@ make validate
 make lint
 make test
 make docker-config
+```
+
+For focused checks:
+
+```bash
+pytest tests/unit/ -v
+pytest tests/integration/ -v
+pytest tests/unit/test_materialization.py -v
 ```
 
 ## Local Infrastructure
@@ -742,20 +907,48 @@ Stop it:
 make docker-down
 ```
 
+## Architecture Decisions
+
+FeatureForge documents important architectural decisions as ADRs:
+
+- [ADR-001: Offline/Online Feature Store Split](docs/adr/ADR-001-offline-online-feature-store-split.md)
+- [ADR-002: Canonical Offline Store Contract](docs/adr/ADR-002-canonical-offline-store-contract.md)
+
+These decisions establish the local V1 model:
+
+```text
+Parquet offline store
+        ↓
+Feast definitions and retrieval
+        ↓
+Redis online store
+```
+
+The future AWS production profile will replace the local canonical path with
+one environment-owned object-store URI, such as:
+
+```text
+s3://featureforge-<environment>/offline-store/
+```
+
+The resolved production location must be shared by the backfill writer, quality
+gate, Feast sources, manifests, lineage metadata, freshness checks, and parity
+checks.
+
 ## Roadmap
 
 ### Completed Foundation
 
 - Deterministic synthetic source-data generation.
 - Executable source-data contracts.
-- Quality validation.
+- Source-data quality validation.
 - Parquet source datasets.
 - User engagement feature contract and computation.
 - Content popularity feature contract and computation.
 - Point-in-time feature windows.
 - Partitioned feature datasets.
 - Parameterized, idempotent local backfills.
-- Generation and backfill audit manifests.
+- Generation, backfill, and materialization audit manifests.
 - CLI and test foundation.
 - PySpark implementation of both feature views.
 - Parity tests between the Pandas reference implementation and Spark output.
@@ -765,20 +958,23 @@ make docker-down
 - Feast full and incremental materialization.
 - Online feature lookup and deterministic ranking.
 - End-to-end platform demo with `make demo`.
+- Canonical offline-store contract for local V1.
+- Pre-materialization persisted-feature quality gate.
+- Offline/online serving parity integration tests.
+- ADRs for offline/online separation and canonical source ownership.
 
 ### Next Steps
 
-1. Read source Parquet directly as Spark DataFrames instead of constructing
-   them from an in-memory `SyntheticDataset`.
-2. Add an engine parameter to the backfill runner so backfills can execute on
-   either the Pandas or the Spark implementation, with the manifest recording
-   which engine produced each partition.
-3. Implement pre-materialization quality gates.
-4. Add freshness checks, richer run manifests, failure simulations, and runbooks.
-5. Document the AWS S3 and DynamoDB production profile.
-6. Add GitHub Actions CI.
-7. Implement hyperparameter tuning and advanced models (XGBoost, LightGBM).
-8. Add MLflow experiment tracking and model registry.
+1. Add freshness checks for persisted offline feature partitions.
+2. Extend materialization manifests with richer lineage and run metadata.
+3. Add controlled failure simulations and operational runbooks.
+4. Document the AWS S3 and DynamoDB production profile.
+5. Add GitHub Actions CI.
+6. Implement hyperparameter tuning and advanced models such as XGBoost or
+   LightGBM.
+7. Add MLflow experiment tracking and a model registry.
+8. Evolve the local fixed-path contract into one shared,
+   environment-owned production storage configuration.
 
 ## Project Scope
 
@@ -788,9 +984,10 @@ Version 1 focuses on:
 - offline and online feature separation
 - point-in-time historical retrieval
 - reproducible backfills
+- canonical offline-store ownership
+- pre-materialization feature-quality validation
 - online materialization
-- data-quality validation
-- freshness monitoring
+- offline/online parity validation
 - tests, CI, and operational documentation
 - ML-ready training pipelines
 
