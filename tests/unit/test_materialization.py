@@ -7,12 +7,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
-import pandas as pd
 import pytest
 
 from featureforge.cli import parse_utc_datetime
+from featureforge.feature_quality import FeatureQualityCheck, OfflineFeatureQualityReport
 from featureforge.manifest import MaterializationRunManifest
 from featureforge.materialization import (
+    _CANONICAL_OFFLINE_STORE_DIR,
     MaterializationBlockedError,
     _require_utc_timestamp,
     materialize,
@@ -131,95 +132,48 @@ def test_incremental_materialization_manifest_writes_deterministic_path(
     assert payload["quality_report"] == {"passed": True, "failed_checks": []}
 
 
-def _create_minimal_valid_offline_store(
-    base_dir: Path,
-    *,
-    negative_metric: bool = False,
-    non_numeric_metric: bool = False,
-) -> None:
-    """Create a minimal valid offline store with Hive-partitioned directories."""
-    user_partition_dir = base_dir / "user_engagement_features" / "observation_date=2026-01-10"
-    user_partition_dir.mkdir(parents=True)
-
-    user_df = pd.DataFrame(
-        {
-            "user_id": [1, 2, 3],
-            "observation_time": pd.to_datetime(
-                ["2026-01-10T00:00:00+00:00"] * 3,
-                utc=True,
-            ),
-            "window_days": [7, 7, 7],
-            "event_count": [10, 5, 15],
-            "unique_content_count": [2, 1, 4],
-            "total_watch_seconds": [100, 50, 200],
-            "search_count": [2, 1, 3],
-            "play_count": [3, 2, 5],
-            "watch_count": [2, 1, 4],
-            "days_since_last_activity": [1, 2, 0],
-        }
-    )
-
-    if negative_metric:
-        user_df.loc[1, "event_count"] = -3
-    elif non_numeric_metric:
-        user_df["event_count"] = ["high", "medium", "low"]
-
-    user_df.to_parquet(user_partition_dir / "features.parquet")
-
-    content_partition_dir = base_dir / "content_popularity_features" / "observation_date=2026-01-10"
-    content_partition_dir.mkdir(parents=True)
-
-    content_df = pd.DataFrame(
-        {
-            "content_id": [100, 101, 102],
-            "observation_time": pd.to_datetime(
-                ["2026-01-10T00:00:00+00:00"] * 3,
-                utc=True,
-            ),
-            "window_days": [7, 7, 7],
-            "view_count": [20, 15, 30],
-            "unique_viewer_count": [10, 8, 20],
-            "total_watch_seconds": [500, 300, 1000],
-            "average_watch_seconds": [10.0, 12.5, 15.0],
-            "search_count": [5, 3, 8],
-            "play_count": [5, 4, 10],
-            "watch_count": [5, 3, 7],
-            "days_since_last_view": [0, 1, 2],
-        }
-    )
-    content_df.to_parquet(content_partition_dir / "features.parquet")
-
-
 def test_blocked_full_materialization_writes_blocked_manifest_and_raises(
     tmp_path: Path,
 ) -> None:
     """A failed offline feature validation must block materialization and write a blocked manifest."""
     start_time = utc_datetime(2026, 1, 10)
     end_time = utc_datetime(2026, 3, 25)
-    offline_store_dir = tmp_path / "offline_store"
 
-    _create_minimal_valid_offline_store(
-        offline_store_dir,
-        negative_metric=True,
+    failed_report = OfflineFeatureQualityReport(
+        offline_store_dir=str(_CANONICAL_OFFLINE_STORE_DIR),
+        checked_partition_paths=[
+            "output/offline_store/user_engagement_features/observation_date=2026-01-10"
+        ],
+        checks=[
+            FeatureQualityCheck(
+                name="non_negative_metrics",
+                passed=False,
+                message="Negative event_count detected.",
+                affected_row_count=1,
+            )
+        ],
     )
 
-    with pytest.raises(MaterializationBlockedError) as exc_info:
-        materialize(
-            repo_path=Path("feature_repo"),
-            start_time=start_time,
-            end_time=end_time,
-            manifest_output_dir=tmp_path,
-            offline_store_dir=offline_store_dir,
-        )
+    with patch(
+        "featureforge.materialization.validate_offline_feature_store",
+        return_value=failed_report,
+    ):
+        with pytest.raises(MaterializationBlockedError) as exc_info:
+            materialize(
+                repo_path=Path("feature_repo"),
+                start_time=start_time,
+                end_time=end_time,
+                manifest_output_dir=tmp_path,
+            )
 
     exc = exc_info.value
-    assert any("non_negative_metrics" in check for check in exc.failed_checks)
+    assert exc.failed_checks == ["non_negative_metrics"]
     assert exc.manifest_path.exists()
 
     payload = json.loads(exc.manifest_path.read_text(encoding="utf-8"))
     assert payload["status"] == "blocked"
     assert payload["mode"] == "full"
-    assert any("non_negative_metrics" in check for check in payload["failed_checks"])
+    assert payload["failed_checks"] == ["non_negative_metrics"]
 
 
 def test_completed_full_materialization_calls_feast_once_and_writes_manifest(
@@ -228,24 +182,38 @@ def test_completed_full_materialization_calls_feast_once_and_writes_manifest(
     """A valid offline store must call Feast.materialize once and write a completed manifest."""
     start_time = utc_datetime(2026, 1, 10)
     end_time = utc_datetime(2026, 3, 25)
-    offline_store_dir = tmp_path / "offline_store"
 
-    _create_minimal_valid_offline_store(offline_store_dir)
+    valid_report = OfflineFeatureQualityReport(
+        offline_store_dir=str(_CANONICAL_OFFLINE_STORE_DIR),
+        checked_partition_paths=[
+            "output/offline_store/user_engagement_features/observation_date=2026-01-10"
+        ],
+        checks=[
+            FeatureQualityCheck(
+                name="non_negative_metrics",
+                passed=True,
+                message="All metrics are non-negative.",
+            )
+        ],
+    )
 
-    with patch("featureforge.materialization.FeatureStore") as MockFeatureStore:
-        mock_store = MockFeatureStore.return_value
-        result = materialize(
-            repo_path=Path("feature_repo"),
-            start_time=start_time,
-            end_time=end_time,
-            manifest_output_dir=tmp_path,
-            offline_store_dir=offline_store_dir,
-        )
+    with patch(
+        "featureforge.materialization.validate_offline_feature_store",
+        return_value=valid_report,
+    ):
+        with patch("featureforge.materialization.FeatureStore") as MockFeatureStore:
+            mock_store = MockFeatureStore.return_value
+            result = materialize(
+                repo_path=Path("feature_repo"),
+                start_time=start_time,
+                end_time=end_time,
+                manifest_output_dir=tmp_path,
+            )
 
-        mock_store.materialize.assert_called_once_with(
-            start_date=start_time,
-            end_date=end_time,
-        )
+            mock_store.materialize.assert_called_once_with(
+                start_date=start_time,
+                end_date=end_time,
+            )
 
     assert result.manifest_path.exists()
     payload = json.loads(result.manifest_path.read_text(encoding="utf-8"))
@@ -258,29 +226,41 @@ def test_blocked_incremental_materialization_writes_blocked_manifest_and_raises(
 ) -> None:
     """A failed offline feature validation must block incremental materialization."""
     end_time = utc_datetime(2026, 3, 25)
-    offline_store_dir = tmp_path / "offline_store"
 
-    _create_minimal_valid_offline_store(
-        offline_store_dir,
-        non_numeric_metric=True,
+    failed_report = OfflineFeatureQualityReport(
+        offline_store_dir=str(_CANONICAL_OFFLINE_STORE_DIR),
+        checked_partition_paths=[
+            "output/offline_store/user_engagement_features/observation_date=2026-01-10"
+        ],
+        checks=[
+            FeatureQualityCheck(
+                name="numeric_feature_types",
+                passed=False,
+                message="Non-numeric feature type detected.",
+                affected_row_count=3,
+            )
+        ],
     )
 
-    with pytest.raises(MaterializationBlockedError) as exc_info:
-        materialize_incremental(
-            repo_path=Path("feature_repo"),
-            end_time=end_time,
-            manifest_output_dir=tmp_path,
-            offline_store_dir=offline_store_dir,
-        )
+    with patch(
+        "featureforge.materialization.validate_offline_feature_store",
+        return_value=failed_report,
+    ):
+        with pytest.raises(MaterializationBlockedError) as exc_info:
+            materialize_incremental(
+                repo_path=Path("feature_repo"),
+                end_time=end_time,
+                manifest_output_dir=tmp_path,
+            )
 
     exc = exc_info.value
-    assert any("numeric_feature_types" in check for check in exc.failed_checks)
+    assert exc.failed_checks == ["numeric_feature_types"]
     assert exc.manifest_path.exists()
 
     payload = json.loads(exc.manifest_path.read_text(encoding="utf-8"))
     assert payload["status"] == "blocked"
     assert payload["mode"] == "incremental"
-    assert any("numeric_feature_types" in check for check in payload["failed_checks"])
+    assert payload["failed_checks"] == ["numeric_feature_types"]
 
 
 def test_completed_incremental_materialization_calls_feast_once_and_writes_manifest(
@@ -288,22 +268,36 @@ def test_completed_incremental_materialization_calls_feast_once_and_writes_manif
 ) -> None:
     """A valid offline store must call Feast.materialize_incremental once."""
     end_time = utc_datetime(2026, 3, 25)
-    offline_store_dir = tmp_path / "offline_store"
 
-    _create_minimal_valid_offline_store(offline_store_dir)
+    valid_report = OfflineFeatureQualityReport(
+        offline_store_dir=str(_CANONICAL_OFFLINE_STORE_DIR),
+        checked_partition_paths=[
+            "output/offline_store/user_engagement_features/observation_date=2026-01-10"
+        ],
+        checks=[
+            FeatureQualityCheck(
+                name="non_negative_metrics",
+                passed=True,
+                message="All metrics are non-negative.",
+            )
+        ],
+    )
 
-    with patch("featureforge.materialization.FeatureStore") as MockFeatureStore:
-        mock_store = MockFeatureStore.return_value
-        result = materialize_incremental(
-            repo_path=Path("feature_repo"),
-            end_time=end_time,
-            manifest_output_dir=tmp_path,
-            offline_store_dir=offline_store_dir,
-        )
+    with patch(
+        "featureforge.materialization.validate_offline_feature_store",
+        return_value=valid_report,
+    ):
+        with patch("featureforge.materialization.FeatureStore") as MockFeatureStore:
+            mock_store = MockFeatureStore.return_value
+            result = materialize_incremental(
+                repo_path=Path("feature_repo"),
+                end_time=end_time,
+                manifest_output_dir=tmp_path,
+            )
 
-        mock_store.materialize_incremental.assert_called_once_with(
-            end_date=end_time,
-        )
+            mock_store.materialize_incremental.assert_called_once_with(
+                end_date=end_time,
+            )
 
     assert result.manifest_path.exists()
     payload = json.loads(result.manifest_path.read_text(encoding="utf-8"))

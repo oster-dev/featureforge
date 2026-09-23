@@ -1,5 +1,6 @@
 """Command-line interface for FeatureForge."""
 
+
 from __future__ import annotations
 
 import argparse
@@ -28,7 +29,9 @@ from featureforge.synthetic_data import generate_synthetic_dataset
 pd.set_option("future.no_silent_downcasting", True)
 
 
+
 BackfillEngine = Literal["pandas", "spark"]
+
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -41,7 +44,9 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+
     subparsers = parser.add_subparsers(dest="command", required=True)
+
 
     generate_parser = subparsers.add_parser(
         "generate",
@@ -59,6 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="Directory where source Parquet files will be written.",
     )
+
 
     compute_parser = subparsers.add_parser(
         "compute-features",
@@ -88,6 +94,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=7,
         help="Lookback window in days (default: 7).",
     )
+
 
     backfill_parser = subparsers.add_parser(
         "backfill",
@@ -130,6 +137,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Feature-computation engine (default: pandas).",
     )
 
+
     materialize_parser = subparsers.add_parser(
         "materialize",
         help="Materialize Feast offline feature values into the online store.",
@@ -158,15 +166,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path("output"),
         help="Directory where materialization manifests are written (default: output).",
     )
-    materialize_parser.add_argument(
-        "--offline-store-dir",
-        type=Path,
-        default=None,
-        help=(
-            "Path to the offline feature store directory for quality validation "
-            "(default: output/offline_store)."
-        ),
-    )
+
 
     incremental_materialize_parser = subparsers.add_parser(
         "materialize-incremental",
@@ -190,17 +190,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path("output"),
         help="Directory where materialization manifests are written (default: output).",
     )
-    incremental_materialize_parser.add_argument(
-        "--offline-store-dir",
-        type=Path,
-        default=None,
-        help=(
-            "Path to the offline feature store directory for quality validation "
-            "(default: output/offline_store)."
-        ),
-    )
+
 
     return parser
+
 
 
 def print_generation_summary(
@@ -220,17 +213,21 @@ def print_generation_summary(
     table.add_column("Rows", justify="right", style="green")
     table.add_column("Path", style="dim")
 
+
     table.add_row("users", str(user_count), str(output_paths["users"]))
     table.add_row("content", str(content_count), str(output_paths["content"]))
     table.add_row("events", str(event_count), str(output_paths["events"]))
     table.add_row("labels", str(label_count), str(output_paths["labels"]))
 
+
     console.print(table)
     console.print(f"Duplicate events: {duplicate_count}")
     console.print(f"Late events: {late_event_count}")
 
+
     if manifest_path is not None:
         console.print(f"Run manifest: {manifest_path}")
+
 
 
 def run_generate(config_path: Path, output_dir: Path) -> None:
@@ -238,8 +235,10 @@ def run_generate(config_path: Path, output_dir: Path) -> None:
     config = load_synthetic_data_config(config_path)
     dataset = generate_synthetic_dataset(config)
 
+
     quality_report = validate_synthetic_dataset(dataset, config)
     output_paths = write_synthetic_dataset(dataset, output_dir)
+
 
     manifest = GenerationRunManifest.from_run(
         config=config,
@@ -248,6 +247,7 @@ def run_generate(config_path: Path, output_dir: Path) -> None:
         output_paths=output_paths,
     )
     manifest_path = manifest.write(output_dir)
+
 
     console = Console()
     print_generation_summary(
@@ -263,6 +263,7 @@ def run_generate(config_path: Path, output_dir: Path) -> None:
     )
 
 
+
 def run_compute_features(
     input_dir: Path,
     output_dir: Path,
@@ -273,22 +274,26 @@ def run_compute_features(
     dataset = read_synthetic_dataset(input_dir)
     observation_datetime = datetime.fromisoformat(observation_time).replace(tzinfo=UTC)
 
+
     batch = compute_user_engagement_features(
         dataset,
         observation_time=observation_datetime,
         window_days=window_days,
     )
 
+
     output_dir.mkdir(parents=True, exist_ok=True)
     features_path = output_dir / "user_engagement_features.parquet"
     features_df = pd.DataFrame([feature.model_dump() for feature in batch.features])
     features_df.to_parquet(features_path, index=False)
+
 
     console = Console()
     console.print(f"[green]✓[/green] Computed features for {len(batch.features)} users")
     console.print(f"Observation time: {observation_datetime.isoformat()}")
     console.print(f"Window: {batch.window_days} days")
     console.print(f"Output: {features_path}")
+
 
 
 def run_backfill_command(
@@ -302,6 +307,7 @@ def run_backfill_command(
     """Run a date-parameterized offline feature backfill."""
     dataset = read_synthetic_dataset(input_dir)
 
+
     results, manifest_path = run_backfill(
         dataset=dataset,
         start_date=start_date,
@@ -312,6 +318,7 @@ def run_backfill_command(
         input_dir=input_dir if engine == "spark" else None,
     )
 
+
     console = Console()
     console.print(f"[green]✓[/green] Backfilled {len(results)} observation-date partition(s)")
     console.print(f"Date range: {start_date.isoformat()} to {end_date.isoformat()}")
@@ -321,14 +328,18 @@ def run_backfill_command(
     console.print(f"Run manifest: {manifest_path}")
 
 
+
 def parse_utc_datetime(value: str) -> datetime:
     """Parse an ISO 8601 timestamp and require an explicit timezone."""
     parsed = datetime.fromisoformat(value)
 
+
     if parsed.tzinfo is None:
         raise ValueError("Timestamp must include an explicit timezone, for example +00:00.")
 
+
     return parsed.astimezone(UTC)
+
 
 
 def run_materialize_command(
@@ -336,7 +347,6 @@ def run_materialize_command(
     start_time: str,
     end_time: str,
     manifest_output_dir: Path,
-    offline_store_dir: Path | None = None,
 ) -> None:
     """Materialize a full explicit Feast time range and print its manifest."""
     try:
@@ -345,7 +355,6 @@ def run_materialize_command(
             start_time=parse_utc_datetime(start_time),
             end_time=parse_utc_datetime(end_time),
             manifest_output_dir=manifest_output_dir,
-            offline_store_dir=offline_store_dir,
         )
     except MaterializationBlockedError as exc:
         console = Console()
@@ -353,6 +362,7 @@ def run_materialize_command(
         console.print(f"Failed checks: {', '.join(exc.failed_checks)}")
         console.print(f"Blocked manifest: {exc.manifest_path}")
         raise SystemExit(1) from exc
+
 
     console = Console()
     console.print("[green]✓[/green] Feast full materialization completed")
@@ -362,11 +372,11 @@ def run_materialize_command(
     console.print(f"Run manifest: {result.manifest_path}")
 
 
+
 def run_materialize_incremental_command(
     repo_path: Path,
     end_time: str,
     manifest_output_dir: Path,
-    offline_store_dir: Path | None = None,
 ) -> None:
     """Materialize new Feast data up to an explicit UTC end time."""
     try:
@@ -374,7 +384,6 @@ def run_materialize_incremental_command(
             repo_path=repo_path,
             end_time=parse_utc_datetime(end_time),
             manifest_output_dir=manifest_output_dir,
-            offline_store_dir=offline_store_dir,
         )
     except MaterializationBlockedError as exc:
         console = Console()
@@ -383,6 +392,7 @@ def run_materialize_incremental_command(
         console.print(f"Blocked manifest: {exc.manifest_path}")
         raise SystemExit(1) from exc
 
+
     console = Console()
     console.print("[green]✓[/green] Feast incremental materialization completed")
     console.print(f"Repository: {result.repo_path}")
@@ -390,10 +400,12 @@ def run_materialize_incremental_command(
     console.print(f"Run manifest: {result.manifest_path}")
 
 
+
 def main() -> None:
     """Parse command-line arguments and run the selected command."""
     parser = build_parser()
     args = parser.parse_args()
+
 
     if args.command == "generate":
         run_generate(args.config, args.output)
@@ -419,15 +431,14 @@ def main() -> None:
             start_time=args.start_time,
             end_time=args.end_time,
             manifest_output_dir=args.manifest_output,
-            offline_store_dir=args.offline_store_dir,
         )
     elif args.command == "materialize-incremental":
         run_materialize_incremental_command(
             repo_path=args.repo,
             end_time=args.end_time,
             manifest_output_dir=args.manifest_output,
-            offline_store_dir=args.offline_store_dir,
         )
+
 
 
 if __name__ == "__main__":
