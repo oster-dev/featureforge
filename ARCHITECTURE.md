@@ -15,9 +15,11 @@ Infrastructure, and ML Platform Engineering fundamentals:
 - Partitioned offline feature datasets
 - Reproducible, date-parameterized backfills
 - Auditable generation, backfill, and materialization manifests
-- Source-data and persisted-feature quality validation
-- Pre-materialization quality gates
+- Source-data and persisted-feature correctness validation
+- Pre-materialization correctness gates
+- Feature freshness SLO checks
 - Canonical offline-store ownership
+- Controlled failure simulations and operational runbooks
 - Offline/online feature parity checks
 - Engine-independent feature correctness through Pandas/PySpark parity
 - Feast historical retrieval and online serving
@@ -36,6 +38,7 @@ The project records key decisions as Architecture Decision Records:
 
 - [ADR-001: Offline/Online Feature Store Split](docs/adr/ADR-001-offline-online-feature-store-split.md)
 - [ADR-002: Canonical Offline Store Contract](docs/adr/ADR-002-canonical-offline-store-contract.md)
+- [ADR-003: Feature Freshness SLOs and Fail-Safe Serving](docs/adr/ADR-003-freshness-slos-and-fail-safe-serving.md)
 
 The local V1 architecture separates two distinct responsibilities:
 
@@ -62,7 +65,9 @@ The central V1 invariant is:
 ```text
 Backfill output
     =
-Offline quality-gate input
+Correctness-gate input
+    =
+Freshness-check input
     =
 Feast FileSource input
     =
@@ -85,14 +90,19 @@ FeatureForge currently provides the following verified properties:
 | Timezone safety | UTC contracts at the Python boundary; Spark uses UTC epoch microseconds |
 | Backfill idempotency | Repeated identical runs overwrite deterministic feature partitions |
 | Engine correctness | Pandas reference output is parity-tested against PySpark |
-| Canonical offline source | Backfill, quality validation, Feast FileSources, materialization, and serving parity checks use `output/offline_store/` |
-| Pre-materialization safety | Invalid canonical offline partitions block Feast materialization before Redis writes |
+| Canonical offline source | Backfill, correctness validation, freshness checks, Feast FileSources, materialization, and serving parity checks use `output/offline_store/` |
+| Pre-materialization correctness | Invalid canonical offline partitions block Feast materialization before Redis writes |
+| Feature freshness | The newest canonical partition for each required feature view is checked against an explicit UTC reference time and maximum lag |
+| Serving-safety automation | `featureforge check-freshness` and `make check-freshness` return non-zero status when canonical features exceed the configured freshness SLO |
+| Historical reproducibility | Correct historical materialization ranges are not rejected only because they are old relative to current wall-clock time |
 | Online serving | Feast materializes user and content feature views into Redis |
 | Consumer behavior | Online lookup and ranking use only materialized Feast feature values |
 | Offline/online parity | Integration tests compare Redis values with the latest canonical offline partitions |
-| Operational evidence | JSON manifests record generation, backfill, and both completed and blocked materialization runs |
+| Operational evidence | JSON manifests record generation, backfill, and completed or blocked materialization runs |
+| Failure handling | Controlled tests verify stale features, invalid backfill input, and failed materialization behavior |
+| Operational recovery | Version-controlled runbooks document diagnosis, recovery, verification, and prevention |
 | Developer experience | `docker compose up -d && make demo` runs the local vertical slice |
-| Test coverage | Unit and integration tests validate contracts, temporal behavior, quality gates, and serving |
+| Test coverage | Unit, integration, and failure-simulation tests validate contracts, temporal behavior, reliability gates, and serving |
 
 ## Current Architecture
 
@@ -141,9 +151,10 @@ flowchart LR
     UserFeatures --> CanonicalStore[Canonical Offline Store<br/>output/offline_store]
     ContentFeatures --> CanonicalStore
 
-    CanonicalStore --> OfflineQuality[Persisted Offline Feature<br/>Quality Validation]
-    OfflineQuality --> FeastSources[Feast FileSources]
+    CanonicalStore --> OfflineCorrectness[Persisted Offline Feature<br/>Correctness Validation]
+    CanonicalStore --> OfflineFreshness[Feature Freshness<br/>SLO Check]
 
+    OfflineCorrectness --> FeastSources[Feast FileSources]
     FeastSources --> FeatureViews[Feast Feature Views]
 
     FeatureViews --> Historical[Historical Retrieval]
@@ -152,7 +163,8 @@ flowchart LR
     Training --> Model[sklearn Pipeline Training]
     Model --> Artifacts[Model + Metrics]
 
-    OfflineQuality --> Materialize[Full or Incremental<br/>Materialization]
+    OfflineCorrectness --> Materialize[Full or Incremental<br/>Materialization]
+    OfflineFreshness -. current serving safety .-> Materialize
     Materialize --> Redis[Redis Online Store]
     Materialize --> MaterializationManifest[Completed or Blocked<br/>Materialization Manifest]
 
@@ -162,11 +174,15 @@ flowchart LR
 
     CanonicalStore --> Parity[Offline/Online<br/>Serving Parity Tests]
     Redis --> Parity
+
+    OfflineFreshness --> FreshnessCLI[check-freshness CLI]
+    FreshnessCLI --> Runbooks[Operational Runbooks]
+    MaterializationManifest --> Runbooks
 ```
 
 ## Main Data Flows
 
-FeatureForge exposes four executable local flows.
+FeatureForge exposes five executable local flows.
 
 ### 1. Synthetic Dataset Generation
 
@@ -253,13 +269,80 @@ The generic backfill API can write to isolated paths for testing or local
 experiments. The local Feast materialization workflow, however, uses only the
 canonical `output/offline_store/` contract.
 
-### 3. Feast Materialization and Online Serving
+### 3. Offline Feature Freshness Check
+
+Feature correctness and feature freshness are intentionally separate
+reliability concerns.
+
+Correctness asks:
+
+```text
+Are persisted feature values structurally and semantically valid?
+```
+
+Freshness asks:
+
+```text
+Is the newest persisted feature snapshot recent enough for the intended
+serving workflow?
+```
+
+Freshness is derived from the latest Hive-partitioned observation date for each
+required feature view:
+
+```text
+output/offline_store/
+├── user_engagement_features/
+│   └── observation_date=YYYY-MM-DD/
+└── content_popularity_features/
+    └── observation_date=YYYY-MM-DD/
+```
+
+The check does not use filesystem modification time as its primary signal.
+File-write time describes storage activity, whereas `observation_date`
+represents the business time through which the feature snapshot is valid.
+
+The V1 freshness contract is:
+
+```text
+latest canonical observation partition
+        must be within
+configured maximum lag
+        of
+explicit UTC reference time
+```
+
+Run the default reproducible local check:
+
+```bash
+make check-freshness
+```
+
+Run the CLI with an explicit reference time:
+
+```bash
+featureforge check-freshness \
+  --reference-time 2026-03-25T00:00:00+00:00 \
+  --max-lag-hours 24
+```
+
+The default local maximum lag is 24 hours.
+
+A stale or missing view produces a stable named failed check and a non-zero
+process exit code:
+
+```text
+user_engagement_features.freshness
+content_popularity_features.freshness
+```
+
+### 4. Feast Materialization and Online Serving
 
 ```text
 canonical partitioned offline feature data
 output/offline_store/
         ↓
-persisted offline feature-quality validation
+persisted offline feature-correctness validation
         ↓
 Feast FileSources and Feature Views
         ↓
@@ -272,6 +355,26 @@ online feature lookup
 deterministic ranking / personalization decision
         ↓
 offline/online parity validation
+```
+
+The persisted-feature correctness gate is mandatory before every Feast write.
+
+Freshness is an explicit serving-safety check for workflows that require
+current feature snapshots. It is not a blanket `datetime.now(UTC)` restriction
+on every historical materialization request.
+
+A historical re-materialization can be legitimate when the persisted features
+are correct for the requested historical interval, even if the newest canonical
+partition is not current enough for present-time serving.
+
+The resulting contract is:
+
+```text
+Correctness:
+mandatory before every Feast materialization
+
+Freshness:
+explicit for current serving, demo, and operational workflows
 ```
 
 Full materialization uses an explicit UTC interval:
@@ -297,7 +400,7 @@ The commands intentionally do not accept an `--offline-store-dir` parameter.
 This enforces that FeatureForge validates the same canonical source configured
 in the Feast FileSources.
 
-### 4. One-Command Platform Demonstration
+### 5. One-Command Platform Demonstration
 
 Start Redis:
 
@@ -316,7 +419,8 @@ The command executes:
 ```text
 generate
   → canonical backfill into output/offline_store
-  → persisted offline feature-quality validation
+  → persisted offline feature-correctness validation
+  → explicit freshness check for the serving workflow
   → Feast full materialization into Redis
   → user online-feature lookup
   → deterministic content-candidate ranking
@@ -355,10 +459,10 @@ The configuration controls:
 
 Examples of enforced rules:
 
-- `end_time` must be after `start_time`
-- Rates must be between `0.0` and `1.0`
-- Entity and event counts must be positive
-- `max_late_arrival_hours` must be positive when late events are enabled
+- `end_time` must be after `start_time`.
+- Rates must be between `0.0` and `1.0`.
+- Entity and event counts must be positive.
+- `max_late_arrival_hours` must be positive when late events are enabled.
 
 ## Synthetic Data
 
@@ -602,7 +706,7 @@ For local Feast workflows:
 ### Idempotency
 
 A repeated backfill with identical source data, code, date range, and window
-writes to the same canonical partitions.
+writes to the same canonical partitions:
 
 ```text
 output/offline_store/<feature_view>/
@@ -621,7 +725,8 @@ explicit local V1 contract shared by:
 | Component | Responsibility |
 |---|---|
 | Backfill | Writes date-partitioned Parquet features |
-| Offline feature-quality gate | Validates persisted partitions before materialization |
+| Offline correctness gate | Validates persisted partitions before materialization |
+| Offline freshness check | Validates latest business-time partitions for serving workflows |
 | Feast FileSources | Reads feature data for historical retrieval and materialization |
 | Materialization workflow | Validates the exact canonical Feast source |
 | Serving parity tests | Compare online Redis values with canonical offline snapshots |
@@ -631,7 +736,7 @@ The generic validation library remains path-configurable for reusable checks
 and isolated tests. The production-like local materialization boundary is not
 path-configurable, because it must validate exactly what Feast reads.
 
-## Offline Feature Quality Gate
+## Offline Feature Correctness Gate
 
 FeatureForge validates persisted offline feature partitions before invoking
 Feast materialization.
@@ -640,7 +745,7 @@ Feast materialization.
 canonical offline store
 output/offline_store/
         ↓
-offline feature-quality validation
+offline feature-correctness validation
         ↓
 passed
         ↓
@@ -654,7 +759,7 @@ If validation fails:
 ```text
 canonical offline store
         ↓
-offline feature-quality validation
+offline feature-correctness validation
         ↓
 failed checks
         ↓
@@ -667,7 +772,7 @@ no Feast write is invoked
 no known-invalid values are promoted to Redis
 ```
 
-The quality gate validates persisted feature-store data rather than only
+The correctness gate validates persisted feature-store data rather than only
 in-memory computation results. This protects the serving path from problems
 introduced by storage, serialization, type changes, incomplete partitions, or
 unexpected feature values.
@@ -680,6 +785,72 @@ _CANONICAL_OFFLINE_STORE_DIR = Path("output/offline_store")
 
 Both full and incremental materialization validate this source before creating a
 Feast `FeatureStore` and invoking Feast.
+
+## Offline Feature Freshness
+
+Feature correctness and feature freshness are intentionally separate concerns.
+
+Correctness asks:
+
+```text
+Are the persisted feature values structurally and semantically valid?
+```
+
+Freshness asks:
+
+```text
+Is the newest persisted feature snapshot recent enough for the intended
+serving workflow?
+```
+
+Freshness is derived from the latest Hive-partitioned observation date for each
+feature view:
+
+```text
+output/offline_store/
+├── user_engagement_features/
+│   └── observation_date=YYYY-MM-DD/
+└── content_popularity_features/
+    └── observation_date=YYYY-MM-DD/
+```
+
+The check does not use filesystem modification time because file-write time does
+not represent the business timestamp at which the feature snapshot is valid.
+
+The local V1 freshness contract is:
+
+```text
+latest_observation_partition
+        must be within
+configured_max_lag
+        of
+explicit_utc_reference_time
+```
+
+The local default SLO is 24 hours.
+
+```bash
+featureforge check-freshness \
+  --reference-time 2026-03-25T00:00:00+00:00 \
+  --max-lag-hours 24
+
+make check-freshness
+```
+
+A stale feature view produces one stable failed check:
+
+```text
+user_engagement_features.freshness
+content_popularity_features.freshness
+```
+
+The CLI exits non-zero on failure so the check can be used by Make targets,
+scheduled operations, and future CI.
+
+Freshness is an explicit serving-safety gate. It is deliberately not imposed
+on every historical Feast materialization interval: a historical
+re-materialization can be legitimate even when newer partitions exist. The
+pre-materialization correctness gate remains mandatory for every Feast write.
 
 ## Feast Layer
 
@@ -752,10 +923,10 @@ contracts.
 The workflow:
 
 1. Normalizes timestamps to UTC.
-2. Validates `output/offline_store/`.
+2. Validates `output/offline_store/` for persisted-feature correctness.
 3. Writes a blocked manifest and raises `MaterializationBlockedError` if
-   validation fails.
-4. Creates the Feast `FeatureStore` only after validation passes.
+   correctness validation fails.
+4. Creates the Feast `FeatureStore` only after correctness validation passes.
 5. Calls Feast materialization for the explicit interval.
 6. Writes a completed materialization manifest.
 
@@ -767,8 +938,9 @@ The workflow:
 - A Feast repository path
 - A manifest output directory
 
-The workflow validates the canonical offline store before invoking Feast.
-Feast determines the lower boundary from its materialization watermark.
+The workflow validates the canonical offline store for correctness before
+invoking Feast. Feast determines the lower boundary from its materialization
+watermark.
 
 ### Materialization Source Contract
 
@@ -818,8 +990,8 @@ The manifests record:
 - Explicit start time for full runs
 - End time
 - Manifest-output directory
-- Full offline quality-report payload
-- Failed quality-check names for blocked runs
+- Full offline correctness-report payload
+- Failed correctness-check names for blocked runs
 
 ## Online Serving and Ranking
 
@@ -991,7 +1163,7 @@ Contains:
 - Canonical offline-store path
 - Time range or incremental end time
 - Manifest-output directory
-- Offline quality-report payload
+- Offline correctness-report payload
 - Failed checks when materialization is blocked
 
 ## Command-Line Interface
@@ -1020,6 +1192,11 @@ featureforge backfill \
   --window-days 7 \
   --engine pandas
 
+# Check canonical offline feature freshness.
+featureforge check-freshness \
+  --reference-time 2026-03-25T00:00:00+00:00 \
+  --max-lag-hours 24
+
 # Full Feast materialization from the canonical offline store.
 featureforge materialize \
   --repo feature_repo \
@@ -1047,6 +1224,7 @@ make docker-up
 make lint
 make test
 make check
+make check-freshness
 
 # Run deterministic E2E pipeline without incremental materialization.
 make e2e
@@ -1095,10 +1273,11 @@ The test suite covers:
 - Date-range backfills
 - Backfill idempotency
 - Backfill manifests
-- CLI generation and backfill integration
+- CLI generation, backfill, and freshness command behavior
 - Pandas/PySpark feature parity
 - Spark timezone safety
-- Offline persisted-feature quality validation
+- Persisted offline feature-correctness validation
+- Freshness checks for recent, stale, missing, naive-time, and invalid-SLO cases
 - Feast materialization timestamp contracts
 - Canonical materialization source enforcement
 - Blocked materialization manifests
@@ -1108,6 +1287,9 @@ The test suite covers:
 - Missing online entities
 - Offline/online feature parity
 - Online ranking behavior and stable tie-breaking
+- Controlled stale-feature simulations
+- Controlled failed-backfill simulations
+- Controlled failed-materialization simulations
 
 Run all tests:
 
@@ -1120,6 +1302,7 @@ Run focused suites:
 ```bash
 pytest tests/unit/ -v
 pytest tests/integration/ -v
+pytest tests/failure_simulations/ -v
 pytest tests/unit/test_materialization.py -v
 pytest tests/unit/test_feature_quality.py -v
 ```
@@ -1131,6 +1314,61 @@ ruff format --check .
 ruff check .
 ```
 
+## Failure Handling and Runbooks
+
+Failure behavior is an explicit platform contract.
+
+FeatureForge uses controlled failure simulations to validate that failures do
+not silently appear as successful runs.
+
+The current controlled scenarios cover:
+
+| Scenario | Expected behavior |
+|---|---|
+| Stale offline partitions | Freshness check fails with named feature-view checks and non-zero status |
+| Fresh offline partitions | Freshness check passes |
+| Invalid backfill window | Backfill raises a clear `ValueError` |
+| Reversed backfill date range | Backfill raises a clear `ValueError` |
+| Empty event stream | Backfill succeeds and produces valid zero-count features |
+| Missing Feast repository for full run | Full materialization fails clearly |
+| Missing Feast repository for incremental run | Incremental materialization fails clearly |
+
+The simulation tests are located under:
+
+```text
+tests/failure_simulations/
+├── test_stale_features.py
+├── test_failed_backfill.py
+└── test_failed_materialization.py
+```
+
+Run them directly:
+
+```bash
+pytest tests/failure_simulations/ -v
+```
+
+Operational runbooks are stored under:
+
+```text
+docs/runbooks/
+├── stale-features.md
+├── failed-backfill.md
+└── failed-materialization.md
+```
+
+Each runbook follows the same incident lifecycle:
+
+```text
+Symptom
+→ Detection
+→ Likely causes
+→ Diagnosis
+→ Recovery
+→ Verification
+→ Prevention
+```
+
 ## Reliability Principles
 
 - Prefer idempotent jobs.
@@ -1140,8 +1378,10 @@ ruff check .
 - Make data contracts executable.
 - Keep output paths deterministic.
 - Maintain one canonical offline source for the local Feast workflow.
-- Validate persisted offline data before online materialization.
-- Fail before known-invalid data reaches serving.
+- Validate persisted offline correctness before online materialization.
+- Check freshness from business-time partitions rather than filesystem metadata.
+- Separate correctness from freshness.
+- Fail before known-invalid or stale serving data reaches consumers.
 - Record completed and blocked run metadata.
 - Keep Pandas and Spark behavior parity-tested.
 - Verify offline/online serving parity.
@@ -1150,6 +1390,7 @@ ruff check .
 - Use stable ranking tie-breakers.
 - Never trust implicit timezone handling across Python/JVM boundaries.
 - Persist preprocessing with models to reduce training-serving skew.
+- Treat failure simulations and runbooks as version-controlled platform artifacts.
 
 ## Current Limitations
 
@@ -1160,11 +1401,17 @@ The project intentionally remains a focused local platform implementation.
 - Offline storage is local Parquet; S3 is the planned production profile.
 - `output/offline_store/` is a fixed local V1 contract. Production requires
   one environment-owned object-store URI shared across the backfill writer,
-  quality gate, Feast sources, manifests, lineage metadata, and parity checks.
-- Feature freshness SLO enforcement is planned, but not yet implemented.
-- Materialization quality validation protects the local application workflow;
-  broader operational alerting, failure recovery, and runbook automation remain
-  future work.
+  correctness gate, freshness checks, Feast sources, manifests, lineage
+  metadata, and parity checks.
+- Freshness is currently based on latest `observation_date` partitions and a
+  configurable local maximum lag. Production-grade freshness requires
+  per-feature-view SLO ownership, scheduling, alerting, and escalation policy.
+- The materialization correctness gate protects the local application workflow;
+  broader automated incident remediation and external alerting remain future
+  work.
+- Failure simulations are controlled local tests. They do not yet cover Redis
+  outages, Feast API failures, object-store failures, network faults, or
+  production-scale chaos testing.
 - The ranking function is a transparent deterministic demo, not a learned
   production ranking model.
 - No Kafka, Flink, Kubernetes, Terraform-heavy infrastructure, or
@@ -1177,8 +1424,11 @@ flowchart LR
     Source[Source Parquet or S3 Data] --> Spark[PySpark Feature Transformations]
     Spark --> Offline[Environment-Owned Partitioned Offline Feature Tables]
 
-    Offline --> Gate[Persisted Feature Quality Gate]
-    Gate --> Feast[Feast Sources, Views, and Services]
+    Offline --> Correctness[Persisted Feature Correctness Gate]
+    Offline --> Freshness[Feature Freshness SLO Checks]
+
+    Correctness --> Feast[Feast Sources, Views, and Services]
+    Freshness --> Operations[Scheduling, Alerts, and SLO Escalation]
 
     Labels[Observation Labels] --> Historical[Historical Retrieval]
     Feast --> Historical
@@ -1191,10 +1441,12 @@ flowchart LR
     Serving --> Consumer[Inference or Ranking Consumer]
 
     Offline --> Lineage[Lineage and Manifest Metadata]
-    Gate --> Reports[Quality Reports and Runbooks]
-    Materialize --> Freshness[Freshness Checks and SLOs]
+    Correctness --> Reports[Correctness Reports and Blocked Manifests]
     Freshness --> Reports
-    Lineage --> Reports
+    Materialize --> Reports
+    Operations --> Reports
+
+    Reports --> Runbooks[Operational Runbooks]
 ```
 
 The next reliability milestones are:
@@ -1202,15 +1454,15 @@ The next reliability milestones are:
 ```text
 canonical offline feature data
         ↓
-quality gate
+correctness gate
+        ↓
+feature freshness monitoring
         ↓
 Feast materialization
         ↓
 online feature store
         ↓
-freshness checks and SLOs
-        ↓
-lineage metadata, failure simulations, alerts, and operational runbooks
+scheduling, alerts, SLO escalation, and automated recovery
 ```
 
 The future AWS profile will replace the local fixed path with one
@@ -1223,9 +1475,9 @@ s3://featureforge-<environment>/offline-store/
 The same resolved URI must be consumed by:
 
 - The backfill writer
-- The persisted-feature quality gate
+- The persisted-feature correctness gate
+- Freshness checks
 - Feast FileSources
 - Materialization manifests
 - Lineage metadata
-- Freshness checks
 - Offline/online parity checks
