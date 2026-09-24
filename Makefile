@@ -14,10 +14,12 @@ BACKFILL_END ?= 2026-03-25
 WINDOW_DAYS ?= 7
 USER_ID ?= user_000290
 TOP_K ?= 5
+FRESHNESS_REFERENCE_TIME ?= $(BACKFILL_END)T00:00:00+00:00
+FRESHNESS_MAX_LAG_HOURS ?= 24
 
 .PHONY: help setup install lint format check test test-unit test-integration \
         validate clean docker-config docker-up docker-down \
-        e2e e2e-no-skip e2e-clean e2e-clean-all \
+        check-freshness e2e e2e-no-skip e2e-clean e2e-clean-all \
         materialize-incremental demo
 
 help:
@@ -36,18 +38,25 @@ help:
 	@echo "  make docker-down              Stop local infrastructure"
 	@echo "  make clean                    Remove local caches and generated output"
 	@echo ""
+	@echo "Reliability checks:"
+	@echo "  make check-freshness          Validate canonical offline feature freshness"
+	@echo ""
 	@echo "End-to-end orchestration:"
-	@echo "  make e2e                      Run generate → backfill → full materialization"
+	@echo "  make e2e                      Run generate -> backfill -> full materialization"
 	@echo "  make e2e-no-skip              Run e2e including incremental materialization"
 	@echo "  make e2e-clean                Clean run artifacts, then run e2e"
 	@echo "  make materialize-incremental  Materialize current features to now (UTC)"
 	@echo "  make demo                     Run e2e, online lookup, and ranking demo"
 	@echo ""
-	@echo "Storage contract:"
+	@echo "Storage and freshness contract:"
 	@echo "  OUTPUT_DIR                    Run artifacts such as source data and manifests"
 	@echo "  OFFLINE_STORE_DIR             Canonical feature store read by Feast FileSources"
+	@echo "  FRESHNESS_REFERENCE_TIME      UTC reference time for freshness checks"
+	@echo "  FRESHNESS_MAX_LAG_HOURS       Maximum allowed latest-partition lag"
 	@echo ""
 	@echo "Examples:"
+	@echo "  make check-freshness"
+	@echo "  make check-freshness FRESHNESS_REFERENCE_TIME=2026-03-25T00:00:00+00:00"
 	@echo "  make e2e BACKFILL_START=2026-03-20 BACKFILL_END=2026-03-25"
 	@echo "  make demo OUTPUT_DIR=output_demo OFFLINE_STORE_DIR=output/offline_store USER_ID=user_000290 TOP_K=5"
 
@@ -96,6 +105,11 @@ clean:
 	find . -type d -name "*.egg-info" -prune -exec rm -rf {} +
 	rm -rf output output_e2e
 
+check-freshness:
+	featureforge check-freshness \
+		--reference-time $(FRESHNESS_REFERENCE_TIME) \
+		--max-lag-hours $(FRESHNESS_MAX_LAG_HOURS)
+
 e2e:
 	$(PYTHON) scripts/run_end_to_end.py \
 		--config $(CONFIG) \
@@ -129,7 +143,7 @@ materialize-incremental:
 			--end-time {} \
 			--manifest-output $(OUTPUT_DIR)
 
-demo: e2e
+demo: e2e check-freshness
 	@echo ""
 	@echo "Running Feast online feature lookup demo for $(USER_ID)..."
 	$(PYTHON) feature_repo/online_lookup_demo.py --user-id $(USER_ID)

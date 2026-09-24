@@ -123,3 +123,22 @@ class OfflineFeatureQualityReport(BaseModel):
     def failed_checks(self) -> list[str]:
         """Return stable names for all failed checks."""
         return [check.name for check in self.checks if not check.passed]
+
+
+class OfflineFeatureFreshnessReport(BaseModel):
+    """Freshness report for the newest persisted offline feature partitions."""
+
+    offline_store_dir: str = Field(min_length=1)
+    reference_time: datetime
+    max_lag_seconds: int = Field(ge=0)
+    checks: list[FeatureQualityCheck]
+
+    @property
+    def passed(self) -> bool:
+        """Return whether every freshness check passed."""
+        return all(check.passed for check in self.checks)
+
+    @property
+    def failed_checks(self) -> list[str]:
+        """Return stable names for all failed freshness checks."""
+        return [check.name for check in self.checks if not check.passed]

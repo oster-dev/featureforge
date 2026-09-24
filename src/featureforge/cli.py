@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
@@ -13,9 +13,11 @@ from rich.table import Table
 
 from featureforge.backfill import run_backfill
 from featureforge.config import load_synthetic_data_config
+from featureforge.feature_quality import check_offline_feature_freshness
 from featureforge.features import compute_user_engagement_features
 from featureforge.manifest import GenerationRunManifest
 from featureforge.materialization import (
+    _CANONICAL_OFFLINE_STORE_DIR,
     MaterializationBlockedError,
     materialize,
     materialize_incremental,
@@ -37,7 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="featureforge",
         description=(
             "Generate deterministic feature-store datasets, backfill features, "
-            "and materialize online feature values."
+            "validate offline freshness, and materialize online feature values."
         ),
     )
 
@@ -128,6 +130,23 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("pandas", "spark"),
         default="pandas",
         help="Feature-computation engine (default: pandas).",
+    )
+
+    freshness_parser = subparsers.add_parser(
+        "check-freshness",
+        help="Check canonical offline feature-store freshness against a UTC reference time.",
+    )
+    freshness_parser.add_argument(
+        "--reference-time",
+        type=str,
+        default=None,
+        help=("UTC reference time in ISO 8601 format. Defaults to the current UTC time."),
+    )
+    freshness_parser.add_argument(
+        "--max-lag-hours",
+        type=int,
+        default=24,
+        help="Maximum allowed latest-partition lag in hours (default: 24).",
     )
 
     materialize_parser = subparsers.add_parser(
@@ -313,6 +332,44 @@ def parse_utc_datetime(value: str) -> datetime:
     return parsed.astimezone(UTC)
 
 
+def run_check_freshness_command(
+    reference_time: str | None,
+    max_lag_hours: int,
+) -> None:
+    """Check canonical offline feature-store freshness and return a process status."""
+    if max_lag_hours < 0:
+        raise ValueError("max_lag_hours must not be negative.")
+
+    normalized_reference_time = (
+        datetime.now(UTC) if reference_time is None else parse_utc_datetime(reference_time)
+    )
+    max_lag = timedelta(hours=max_lag_hours)
+    report = check_offline_feature_freshness(
+        _CANONICAL_OFFLINE_STORE_DIR,
+        reference_time=normalized_reference_time,
+        max_lag=max_lag,
+    )
+
+    console = Console()
+
+    if report.passed:
+        console.print("[green]✓[/green] Offline feature freshness check passed")
+    else:
+        console.print("[red]✗[/red] Offline feature freshness check failed")
+
+    console.print(f"Offline store: {report.offline_store_dir}")
+    console.print(f"Reference time: {report.reference_time.isoformat()}")
+    console.print(f"Maximum lag: {max_lag}")
+
+    for check in report.checks:
+        status = "[green]✓[/green]" if check.passed else "[red]✗[/red]"
+        console.print(f"{status} {check.name}: {check.message}")
+
+    if not report.passed:
+        console.print(f"Failed checks: {', '.join(report.failed_checks)}")
+        raise SystemExit(1)
+
+
 def run_materialize_command(
     repo_path: Path,
     start_time: str,
@@ -390,6 +447,11 @@ def main() -> None:
             end_date=args.end_date,
             window_days=args.window_days,
             engine=args.engine,
+        )
+    elif args.command == "check-freshness":
+        run_check_freshness_command(
+            reference_time=args.reference_time,
+            max_lag_hours=args.max_lag_hours,
         )
     elif args.command == "materialize":
         run_materialize_command(

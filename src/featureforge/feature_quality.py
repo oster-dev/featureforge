@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Final
 
 import pandas as pd
 
-from .models import FeatureQualityCheck, OfflineFeatureQualityReport
+from .models import (
+    FeatureQualityCheck,
+    OfflineFeatureFreshnessReport,
+    OfflineFeatureQualityReport,
+)
 
 FEATURE_VIEW_SPECS: Final = {
     "user_engagement_features": {
@@ -447,4 +452,119 @@ def validate_offline_feature_store(
         offline_store_dir=str(offline_store_dir),
         checked_partition_paths=checked_partition_paths,
         checks=all_checks,
+    )
+
+
+def _require_utc_datetime(value: datetime, field_name: str) -> datetime:
+    """Validate and normalize a timezone-aware datetime to UTC."""
+    if value.tzinfo is None:
+        raise ValueError(f"{field_name} must be timezone-aware.")
+
+    return value.astimezone(UTC)
+
+
+def _latest_partition_date(feature_view_dir: Path) -> datetime | None:
+    """Return the newest valid observation-date partition as a UTC datetime."""
+    partition_dates: list[datetime] = []
+
+    for partition_path in _partition_paths(feature_view_dir):
+        partition_name = partition_path.parent.name
+        prefix = "observation_date="
+
+        if not partition_name.startswith(prefix):
+            continue
+
+        date_value = partition_name.removeprefix(prefix)
+
+        try:
+            parsed_date = datetime.fromisoformat(date_value)
+        except ValueError:
+            continue
+
+        partition_dates.append(parsed_date.replace(tzinfo=UTC))
+
+    return max(partition_dates, default=None)
+
+
+def _freshness_check_for_feature_view(
+    *,
+    offline_store_dir: Path,
+    feature_view: str,
+    reference_time: datetime,
+    max_lag: timedelta,
+) -> FeatureQualityCheck:
+    """Check whether one feature view has a partition within the freshness SLO."""
+    feature_view_dir = offline_store_dir / feature_view
+
+    if not feature_view_dir.is_dir():
+        return _check(
+            name=f"{feature_view}.freshness",
+            passed=False,
+            message=f"Feature-view directory is missing: {feature_view_dir}",
+        )
+
+    latest_partition_time = _latest_partition_date(feature_view_dir)
+
+    if latest_partition_time is None:
+        return _check(
+            name=f"{feature_view}.freshness",
+            passed=False,
+            message=f"No valid observation-date partitions found below {feature_view_dir}.",
+        )
+
+    lag = reference_time - latest_partition_time
+    passed = timedelta(0) <= lag <= max_lag
+
+    if lag < timedelta(0):
+        message = (
+            "Latest partition is in the future relative to the reference time: "
+            f"{latest_partition_time.isoformat()} > {reference_time.isoformat()}."
+        )
+    elif passed:
+        message = (
+            "Latest partition satisfies freshness SLO: "
+            f"{latest_partition_time.isoformat()} with lag {lag} "
+            f"within maximum {max_lag}."
+        )
+    else:
+        message = (
+            "Latest partition exceeds freshness SLO: "
+            f"{latest_partition_time.isoformat()} with lag {lag} "
+            f"exceeds maximum {max_lag}."
+        )
+
+    return _check(
+        name=f"{feature_view}.freshness",
+        passed=passed,
+        message=message,
+    )
+
+
+def check_offline_feature_freshness(
+    offline_store_dir: Path,
+    *,
+    reference_time: datetime,
+    max_lag: timedelta,
+) -> OfflineFeatureFreshnessReport:
+    """Check whether newest offline feature partitions satisfy a freshness SLO."""
+    normalized_reference_time = _require_utc_datetime(reference_time, "reference_time")
+
+    if max_lag < timedelta(0):
+        raise ValueError("max_lag must not be negative.")
+
+    checks = [
+        _freshness_check_for_feature_view(
+            offline_store_dir=offline_store_dir,
+            feature_view=feature_view,
+            reference_time=normalized_reference_time,
+            max_lag=max_lag,
+        )
+        for feature_view in FEATURE_VIEW_SPECS
+    ]
+
+    return OfflineFeatureFreshnessReport(
+        offline_store_dir=str(offline_store_dir),
+        reference_time=normalized_reference_time,
+        max_lag_seconds=int(max_lag.total_seconds()),
+        checks=checks,
     )

@@ -65,7 +65,6 @@ def materialize(
         raise ValueError("start_time must be earlier than end_time.")
 
     started_at = datetime.now(UTC)
-
     quality_report = validate_offline_feature_store(_CANONICAL_OFFLINE_STORE_DIR)
 
     if not quality_report.passed:
@@ -135,7 +134,6 @@ def materialize_incremental(
     """Materialize only data newer than Feast's registered materialization watermark."""
     normalized_end = _require_utc_timestamp(end_time, "end_time")
     started_at = datetime.now(UTC)
-
     quality_report = validate_offline_feature_store(_CANONICAL_OFFLINE_STORE_DIR)
 
     if not quality_report.passed:

@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from featureforge.backfill import run_backfill
-from featureforge.feature_quality import validate_offline_feature_store
+from featureforge.feature_quality import (
+    check_offline_feature_freshness,
+    validate_offline_feature_store,
+)
 from featureforge.models import (
     Content,
     Event,
@@ -71,6 +75,16 @@ def _user_partition_path(offline_store_dir: Path) -> Path:
     return (
         offline_store_dir
         / "user_engagement_features"
+        / "observation_date=2026-03-20"
+        / "features.parquet"
+    )
+
+
+def _content_partition_path(offline_store_dir: Path) -> Path:
+    """Return the deterministic content feature partition path."""
+    return (
+        offline_store_dir
+        / "content_popularity_features"
         / "observation_date=2026-03-20"
         / "features.parquet"
     )
@@ -151,3 +165,93 @@ def test_non_datetime_observation_time_fails_quality_validation(
         "user_engagement_features.observation_date=2026-03-20.observation_time_type"
         in report.failed_checks
     )
+
+
+def test_fresh_offline_feature_store_passes_freshness_check(
+    tmp_path: Path,
+) -> None:
+    """Latest partitions within the allowed lag must satisfy freshness."""
+    offline_store_dir = tmp_path / "offline_store"
+    _write_valid_feature_store(offline_store_dir)
+
+    report = check_offline_feature_freshness(
+        offline_store_dir,
+        reference_time=datetime(2026, 3, 21, tzinfo=UTC),
+        max_lag=timedelta(days=1),
+    )
+
+    assert report.passed is True
+    assert report.failed_checks == []
+    assert report.max_lag_seconds == 86_400
+
+
+def test_stale_offline_feature_store_fails_freshness_check(
+    tmp_path: Path,
+) -> None:
+    """Latest partitions older than the SLO must fail freshness validation."""
+    offline_store_dir = tmp_path / "offline_store"
+    _write_valid_feature_store(offline_store_dir)
+
+    report = check_offline_feature_freshness(
+        offline_store_dir,
+        reference_time=datetime(2026, 3, 22, tzinfo=UTC),
+        max_lag=timedelta(days=1),
+    )
+
+    assert report.passed is False
+    assert report.failed_checks == [
+        "user_engagement_features.freshness",
+        "content_popularity_features.freshness",
+    ]
+
+
+def test_missing_feature_view_fails_freshness_check(
+    tmp_path: Path,
+) -> None:
+    """A missing feature-view directory must fail freshness validation."""
+    offline_store_dir = tmp_path / "offline_store"
+    _write_valid_feature_store(offline_store_dir)
+
+    content_partition_path = _content_partition_path(offline_store_dir)
+    content_partition_path.unlink()
+    content_partition_path.parent.rmdir()
+    content_partition_path.parent.parent.rmdir()
+
+    report = check_offline_feature_freshness(
+        offline_store_dir,
+        reference_time=datetime(2026, 3, 21, tzinfo=UTC),
+        max_lag=timedelta(days=1),
+    )
+
+    assert report.passed is False
+    assert report.failed_checks == ["content_popularity_features.freshness"]
+
+
+def test_freshness_check_rejects_naive_reference_time(
+    tmp_path: Path,
+) -> None:
+    """Freshness reference time must explicitly declare a timezone."""
+    offline_store_dir = tmp_path / "offline_store"
+    _write_valid_feature_store(offline_store_dir)
+
+    with pytest.raises(ValueError, match="reference_time must be timezone-aware"):
+        check_offline_feature_freshness(
+            offline_store_dir,
+            reference_time=datetime(2026, 3, 21),
+            max_lag=timedelta(days=1),
+        )
+
+
+def test_freshness_check_rejects_negative_max_lag(
+    tmp_path: Path,
+) -> None:
+    """Freshness SLO cannot use a negative maximum lag."""
+    offline_store_dir = tmp_path / "offline_store"
+    _write_valid_feature_store(offline_store_dir)
+
+    with pytest.raises(ValueError, match="max_lag must not be negative"):
+        check_offline_feature_freshness(
+            offline_store_dir,
+            reference_time=datetime(2026, 3, 21, tzinfo=UTC),
+            max_lag=timedelta(days=-1),
+        )
