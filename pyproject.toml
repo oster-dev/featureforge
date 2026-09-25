@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11,<3.14"
 license = { text = "MIT" }
 authors = [
-  { name = "Nico Ostermann" }
+  { name = "Nico Ostermann" },
 ]
 keywords = [
   "machine-learning",
@@ -20,7 +20,7 @@ keywords = [
   "pyspark",
   "data-engineering",
   "feature-engineering",
-  "mlops"
+  "mlops",
 ]
 classifiers = [
   "Development Status :: 3 - Alpha",
@@ -60,7 +60,8 @@ spark = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["src*"]
+where = ["src"]
+include = ["featureforge*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Lint and test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
+      - name: Install project and CI dependencies
+        run: python -m pip install -e ".[dev,feature-store,spark]"
+
+      - name: Verify package import
+        run: python -c "import featureforge; print(featureforge.__file__)"
+
+      - name: Check Ruff formatting
+        run: ruff format --check .
+
+      - name: Run Ruff lint
+        run: ruff check .
+
+      - name: Run test suite
+        run: pytest -v
