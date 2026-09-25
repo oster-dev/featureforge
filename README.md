@@ -1,5 +1,7 @@
 # FeatureForge
 
+[![CI](https://github.com/oster-dev/featureforge/actions/workflows/ci.yml/badge.svg)](https://github.com/oster-dev/featureforge/actions/workflows/ci.yml)
+
 FeatureForge is a production-inspired feature platform for reproducible offline
 training data and low-latency online ML feature serving.
 
@@ -26,6 +28,7 @@ hard parts that make feature platforms trustworthy:
 - ML-ready training pipelines with time-based evaluation
 - full and incremental online materialization into Redis
 - online feature lookup and deterministic ranking
+- GitHub Actions baseline CI
 - one-command end-to-end platform demonstration
 
 ## Project Goal
@@ -48,8 +51,8 @@ to build those components correctly. It includes a parity-tested PySpark
 execution engine alongside the Pandas reference, a complete ML training
 pipeline with historical retrieval and online serving, a canonical local
 offline-store contract shared by backfill, validation, Feast, materialization,
-and serving-parity tests, plus explicit freshness and failure-handling
-contracts.
+and serving-parity tests, explicit freshness and failure-handling contracts,
+and reproducible baseline CI.
 
 ## Current Status
 
@@ -132,18 +135,45 @@ contracts.
 - Offline/online serving parity integration tests.
 - Unit, integration, and failure-simulation tests.
 - Ruff formatting and linting.
+- GitHub Actions baseline CI:
+  - runs on every push to `main` and every pull request;
+  - validates a fresh editable installation using Python 3.13;
+  - verifies `import featureforge`;
+  - runs Ruff formatting and lint checks;
+  - runs the pytest suite in a clean Ubuntu runner.
 
 ### Current Quality Gate
 
-The current repository state passes:
+The GitHub Actions baseline CI workflow validates:
 
 ```text
+fresh Python 3.13 installation
+        ↓
+editable package installation
+        ↓
+FeatureForge package import
+        ↓
 ruff format --check .
+        ↓
 ruff check .
+        ↓
 pytest -v
-
-146 passed
 ```
+
+Current baseline result:
+
+```text
+141 passed, 5 skipped, 0 failed
+```
+
+The five skipped tests are online-serving integration tests in
+`tests/integration/test_online_serving.py`. They require a local Redis instance,
+applied Feast definitions, canonical offline feature snapshots, and materialized
+online feature values.
+
+This is an explicit infrastructure-dependent skip, not a hidden test failure.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for local execution prerequisites and
+[ADR-004](docs/adr/ADR-004-github-actions-ci.md) for the CI decision.
 
 ## Current Data Flow
 
@@ -255,6 +285,7 @@ See:
 - [ADR-001: Offline/Online Feature Store Split](docs/adr/ADR-001-offline-online-feature-store-split.md)
 - [ADR-002: Canonical Offline Store Contract](docs/adr/ADR-002-canonical-offline-store-contract.md)
 - [ADR-003: Feature Freshness SLOs and Fail-Safe Serving](docs/adr/ADR-003-freshness-slos-and-fail-safe-serving.md)
+- [ADR-004: GitHub Actions CI for Reproducible Validation](docs/adr/ADR-004-github-actions-ci.md)
 
 ## Core Architecture
 
@@ -272,6 +303,7 @@ See:
 | CLI display | Rich | Human-readable local command output |
 | Testing | pytest | Unit, integration, and failure-simulation coverage |
 | Code quality | Ruff | Formatting and linting |
+| Baseline CI | GitHub Actions | Fresh installation, import, formatting, linting, and pytest validation |
 | Local online store | Redis via Docker Compose | Low-latency feature serving |
 | Feature platform | Feast | Feature definitions, historical retrieval, materialization, online serving |
 | ML training | sklearn | Baseline model with pipeline persistence |
@@ -300,9 +332,10 @@ python -m pip install pyspark
 python -m pip install feast
 ```
 
-Verify the CLI:
+Verify the package and CLI:
 
 ```bash
+python -c "import featureforge; print(featureforge.__file__)"
 featureforge --help
 ```
 
@@ -1018,7 +1051,7 @@ documented recovery and verification
 
 ## Validation
 
-Run the complete test suite:
+Run the complete baseline test suite:
 
 ```bash
 pytest -v
@@ -1029,6 +1062,17 @@ Run format and lint checks:
 ```bash
 ruff format --check .
 ruff check .
+```
+
+Run the same baseline checks as GitHub Actions:
+
+```bash
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
+python -c "import featureforge; print(featureforge.__file__)"
+ruff format --check .
+ruff check .
+pytest -v
 ```
 
 Or use Make targets:
@@ -1050,6 +1094,44 @@ pytest tests/failure_simulations/ -v
 pytest tests/unit/test_feature_quality.py -v
 pytest tests/unit/test_materialization.py -v
 ```
+
+### CI and Local Serving Tests
+
+GitHub Actions runs an infrastructure-free baseline on every push to `main`
+and every pull request. It does not provision Docker Compose, Redis, Feast, or
+materialized online feature values.
+
+As a result, the five tests in `tests/integration/test_online_serving.py` skip
+in baseline CI unless their environment is explicitly prepared.
+
+To execute the complete online-serving integration suite locally:
+
+```bash
+docker compose up -d
+
+cd feature_repo
+feast apply
+cd ..
+
+featureforge materialize \
+  --repo feature_repo \
+  --start-time <start-utc> \
+  --end-time <end-utc> \
+  --manifest-output output
+
+pytest -v tests/integration/test_online_serving.py
+```
+
+Use timezone-aware UTC timestamps for `<start-utc>` and `<end-utc>`. The test
+suite requires:
+
+- Redis to be reachable;
+- Feast definitions to be applied;
+- canonical offline feature snapshots in `output/offline_store/`;
+- feature values materialized into the Redis online store.
+
+Do not remove the skip guard merely to force a green CI result. The skip must
+continue to communicate the concrete infrastructure prerequisite.
 
 ## Local Infrastructure
 
@@ -1087,6 +1169,7 @@ FeatureForge documents important architectural decisions as ADRs:
 - [ADR-001: Offline/Online Feature Store Split](docs/adr/ADR-001-offline-online-feature-store-split.md)
 - [ADR-002: Canonical Offline Store Contract](docs/adr/ADR-002-canonical-offline-store-contract.md)
 - [ADR-003: Feature Freshness SLOs and Fail-Safe Serving](docs/adr/ADR-003-freshness-slos-and-fail-safe-serving.md)
+- [ADR-004: GitHub Actions CI for Reproducible Validation](docs/adr/ADR-004-github-actions-ci.md)
 
 These decisions establish the local V1 model:
 
@@ -1143,17 +1226,20 @@ and parity checks.
 - Operational runbooks for stale features, failed backfills, and failed
   materialization.
 - Offline/online serving parity integration tests.
-- ADRs for offline/online separation, canonical source ownership, and
-  freshness/fail-safe serving.
+- Ruff formatting and linting.
+- GitHub Actions CI for reproducible baseline validation.
+- ADRs for offline/online separation, canonical source ownership,
+  freshness/fail-safe serving, and CI validation.
 
 ### Next Steps
 
-1. Extend materialization manifests with richer lineage and run metadata.
-2. Add scheduled freshness checks, feature-view ownership, alerting, and SLO
+1. Add a separate infrastructure-enabled CI integration job with Redis, Feast,
+   canonical offline snapshots, materialization, and online-serving tests.
+2. Extend materialization manifests with richer lineage and run metadata.
+3. Add scheduled freshness checks, feature-view ownership, alerting, and SLO
    escalation.
-3. Add controlled simulations for Redis, Feast API, and object-storage failures.
-4. Document the AWS S3 and DynamoDB production profile.
-5. Add GitHub Actions CI.
+4. Add controlled simulations for Redis, Feast API, and object-storage failures.
+5. Document the AWS S3 and DynamoDB production profile.
 6. Implement hyperparameter tuning and advanced models such as XGBoost or
    LightGBM.
 7. Add MLflow experiment tracking and a model registry.
@@ -1177,6 +1263,7 @@ Version 1 focuses on:
 - offline/online parity validation
 - tests and operational documentation
 - ML-ready training pipelines
+- reproducible baseline CI
 
 Kafka, Flink, Kubernetes, Terraform-heavy infrastructure, and complex model
 training are intentionally outside the initial version of FeatureForge.

@@ -3,10 +3,17 @@
 Thank you for contributing to FeatureForge.
 
 FeatureForge is a production-inspired project for Data Infrastructure, Feature
-Infrastructure, and ML Platform Engineering. The project prioritizes
-reproducibility, event-time correctness, point-in-time feature semantics,
-canonical data ownership, executable data contracts, reliability gates, and
-clear operational behavior.
+Infrastructure, and ML Platform Engineering. The project prioritizes:
+
+- reproducibility;
+- event-time correctness;
+- point-in-time feature semantics;
+- canonical data ownership;
+- executable data contracts;
+- correctness and freshness gates;
+- visible operational behavior;
+- offline/online serving parity;
+- deterministic workflows.
 
 Before contributing, read:
 
@@ -15,19 +22,18 @@ Before contributing, read:
 - [ADR-001: Offline/Online Feature Store Split](docs/adr/ADR-001-offline-online-feature-store-split.md)
 - [ADR-002: Canonical Offline Store Contract](docs/adr/ADR-002-canonical-offline-store-contract.md)
 - [ADR-003: Feature Freshness SLOs and Fail-Safe Serving](docs/adr/ADR-003-freshness-slos-and-fail-safe-serving.md)
+- [ADR-004: GitHub Actions CI for Reproducible Validation](docs/adr/ADR-004-github-actions-ci.md)
 
 ## Development Setup
 
 ### Prerequisites
 
 - Python 3.11, 3.12, or 3.13
-- Docker Desktop
+- Docker Desktop for Redis and Feast serving workflows
 - GNU Make
 - Git
 
 ### Create a Virtual Environment
-
-Create and activate a local virtual environment:
 
 ```bash
 python3 -m venv .venv
@@ -55,9 +61,10 @@ Install Feast for historical retrieval and online feature serving:
 python -m pip install feast
 ```
 
-### Verify the CLI
+Verify the CLI and package import:
 
 ```bash
+python -c "import featureforge; print(featureforge.__file__)"
 featureforge --help
 ```
 
@@ -76,45 +83,14 @@ materialize-incremental
 
 ```text
 featureforge/
-├── configs/
-│   └── synthetic_data.yaml
+├── configs/              Synthetic-data configuration
+├── data/                 Generated and training artifacts
 ├── docs/
-│   ├── adr/
-│   │   ├── ADR-001-offline-online-feature-store-split.md
-│   │   ├── ADR-002-canonical-offline-store-contract.md
-│   │   └── ADR-003-freshness-slos-and-fail-safe-serving.md
-│   └── runbooks/
-│       ├── stale-features.md
-│       ├── failed-backfill.md
-│       └── failed-materialization.md
-├── feature_repo/
-│   ├── entities.py
-│   ├── sources.py
-│   ├── feature_views.py
-│   ├── feature_services.py
-│   ├── historical_retrieval_demo.py
-│   ├── online_lookup_demo.py
-│   └── personalization_demo.py
-├── scripts/
-│   ├── diagnose_baseline.py
-│   ├── run_end_to_end.py
-│   └── train_baseline.py
-├── src/
-│   └── featureforge/
-│       ├── backfill.py
-│       ├── cli.py
-│       ├── config.py
-│       ├── feature_quality.py
-│       ├── feature_schema.py
-│       ├── features.py
-│       ├── manifest.py
-│       ├── materialization.py
-│       ├── models.py
-│       ├── quality.py
-│       ├── serving.py
-│       ├── spark_features.py
-│       ├── storage.py
-│       └── synthetic_data.py
+│   ├── adr/              Architecture decisions
+│   └── runbooks/         Operational recovery procedures
+├── feature_repo/        Feast entities, sources, views, services, demos
+├── scripts/              Training and diagnostic workflows
+├── src/featureforge/     Application and platform implementation
 ├── tests/
 │   ├── failure_simulations/
 │   ├── integration/
@@ -127,9 +103,12 @@ featureforge/
 └── pyproject.toml
 ```
 
+Generated data and run artifacts are intentionally recreated locally and should
+not be committed unless a contribution explicitly requires a fixture.
+
 ## Local Infrastructure
 
-FeatureForge includes Redis through Docker Compose for the online-serving stage.
+FeatureForge uses Redis through Docker Compose for online-serving workflows.
 
 Start Redis:
 
@@ -137,13 +116,7 @@ Start Redis:
 make docker-up
 ```
 
-Stop Redis:
-
-```bash
-make docker-down
-```
-
-Check the Redis service:
+Verify the service:
 
 ```bash
 docker exec featureforge-redis redis-cli ping
@@ -155,6 +128,12 @@ Expected output:
 PONG
 ```
 
+Stop Redis:
+
+```bash
+make docker-down
+```
+
 Apply Feast definitions after Redis is running:
 
 ```bash
@@ -162,6 +141,10 @@ cd feature_repo
 feast apply
 cd ..
 ```
+
+The baseline CI workflow does not provision Redis, Docker Compose, Feast, or
+materialized online features. Those are local or infrastructure-enabled
+integration prerequisites.
 
 ## Local Development Flows
 
@@ -186,10 +169,9 @@ output/source_data/
 └── run_manifest.json
 ```
 
-### Compute a Single User Feature Snapshot
+### Compute a Single Feature Snapshot
 
-The single-snapshot command computes user engagement features at one explicit
-observation timestamp:
+Compute one user engagement snapshot at an explicit observation timestamp:
 
 ```bash
 featureforge compute-features \
@@ -201,8 +183,7 @@ featureforge compute-features \
 
 ### Run a Feature Backfill
 
-Run a point-in-time user and content feature backfill over an inclusive date
-range:
+Backfill an inclusive date range into the canonical local offline store:
 
 ```bash
 featureforge backfill \
@@ -214,7 +195,7 @@ featureforge backfill \
   --engine pandas
 ```
 
-The output layout is deterministic:
+The deterministic output layout is:
 
 ```text
 output/offline_store/
@@ -228,13 +209,13 @@ output/offline_store/
     └── backfill-YYYY-MM-DD-to-YYYY-MM-DD.json
 ```
 
-Backfills overwrite the same canonical feature partitions when invoked with the
-same input data, date range, window, and code. This provides the current V1
+Backfills overwrite the same canonical feature partitions when invoked with
+the same input data, date range, window, and code. This is the current V1
 idempotency behavior.
 
 The backfill runner supports:
 
-- `pandas` as the readable reference engine.
+- `pandas` as the readable correctness reference;
 - `spark` as the parity-tested scalable engine.
 
 Use Spark explicitly:
@@ -251,7 +232,7 @@ featureforge backfill \
 
 ### Check Offline Feature Freshness
 
-Feature correctness and feature freshness are separate platform concerns.
+Feature correctness and freshness are separate platform concerns.
 
 Correctness asks:
 
@@ -266,24 +247,22 @@ Is the newest persisted feature snapshot recent enough for the intended
 serving workflow?
 ```
 
-Freshness is based on the latest Hive-style partition under the canonical
+Freshness is based on the newest Hive-style partition under the canonical
 offline store:
 
 ```text
-output/offline_store/<feature_view>/observation_date=YYYY-MM-DD/
+output/offline_store/<feature-view>/observation_date=YYYY-MM-DD/
 ```
 
-It does not use filesystem modification time as its primary signal. File
-modification time represents storage activity; `observation_date` represents
-the business time for which features are valid.
+It uses business observation time, not filesystem modification time.
 
-Run the default reproducible local freshness check:
+Run the default local freshness check:
 
 ```bash
 make check-freshness
 ```
 
-Run the CLI with an explicit reference time and lag threshold:
+Run the CLI with an explicit UTC reference time and maximum lag:
 
 ```bash
 featureforge check-freshness \
@@ -293,21 +272,18 @@ featureforge check-freshness \
 
 The command:
 
-- checks the canonical `output/offline_store/`;
+- checks `output/offline_store/`;
 - evaluates every required feature view independently;
 - reports the latest partition and calculated lag;
 - returns exit code `0` when all checks pass;
 - returns a non-zero exit code when a required view is stale or missing.
 
-Stable failed check names include:
+Stable failed-check names include:
 
 ```text
 user_engagement_features.freshness
 content_popularity_features.freshness
 ```
-
-Freshness is an explicit serving-safety and operational check. Correctness
-validation remains mandatory before every Feast materialization.
 
 Do not add a global `datetime.now(UTC)` freshness requirement to all historical
 materialization paths. Historical re-materialization can be valid when the
@@ -316,7 +292,7 @@ fresh for a present-time serving workflow.
 
 ### Run Feast Materialization
 
-Run full materialization with an explicit UTC time range:
+Full materialization requires explicit timezone-aware UTC timestamps:
 
 ```bash
 featureforge materialize \
@@ -326,7 +302,7 @@ featureforge materialize \
   --manifest-output output
 ```
 
-Run incremental materialization using Feast's stored watermark:
+Incremental materialization uses Feast's stored watermark:
 
 ```bash
 featureforge materialize-incremental \
@@ -341,17 +317,23 @@ Materialization always validates the canonical offline store:
 output/offline_store/
 ```
 
-The CLI does not accept `--offline-store-dir`. This prevents a caller from
-validating a different path than the one configured in Feast FileSources.
+The CLI intentionally does not accept `--offline-store-dir`. This prevents a
+caller from validating a different path than the one configured in Feast
+`FileSource` definitions.
 
 The persisted-feature correctness gate is mandatory before every Feast write.
-
 If correctness validation fails:
 
-- Feast is not invoked.
-- A blocked materialization manifest is written.
-- `MaterializationBlockedError` is raised.
-- The CLI exits with a non-zero status.
+- Feast is not invoked;
+- a blocked materialization manifest is written;
+- `MaterializationBlockedError` is raised;
+- the CLI exits with a non-zero status.
+
+Completed and blocked manifests are written under:
+
+```text
+output/materialization_manifests/
+```
 
 ### Run Historical Retrieval
 
@@ -385,9 +367,7 @@ output/models/baseline_logreg_pipeline.joblib
 output/models/baseline_logreg_metrics.json
 ```
 
-### Run Diagnostic Analysis
-
-Analyze model performance and feature distributions:
+Run diagnostic analysis:
 
 ```bash
 python scripts/diagnose_baseline.py
@@ -401,8 +381,6 @@ Run the online feature lookup demo for a specific user:
 python feature_repo/online_lookup_demo.py --user-id user_000290
 ```
 
-This retrieves current feature values from Feast and displays them.
-
 ### Run Personalization Ranking
 
 Run the deterministic content-ranking demo:
@@ -413,10 +391,7 @@ python feature_repo/personalization_demo.py \
   --top-k 5
 ```
 
-This retrieves user engagement features, evaluates candidate content, and
-returns a ranked list.
-
-### Run the End-to-End Platform Demo
+### Run the End-to-End Demo
 
 Start Redis and run the complete local workflow:
 
@@ -431,7 +406,7 @@ This executes:
 generate
   → canonical backfill into output/offline_store
   → persisted-feature correctness validation
-  → explicit freshness check for current serving workflow
+  → freshness check for the serving workflow
   → Feast materialization into Redis
   → online feature lookup
   → deterministic content ranking
@@ -448,12 +423,12 @@ make demo OUTPUT_DIR=output_demo
 `OUTPUT_DIR` contains run-scoped artifacts. It does not replace the canonical
 Feast source path at `output/offline_store/`.
 
-### Run the PySpark Parity Suite
+## Pandas and PySpark Parity
 
 `src/featureforge/spark_features.py` computes the same two feature views as
 `features.py` using PySpark.
 
-Before changing either implementation, run the parity suite:
+Before changing either implementation, run:
 
 ```bash
 pytest tests/unit/test_spark_features.py -v
@@ -461,19 +436,15 @@ pytest tests/unit/test_spark_parquet_features.py -v
 ```
 
 If you modify feature logic in `features.py`, make the equivalent change in
-`spark_features.py`, then ensure the parity suite still passes.
+`spark_features.py`, then ensure the parity suite still passes. A change that
+passes the Pandas tests but breaks Spark parity is incomplete.
 
-A change that passes `test_features.py` but breaks Spark parity is incomplete.
+When working with timestamps in `spark_features.py`:
 
-When working with timestamps inside `spark_features.py`:
-
-- Never pass a Python `datetime` directly into a Spark `TimestampType` column.
-- Never rely on `spark.sql.session.timeZone` alone to guarantee UTC behavior.
-- Convert values to UTC epoch microseconds before they enter Spark.
-- Convert them back only after collection.
-
-This prevents host-local JVM timezone behavior from changing temporal feature
-semantics.
+- never pass a Python `datetime` directly into a Spark `TimestampType` column;
+- never rely on `spark.sql.session.timeZone` alone to guarantee UTC behavior;
+- convert values to UTC epoch microseconds before Spark processing;
+- convert them back only after collection.
 
 ## Development Rules
 
@@ -483,16 +454,11 @@ For the local Feast workflow:
 
 ```text
 backfill output
-    =
-correctness-gate input
-    =
-freshness-check input
-    =
-Feast FileSource input
-    =
-materialization source
-    =
-serving parity-test source
+    = correctness-gate input
+    = freshness-check input
+    = Feast FileSource input
+    = materialization source
+    = serving parity-test source
 ```
 
 All of these use:
@@ -506,7 +472,7 @@ Do not:
 - introduce a second local source path for Feast;
 - add an arbitrary offline-store override to materialization;
 - validate one feature store while Feast reads another;
-- move the Feast FileSource path without updating the canonical contract,
+- move the Feast `FileSource` path without updating the canonical contract,
   architecture documentation, ADRs, and parity tests.
 
 ### Preserve Correctness and Freshness Semantics
@@ -514,17 +480,13 @@ Do not:
 Do not conflate correctness with freshness.
 
 ```text
-Correctness:
-Are persisted feature values valid?
-
-Freshness:
-Are persisted feature snapshots current enough for the intended serving
-workflow?
+Correctness: Are persisted feature values valid?
+Freshness:   Are persisted feature snapshots current enough for the intended
+             serving workflow?
 ```
 
-Correctness remains mandatory before every Feast materialization.
-
-Freshness remains an explicit serving-safety check based on business-time
+Correctness remains mandatory before every Feast materialization. Freshness
+remains an explicit serving-safety check based on business-time
 `observation_date` partitions and an explicit UTC reference time.
 
 Do not use filesystem modification time as the primary freshness signal.
@@ -558,7 +520,7 @@ Do not alter these boundaries without:
 Backfill output paths must remain deterministic:
 
 ```text
-<offline-store-root>/<feature_view>/observation_date=YYYY-MM-DD/features.parquet
+<offline-store-root>/<feature-view>/observation_date=YYYY-MM-DD/features.parquet
 ```
 
 Do not replace deterministic overwrite behavior with append-only or randomly
@@ -567,9 +529,8 @@ and reader-selection semantics.
 
 ### Preserve Failure Visibility
 
-Do not make failures look like successful runs.
-
-Failure behavior should provide one or more of:
+Do not make failures look like successful runs. Failure behavior should provide
+one or more of:
 
 - a clear exception;
 - a non-zero CLI exit code;
@@ -578,17 +539,116 @@ Failure behavior should provide one or more of:
 - a reproducible failure-simulation test;
 - a runbook with recovery and verification steps.
 
-For controlled failure scenarios, maintain tests under:
+Maintain controlled reliability tests under:
 
 ```text
 tests/failure_simulations/
 ```
 
-For operator procedures, maintain runbooks under:
+Maintain operator procedures under:
 
 ```text
 docs/runbooks/
 ```
+
+## Testing Guidelines
+
+Every behavior change should include an appropriate test.
+
+### Unit Tests
+
+Use `tests/unit/` for isolated contracts and domain logic:
+
+- Pydantic validation;
+- configuration validation;
+- synthetic-data generation;
+- feature calculations;
+- date-range behavior;
+- partition paths;
+- manifest content;
+- backfill idempotency;
+- Pandas/PySpark parity;
+- Feast entity and feature-view definitions;
+- historical retrieval point-in-time correctness;
+- persisted offline-feature correctness;
+- freshness validation;
+- materialization timestamp contracts;
+- canonical materialization-source enforcement;
+- deterministic materialization manifests;
+- blocked materialization manifests;
+- online lookup behavior;
+- missing online entities;
+- ranking and stable tie-breaking.
+
+### Integration Tests
+
+Use `tests/integration/` for executable multi-component paths:
+
+- CLI argument parsing and execution;
+- source-Parquet read/write flow;
+- CLI-to-backfill-to-partitioned-Parquet flow;
+- CLI-to-manifest flow;
+- end-to-end idempotency;
+- generation, backfill, retrieval, and training;
+- generation, backfill, materialization, online lookup, and ranking;
+- offline/online serving parity.
+
+### Failure Simulations
+
+Use `tests/failure_simulations/` for controlled reliability scenarios:
+
+- stale offline features fail freshness validation;
+- fresh offline features pass freshness validation;
+- invalid backfill parameters fail clearly;
+- empty event streams remain valid and produce zero-count features;
+- missing Feast repositories fail clearly for full materialization;
+- missing Feast repositories fail clearly for incremental materialization.
+
+Do not remove a temporal, correctness, freshness, idempotency, parity, or
+failure-simulation test merely to make a failing suite pass. Understand and fix
+the underlying contract violation.
+
+## Continuous Integration
+
+GitHub Actions runs baseline validation on every push to `main` and every pull
+request.
+
+The clean Ubuntu runner uses Python 3.13 and validates:
+
+- editable installation from the `src/` layout;
+- `import featureforge` after installation;
+- Ruff formatting;
+- Ruff linting;
+- the full pytest suite.
+
+The local equivalent is:
+
+```bash
+python -m pip install --upgrade pip
+python -m pip install -e ".[dev]"
+python -c "import featureforge; print(featureforge.__file__)"
+ruff format --check .
+ruff check .
+pytest -v
+```
+
+The current baseline result is:
+
+```text
+141 passed, 5 skipped, 0 failed
+```
+
+The five skipped tests are in `tests/integration/test_online_serving.py` and
+require Redis, applied Feast definitions, canonical offline snapshots, and
+materialized online values.
+
+The baseline workflow intentionally does not provision this infrastructure.
+Do not remove the documented skip guard to force an artificial green result.
+Use a separate infrastructure-enabled integration workflow when automated
+online-serving validation is introduced.
+
+The CI architecture decision is documented in
+[ADR-004: GitHub Actions CI for Reproducible Validation](docs/adr/ADR-004-github-actions-ci.md).
 
 ## Validation Before a Commit
 
@@ -600,7 +660,7 @@ ruff check .
 pytest -v
 ```
 
-You may also use the existing Make targets where appropriate:
+You may also use the existing Make targets:
 
 ```bash
 make validate
@@ -610,13 +670,13 @@ make docker-config
 make check-freshness
 ```
 
-For the current repository state, the full suite should report:
+For the current baseline repository state, the full suite should report:
 
 ```text
-146 passed
+141 passed, 5 skipped, 0 failed
 ```
 
-Run the focused freshness and failure checks after changing related code:
+Run focused checks after changing related code:
 
 ```bash
 pytest tests/unit/test_feature_quality.py -v
@@ -628,91 +688,30 @@ make check-freshness
 
 All relevant checks should pass before a pull request is opened.
 
-## Testing Guidelines
+## Troubleshooting
 
-Every behavior change should include an appropriate test.
-
-Use `tests/unit/` for isolated contracts and domain logic:
-
-- Pydantic validation.
-- Configuration validation.
-- Synthetic-data generation in independent and behavioral modes.
-- Feature calculations.
-- Date-range behavior.
-- Partition-path behavior.
-- Manifest content.
-- Idempotency at the backfill-function level.
-- Pandas-vs-PySpark parity for feature calculations.
-- Feast entity and feature-view definitions.
-- Historical retrieval point-in-time correctness.
-- Persisted offline feature-correctness validation.
-- Freshness validation for recent, stale, missing, naive-time, and invalid-SLO
-  cases.
-- Feast materialization timestamp contracts.
-- Canonical materialization-source enforcement.
-- Deterministic materialization manifests.
-- Blocked materialization manifests.
-- Online feature lookup behavior.
-- Missing online entities.
-- Online ranking behavior and stable tie-breaking.
-
-Use `tests/integration/` for executable multi-component paths:
-
-- CLI argument parsing and execution.
-- Source-Parquet read/write flow.
-- CLI-to-backfill-to-partitioned-Parquet flow.
-- CLI-to-manifest flow.
-- End-to-end idempotency behavior.
-- Generate, backfill, retrieval, and training flow.
-- Generate, backfill, materialize, online lookup, and ranking flow.
-- Offline/online serving parity.
-
-Use `tests/failure_simulations/` for controlled reliability and recovery
-scenarios:
-
-- Stale offline features fail freshness validation.
-- Fresh offline features pass freshness validation.
-- Invalid backfill parameters fail clearly.
-- Empty event streams remain valid and produce zero-count features.
-- Missing Feast repositories fail clearly for full and incremental
-  materialization.
-
-Do not remove a temporal, correctness, freshness, idempotency, parity, or
-failure-simulation test merely to make a failing suite pass. Understand and fix
-the underlying contract violation.
-
-## Offline Feature Freshness Failures
+### Offline Feature Freshness Failures
 
 If freshness validation fails:
 
-1. Run `make check-freshness` or invoke `featureforge check-freshness` with an
-   explicit reference time.
-2. Identify the failed feature view from the reported stable check name.
-3. Inspect the latest `observation_date=YYYY-MM-DD` partition under
-   `output/offline_store/`.
-4. Compare the latest observation date with the configured reference time and
-   maximum lag.
-5. Inspect the relevant backfill manifest under
-   `output/offline_store/manifests/`.
+1. Run `make check-freshness` or invoke `featureforge check-freshness` with an explicit reference time.
+2. Identify the failed feature view from the stable check name.
+3. Inspect the latest `observation_date=YYYY-MM-DD` partition under `output/offline_store/`.
+4. Compare the latest observation date with the configured reference time and maximum lag.
+5. Inspect the relevant backfill manifest under `output/offline_store/manifests/`.
 6. Verify source-data availability and the intended backfill range.
-7. Run or repair the canonical backfill if the latest partition is genuinely
-   stale.
+7. Repair or rerun the canonical backfill if the latest partition is genuinely stale.
 8. Re-run freshness validation.
-9. Re-run materialization only if the current serving workflow requires
-   refreshed online values.
+9. Re-run materialization only if the current serving workflow requires refreshed online values.
 10. Verify online lookup or offline/online parity.
 
-Do not use filesystem modification time as evidence of feature freshness.
+Do not use filesystem modification time as evidence of feature freshness. Do not
+bypass freshness by changing the canonical Feast source path.
 
-Do not bypass freshness by changing the canonical Feast source path.
+For the detailed operational procedure, see
+[`docs/runbooks/stale-features.md`](docs/runbooks/stale-features.md).
 
-For the detailed operational procedure, see:
-
-```text
-docs/runbooks/stale-features.md
-```
-
-## Feast Serving Issues
+### Feast or Online-Serving Issues
 
 If online lookup or materialization fails:
 
@@ -734,21 +733,18 @@ If online lookup or materialization fails:
 4. Confirm canonical offline feature partitions exist:
 
    ```bash
-   find output/offline_store -name "features.parquet"
+   find output/offline_store -name features.parquet
    ```
 
-5. Confirm correctness validation can pass before materialization.
+5. Confirm correctness validation passes before materialization.
 6. Run `make check-freshness` if the serving workflow requires current values.
 7. Run materialization again with explicit timezone-aware UTC timestamps.
 8. Inspect completed or blocked materialization manifests.
 
-For a detailed procedure, see:
+For the detailed procedure, see
+[`docs/runbooks/failed-materialization.md`](docs/runbooks/failed-materialization.md).
 
-```text
-docs/runbooks/failed-materialization.md
-```
-
-## Failed Backfill Issues
+### Failed Backfills
 
 If a backfill fails:
 
@@ -760,19 +756,12 @@ If a backfill fails:
    - `content.parquet`
    - `events.parquet`
    - `labels.parquet`
-5. Check source data can be read by the active Python environment.
+5. Check that the source data can be read by the active Python environment.
 6. Re-run with an explicit and valid date range.
-7. Confirm a backfill manifest appears under:
+7. Confirm a backfill manifest appears under `output/offline_store/manifests/`.
 
-   ```text
-   output/offline_store/manifests/
-   ```
-
-For a detailed procedure, see:
-
-```text
-docs/runbooks/failed-backfill.md
-```
+For the detailed procedure, see
+[`docs/runbooks/failed-backfill.md`](docs/runbooks/failed-backfill.md).
 
 ## Documentation Expectations
 
@@ -786,9 +775,10 @@ Update documentation whenever a change affects:
 - quality or freshness gate behavior;
 - materialization behavior;
 - manifest schema;
-- test or operational workflow;
+- test or operational workflows;
 - failure recovery expectations;
-- project setup commands.
+- project setup commands;
+- CI validation behavior.
 
 Use an ADR when a change establishes a durable architecture, ownership,
 reliability, or operational decision.
@@ -798,21 +788,36 @@ diagnosis flow, recovery procedure, or prevention policy.
 
 ## Commit Guidance
 
-Prefer small, focused commits.
-
-Examples:
+Prefer small, focused commits. Examples:
 
 ```text
 feat: add offline feature freshness checks
 test: add controlled materialization failure simulation
 docs: add freshness and failure-handling runbooks
 docs: add ADR for freshness SLOs and fail-safe serving
+docs: document CI validation and local serving prerequisites
 fix: preserve UTC timestamp semantics in Spark features
 refactor: isolate canonical offline store configuration
 ```
 
 Commit messages should describe the platform behavior or contract being changed,
 not only the file names that changed.
+
+Before committing:
+
+```bash
+git status
+git diff --check
+git diff
+```
+
+After staging:
+
+```bash
+git add <files>
+git diff --cached --check
+git diff --cached
+```
 
 ## Pull Request Guidance
 
@@ -824,9 +829,36 @@ A pull request should describe:
 - tests run;
 - operational or migration implications;
 - documentation or ADR updates;
-- any intentionally deferred follow-up work.
+- intentionally deferred follow-up work.
 
 For changes affecting the canonical offline source, feature semantics,
 correctness gates, freshness SLOs, materialization, manifests, or serving
 behavior, explain why the change preserves or intentionally changes the
 existing platform contract.
+
+A useful pull request structure is:
+
+```text
+## Problem
+
+## Change
+
+## Contract impact
+
+## Validation
+
+## Operational impact
+
+## Documentation and ADRs
+
+## Follow-up work
+```
+
+## Architecture Decisions
+
+Important durable decisions are documented as ADRs:
+
+- [ADR-001: Offline/Online Feature Store Split](docs/adr/ADR-001-offline-online-feature-store-split.md)
+- [ADR-002: Canonical Offline Store Contract](docs/adr/ADR-002-canonical-offline-store-contract.md)
+- [ADR-003: Feature Freshness SLOs and Fail-Safe Serving](docs/adr/ADR-003-freshness-slos-and-fail-safe-serving.md)
+- [ADR-004: GitHub Actions CI for Reproducible Validation](docs/adr/ADR-004-github-actions-ci.md)
