@@ -6,8 +6,8 @@ FeatureForge is a production-inspired feature platform for reproducible offline
 training data and low-latency online ML feature serving.
 
 It is built as a portfolio project for Data Infrastructure, Feature
-Infrastructure, and ML Platform Engineering. The project focuses on the
-hard parts that make feature platforms trustworthy:
+Infrastructure, and ML Platform Engineering. The project focuses on the hard
+parts that make feature platforms trustworthy:
 
 - deterministic data generation in independent and behavioral modes
 - executable data contracts
@@ -29,6 +29,7 @@ hard parts that make feature platforms trustworthy:
 - full and incremental online materialization into Redis
 - online feature lookup and deterministic ranking
 - GitHub Actions baseline CI
+- documented AWS production operating profile
 - one-command end-to-end platform demonstration
 
 ## Project Goal
@@ -36,7 +37,7 @@ hard parts that make feature platforms trustworthy:
 The long-term goal is to provide trusted, versioned, point-in-time-correct
 features for both offline model training and online inference.
 
-The target architecture will use:
+The target architecture uses:
 
 - PySpark for scalable batch feature computation
 - S3-backed Parquet for the offline feature store
@@ -46,13 +47,13 @@ The target architecture will use:
 - GitHub Actions for continuous integration
 - sklearn / XGBoost for baseline and advanced models
 
-The current implementation establishes the local reference foundation needed
-to build those components correctly. It includes a parity-tested PySpark
-execution engine alongside the Pandas reference, a complete ML training
-pipeline with historical retrieval and online serving, a canonical local
-offline-store contract shared by backfill, validation, Feast, materialization,
-and serving-parity tests, explicit freshness and failure-handling contracts,
-and reproducible baseline CI.
+The current implementation establishes the local reference foundation needed to
+build those components correctly. It includes a parity-tested PySpark execution
+engine alongside the Pandas reference, a complete ML training pipeline with
+historical retrieval and online serving, a canonical local offline-store
+contract shared by backfill, validation, Feast, materialization, and
+serving-parity tests, explicit freshness and failure-handling contracts,
+reproducible baseline CI, and a documented AWS production profile.
 
 ## Current Status
 
@@ -141,6 +142,14 @@ and reproducible baseline CI.
   - verifies `import featureforge`;
   - runs Ruff formatting and lint checks;
   - runs the pytest suite in a clean Ubuntu runner.
+- AWS production operating profile:
+  - environment-owned S3 buckets for `dev`, `staging`, and `prod`;
+  - Hive-partitioned Parquet offline store;
+  - SSE-KMS encryption with one customer-managed KMS key per environment;
+  - S3 versioning and lifecycle rules;
+  - least-privilege IAM roles for backfill, materialization, and serving;
+  - DynamoDB as the managed online-store profile;
+  - documented architecture only; no AWS resources are provisioned yet.
 
 ### Current Quality Gate
 
@@ -160,13 +169,19 @@ ruff check .
 pytest -v
 ```
 
-Current baseline result:
+GitHub Actions baseline result:
 
 ```text
 141 passed, 5 skipped, 0 failed
 ```
 
-The five skipped tests are online-serving integration tests in
+The local full integration environment result is:
+
+```text
+146 passed, 0 skipped, 0 failed
+```
+
+The five tests skipped in GitHub Actions are online-serving integration tests in
 `tests/integration/test_online_serving.py`. They require a local Redis instance,
 applied Feast definitions, canonical offline feature snapshots, and materialized
 online feature values.
@@ -270,6 +285,8 @@ Freshness-check input
 Feast source
     =
 Materialization source
+    =
+Serving parity-test source
 ```
 
 This prevents a split-brain failure mode in which one feature dataset is
@@ -280,12 +297,20 @@ The application-level materialization API always validates
 libraries remain path-configurable for isolated testing and reusable validation
 workflows.
 
+The same invariant is documented for the AWS production profile, where the
+resolved source becomes:
+
+```text
+s3://featureforge-<environment>/offline-store/
+```
+
 See:
 
 - [ADR-001: Offline/Online Feature Store Split](docs/adr/ADR-001-offline-online-feature-store-split.md)
 - [ADR-002: Canonical Offline Store Contract](docs/adr/ADR-002-canonical-offline-store-contract.md)
 - [ADR-003: Feature Freshness SLOs and Fail-Safe Serving](docs/adr/ADR-003-freshness-slos-and-fail-safe-serving.md)
 - [ADR-004: GitHub Actions CI for Reproducible Validation](docs/adr/ADR-004-github-actions-ci.md)
+- [ADR-005: AWS S3 Offline-Store Production Profile](docs/adr/ADR-005-aws-s3-offline-store-profile.md)
 
 ## Core Architecture
 
@@ -305,9 +330,10 @@ See:
 | Code quality | Ruff | Formatting and linting |
 | Baseline CI | GitHub Actions | Fresh installation, import, formatting, linting, and pytest validation |
 | Local online store | Redis via Docker Compose | Low-latency feature serving |
+| AWS online-store profile | DynamoDB | Managed production-oriented online feature serving |
 | Feature platform | Feast | Feature definitions, historical retrieval, materialization, online serving |
 | ML training | sklearn | Baseline model with pipeline persistence |
-| Planned cloud profile | AWS S3 and DynamoDB | Offline and online production-oriented storage |
+| AWS offline-store profile | S3-backed Parquet | Environment-owned canonical feature storage |
 
 ## Quick Start
 
@@ -562,8 +588,8 @@ feature_repo/
 └── personalization_demo.py
 ```
 
-`feature_repo/sources.py` defines FileSources rooted at the canonical local
-offline store:
+`feature_repo/sources.py` defines `FileSource` objects rooted at the canonical
+local offline store:
 
 ```text
 ../output/offline_store/user_engagement_features
@@ -633,14 +659,14 @@ output/materialization_manifests/
 
 These manifests include:
 
-- run type and status
-- full or incremental mode
-- Feast repository path
-- canonical offline-store path
-- requested time range
-- execution timestamps
-- correctness-report payload
-- failed correctness-check names for blocked runs
+- run type and status;
+- full or incremental mode;
+- Feast repository path;
+- canonical offline-store path;
+- requested time range;
+- execution timestamps;
+- correctness-report payload;
+- failed correctness-check names for blocked runs.
 
 ## Freshness Checks
 
@@ -757,11 +783,11 @@ python scripts/diagnose_baseline.py
 
 This provides:
 
-- feature-distribution analysis
-- train-versus-test drift detection
-- coefficient-stability checks
-- precision/recall curves
-- calibration analysis
+- feature-distribution analysis;
+- train-versus-test drift detection;
+- coefficient-stability checks;
+- precision/recall curves;
+- calibration analysis.
 
 ## Online Serving
 
@@ -827,7 +853,7 @@ generate
   → Feast full materialization into Redis
   → online feature lookup
   → deterministic content ranking
-  → online/offline serving parity checks
+  → offline/online serving parity checks
 ```
 
 Customize the demo:
@@ -927,15 +953,15 @@ files or create random output names.
 
 Every backfill writes a JSON manifest containing:
 
-- run type
-- start and completion time
-- status
-- date range
-- lookback window
-- output directory
-- execution engine
-- per-date user and content feature counts
-- concrete output paths
+- run type;
+- start and completion time;
+- status;
+- date range;
+- lookback window;
+- output directory;
+- execution engine;
+- per-date user and content feature counts;
+- concrete output paths.
 
 Example shape:
 
@@ -1170,6 +1196,7 @@ FeatureForge documents important architectural decisions as ADRs:
 - [ADR-002: Canonical Offline Store Contract](docs/adr/ADR-002-canonical-offline-store-contract.md)
 - [ADR-003: Feature Freshness SLOs and Fail-Safe Serving](docs/adr/ADR-003-freshness-slos-and-fail-safe-serving.md)
 - [ADR-004: GitHub Actions CI for Reproducible Validation](docs/adr/ADR-004-github-actions-ci.md)
+- [ADR-005: AWS S3 Offline-Store Production Profile](docs/adr/ADR-005-aws-s3-offline-store-profile.md)
 
 These decisions establish the local V1 model:
 
@@ -1185,8 +1212,8 @@ Feast definitions and materialization
 Redis online store
 ```
 
-The future AWS production profile will replace the local canonical path with
-one environment-owned object-store URI, such as:
+The corresponding AWS production profile replaces the local canonical path with
+one environment-owned object-store URI:
 
 ```text
 s3://featureforge-<environment>/offline-store/
@@ -1195,6 +1222,48 @@ s3://featureforge-<environment>/offline-store/
 The resolved production location must be shared by the backfill writer,
 correctness gate, freshness checks, Feast sources, manifests, lineage metadata,
 and parity checks.
+
+## AWS Production Profile
+
+FeatureForge currently runs as a reproducible local reference platform using
+Parquet, Docker Compose, Redis, and Feast.
+
+Its documented AWS production profile generalizes the same canonical-source
+contract to:
+
+```text
+S3-backed partitioned Parquet
+        ↓
+persisted-feature correctness gate
+        ↓
+feature freshness SLO checks
+        ↓
+Feast Feature Views and Services
+        ├── point-in-time historical retrieval
+        └── materialization
+                ↓
+            DynamoDB online store
+                ↓
+            online feature lookup and ranking
+```
+
+The profile defines:
+
+- one environment-owned bucket for each of `dev`, `staging`, and `prod`;
+- a canonical offline-store URI:
+  `s3://featureforge-<environment>/offline-store/`;
+- Hive-style Parquet partitions using `observation_date=YYYY-MM-DD`;
+- SSE-KMS encryption with a customer-managed KMS key per environment;
+- bucket versioning and lifecycle transitions;
+- least-privilege IAM roles for backfill writing, materialization, and serving;
+- DynamoDB as the managed AWS online-store profile;
+- manifest-based lineage for backfills, correctness, freshness, and
+  materialization.
+
+No AWS resources are provisioned by this documentation.
+
+See [AWS Production Profile](docs/aws-production-profile.md) and
+[ADR-005: AWS S3 Offline-Store Production Profile](docs/adr/ADR-005-aws-s3-offline-store-profile.md).
 
 ## Roadmap
 
@@ -1228,8 +1297,11 @@ and parity checks.
 - Offline/online serving parity integration tests.
 - Ruff formatting and linting.
 - GitHub Actions CI for reproducible baseline validation.
-- ADRs for offline/online separation, canonical source ownership,
-  freshness/fail-safe serving, and CI validation.
+- ADR-001 through ADR-004 for local architecture, reliability, freshness, and
+  CI decisions.
+- Documented AWS S3 and DynamoDB production profile.
+- ADR-005 for the AWS S3 offline-store production profile.
+- Per-environment S3, KMS, IAM, lifecycle, versioning, and DynamoDB design.
 
 ### Next Steps
 
@@ -1239,31 +1311,32 @@ and parity checks.
 3. Add scheduled freshness checks, feature-view ownership, alerting, and SLO
    escalation.
 4. Add controlled simulations for Redis, Feast API, and object-storage failures.
-5. Document the AWS S3 and DynamoDB production profile.
-6. Implement hyperparameter tuning and advanced models such as XGBoost or
+5. Convert the documented AWS profile into infrastructure as code.
+6. Provision an AWS development environment with explicit cost limits and
+   monitoring after the infrastructure design is reviewed.
+7. Implement hyperparameter tuning and advanced models such as XGBoost or
    LightGBM.
-7. Add MLflow experiment tracking and a model registry.
-8. Evolve the local fixed-path contract into one shared,
-   environment-owned production storage configuration.
+8. Add MLflow experiment tracking and a model registry.
 
 ## Project Scope
 
 Version 1 focuses on:
 
-- event-time-aware feature computation
-- offline and online feature separation
-- point-in-time historical retrieval
-- reproducible backfills
-- canonical offline-store ownership
-- persisted-feature correctness validation
-- feature freshness SLO checks
-- fail-safe materialization and serving workflows
-- controlled failure simulations and operational runbooks
-- online materialization
-- offline/online parity validation
-- tests and operational documentation
-- ML-ready training pipelines
-- reproducible baseline CI
+- event-time-aware feature computation;
+- offline and online feature separation;
+- point-in-time historical retrieval;
+- reproducible backfills;
+- canonical offline-store ownership;
+- persisted-feature correctness validation;
+- feature freshness SLO checks;
+- fail-safe materialization and serving workflows;
+- controlled failure simulations and operational runbooks;
+- online materialization;
+- offline/online parity validation;
+- tests and operational documentation;
+- ML-ready training pipelines;
+- reproducible baseline CI;
+- documented AWS production architecture.
 
 Kafka, Flink, Kubernetes, Terraform-heavy infrastructure, and complex model
 training are intentionally outside the initial version of FeatureForge.

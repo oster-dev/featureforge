@@ -17,7 +17,7 @@ The architecture prioritizes:
 
 ## Architecture Overview
 
-FeatureForge separates the platform into six major concerns:
+FeatureForge separates the platform into seven major concerns:
 
 1. Source-data generation and validation.
 2. Point-in-time feature computation.
@@ -25,6 +25,7 @@ FeatureForge separates the platform into six major concerns:
 4. Historical retrieval and model training.
 5. Online materialization and serving.
 6. Operational validation, CI, and failure handling.
+7. A documented AWS production operating profile.
 
 ```text
 validated YAML configuration
@@ -60,8 +61,9 @@ featureforge/
 ├── data/                 Generated and training artifacts
 ├── docs/
 │   ├── adr/              Architecture decisions
-│   └── runbooks/         Operational recovery procedures
-├── feature_repo/        Feast entities, sources, views, services, demos
+│   ├── runbooks/         Operational recovery procedures
+│   └── aws-production-profile.md
+├── feature_repo/         Feast entities, sources, views, services, demos
 ├── scripts/              Training and diagnostic workflows
 ├── src/featureforge/     Application and platform implementation
 ├── tests/
@@ -231,6 +233,7 @@ Backfill output
     = freshness-check input
     = Feast source
     = materialization source
+    = serving parity-test source
 ```
 
 The application-level materialization API always validates this canonical path.
@@ -366,7 +369,7 @@ feature_repo/
 └── personalization_demo.py
 ```
 
-The `FileSource` definitions read from:
+The local `FileSource` definitions read from:
 
 ```text
 ../output/offline_store/user_engagement_features
@@ -591,6 +594,92 @@ This separates two validation layers:
 The decision is documented in
 [ADR-004: GitHub Actions CI for Reproducible Validation](docs/adr/ADR-004-github-actions-ci.md).
 
+## AWS Production Profile
+
+FeatureForge documents a credible AWS production architecture profile without
+deploying real infrastructure ahead of local correctness and reliability work.
+
+The profile generalizes the local canonical-source contract to an
+environment-owned S3 prefix:
+
+```text
+s3://featureforge-<environment>/offline-store/
+```
+
+```mermaid
+flowchart LR
+    Raw[Raw behavioral events] --> Spark[PySpark batch feature jobs]
+    Spark --> S3Offline[S3 canonical offline store<br/>partitioned Parquet]
+
+    S3Offline --> Correctness[Persisted feature correctness gate]
+    S3Offline --> Freshness[Feature freshness SLO checks]
+
+    Correctness --> Feast[Feast Feature Views and Services]
+    Freshness --> Ops[Monitoring, alerting, and SLO escalation]
+
+    Labels[Observation labels] --> Historical[Point-in-time historical retrieval]
+    Feast --> Historical
+    Historical --> Training[Training and evaluation]
+
+    Feast --> Materialize[Full or incremental materialization]
+    Materialize --> Dynamo[DynamoDB online store]
+    Dynamo --> Serving[Online feature lookup and ranking]
+
+    S3Offline --> Manifests[Run manifests and lineage metadata]
+    Correctness --> Manifests
+    Freshness --> Manifests
+    Materialize --> Manifests
+```
+
+Key production-profile decisions:
+
+- One S3 bucket per environment: `dev`, `staging`, and `prod`. Buckets are
+  never shared across environments.
+- Hive-style Parquet partitions remain based on
+  `observation_date=YYYY-MM-DD`, preserving the local partitioning contract.
+- SSE-KMS encryption uses a customer-managed KMS key per environment.
+- S3 bucket versioning protects against accidental overwrites and deletion.
+- Lifecycle transitions use Infrequent Access and Glacier Instant Retrieval
+  according to data access patterns, rather than blanket deletion.
+- Three least-privilege IAM roles isolate backfill writes, materialization
+  writes, and serving reads:
+  - `featureforge-backfill-writer`;
+  - `featureforge-materialization-writer`;
+  - `featureforge-serving-reader`.
+- DynamoDB is the documented AWS online-store profile. Redis remains the
+  local Docker Compose online store.
+
+The canonical-source invariant is unchanged in AWS:
+
+```text
+Backfill writer
+    = Correctness-gate input
+    = Freshness-check input
+    = Feast FileSource
+    = Materialization source
+    = Serving parity-test source
+```
+
+Only the resolved URI changes from:
+
+```text
+output/offline_store/
+```
+
+to:
+
+```text
+s3://featureforge-<environment>/offline-store/
+```
+
+No AWS resources are provisioned by this documentation. It exists so the
+production operating model can be evaluated and defended before any real
+deployment occurs.
+
+Full detail is documented in
+[`docs/aws-production-profile.md`](docs/aws-production-profile.md) and
+[ADR-005: AWS S3 Offline-Store Production Profile](docs/adr/ADR-005-aws-s3-offline-store-profile.md).
+
 ## Makefile Workflows
 
 The Makefile exposes common workflows:
@@ -645,6 +734,8 @@ FeatureForge follows these principles:
 - Never trust implicit timezone handling across Python/JVM boundaries.
 - Persist preprocessing with models to reduce training-serving skew.
 - Treat failure simulations and runbooks as version-controlled artifacts.
+- Keep environment boundaries, encryption, and IAM permissions explicit in the
+  AWS production profile.
 
 ## Current Limitations
 
@@ -652,10 +743,11 @@ The project intentionally remains a focused local platform implementation:
 
 - Redis is a local development online store.
 - DynamoDB is the documented AWS production alternative, not yet deployed.
-- Offline storage is local Parquet; S3 is the planned production profile.
+- Offline storage is local Parquet; S3 is a documented production profile, not
+  yet deployed.
 - `output/offline_store/` is a fixed local V1 contract.
-- Production requires one environment-owned object-store URI shared across
-  backfill, correctness, freshness, Feast, manifests, lineage, and parity.
+- AWS environment-owned S3 URIs, KMS keys, IAM roles, and DynamoDB tables are
+  documented but not provisioned.
 - Freshness currently uses latest observation-date partitions and a configurable
   local maximum lag.
 - Production freshness requires per-view ownership, scheduling, alerting, and
@@ -671,8 +763,8 @@ The project intentionally remains a focused local platform implementation:
 
 ## Future Architecture
 
-The planned AWS-oriented profile replaces the local fixed path with one
-environment-owned storage URI, for example:
+The documented AWS production profile replaces the local fixed path with one
+environment-owned storage URI:
 
 ```text
 s3://featureforge-<environment>/offline-store/
@@ -688,15 +780,20 @@ The same resolved URI must be consumed by:
 - lineage metadata;
 - offline/online parity checks.
 
-The next reliability milestones are:
+The next reliability and platform milestones are:
 
-1. canonical offline feature correctness enforcement;
-2. feature freshness monitoring;
-3. Feast materialization scheduling;
-4. online feature-store monitoring;
-5. alerts and SLO escalation;
-6. automated recovery workflows;
-7. an infrastructure-enabled CI integration job.
+1. Add an infrastructure-enabled CI integration job with Redis, Feast, canonical
+   snapshots, materialization, and online-serving validation.
+2. Add scheduled freshness checks, feature-view ownership, alerting, and SLO
+   escalation.
+3. Extend materialization manifests with richer lineage and run metadata.
+4. Add controlled simulations for Redis, Feast API, and object-storage failures.
+5. Convert the documented AWS production profile into infrastructure as code.
+6. Provision an AWS development environment after the infrastructure design is
+   reviewed and cost boundaries are explicit.
+7. Add MLflow experiment tracking and a model registry.
+8. Add advanced models such as XGBoost or LightGBM where model complexity is
+   justified by the platform use case.
 
 ## Architecture Decisions
 
@@ -706,3 +803,4 @@ Important durable decisions are documented as ADRs:
 - [ADR-002: Canonical Offline Store Contract](docs/adr/ADR-002-canonical-offline-store-contract.md)
 - [ADR-003: Feature Freshness SLOs and Fail-Safe Serving](docs/adr/ADR-003-freshness-slos-and-fail-safe-serving.md)
 - [ADR-004: GitHub Actions CI for Reproducible Validation](docs/adr/ADR-004-github-actions-ci.md)
+- [ADR-005: AWS S3 Offline-Store Production Profile](docs/adr/ADR-005-aws-s3-offline-store-profile.md)

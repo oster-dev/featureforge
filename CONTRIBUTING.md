@@ -13,16 +13,19 @@ Infrastructure, and ML Platform Engineering. The project prioritizes:
 - correctness and freshness gates;
 - visible operational behavior;
 - offline/online serving parity;
-- deterministic workflows.
+- deterministic workflows;
+- documented production architecture.
 
 Before contributing, read:
 
 - [README.md](README.md)
 - [ARCHITECTURE.md](ARCHITECTURE.md)
+- [AWS Production Profile](docs/aws-production-profile.md)
 - [ADR-001: Offline/Online Feature Store Split](docs/adr/ADR-001-offline-online-feature-store-split.md)
 - [ADR-002: Canonical Offline Store Contract](docs/adr/ADR-002-canonical-offline-store-contract.md)
 - [ADR-003: Feature Freshness SLOs and Fail-Safe Serving](docs/adr/ADR-003-freshness-slos-and-fail-safe-serving.md)
 - [ADR-004: GitHub Actions CI for Reproducible Validation](docs/adr/ADR-004-github-actions-ci.md)
+- [ADR-005: AWS S3 Offline-Store Production Profile](docs/adr/ADR-005-aws-s3-offline-store-profile.md)
 
 ## Development Setup
 
@@ -87,8 +90,9 @@ featureforge/
 ├── data/                 Generated and training artifacts
 ├── docs/
 │   ├── adr/              Architecture decisions
-│   └── runbooks/         Operational recovery procedures
-├── feature_repo/        Feast entities, sources, views, services, demos
+│   ├── runbooks/         Operational recovery procedures
+│   └── aws-production-profile.md
+├── feature_repo/         Feast entities, sources, views, services, demos
 ├── scripts/              Training and diagnostic workflows
 ├── src/featureforge/     Application and platform implementation
 ├── tests/
@@ -145,6 +149,63 @@ cd ..
 The baseline CI workflow does not provision Redis, Docker Compose, Feast, or
 materialized online features. Those are local or infrastructure-enabled
 integration prerequisites.
+
+## AWS Production Profile
+
+FeatureForge currently runs as a local reference platform. Local development,
+the test suite, and baseline GitHub Actions CI do not require AWS credentials,
+AWS resources, or cloud deployment.
+
+The documented AWS production profile defines how the local platform can evolve
+without changing its core feature contracts:
+
+```text
+Local V1
+  output/offline_store/
+  Redis via Docker Compose
+  Feast FileSource on local Parquet
+
+AWS profile
+  s3://featureforge-<environment>/offline-store/
+  Hive-partitioned Parquet
+  SSE-KMS encryption
+  environment-scoped IAM roles
+  DynamoDB online-store profile
+  Feast FileSource on S3
+```
+
+The AWS profile preserves the canonical-source invariant:
+
+```text
+Backfill writer
+    = Correctness-gate input
+    = Freshness-check input
+    = Feast FileSource
+    = Materialization source
+    = Serving parity-test source
+```
+
+The following AWS architecture decisions are documented but are not yet
+implemented or provisioned:
+
+- One S3 bucket per environment: `dev`, `staging`, and `prod`.
+- One customer-managed SSE-KMS key per environment.
+- Hive-style feature partitions using `observation_date=YYYY-MM-DD`.
+- Bucket versioning and lifecycle transitions for raw, source, feature,
+  manifest, training, and model artifacts.
+- `featureforge-backfill-writer` for source and offline-store writes.
+- `featureforge-materialization-writer` for validated offline-store reads,
+  materialization manifests, and DynamoDB writes.
+- `featureforge-serving-reader` for read-only online feature serving.
+- DynamoDB as the managed AWS online-store profile.
+
+Do not introduce AWS SDK calls, AWS credentials, S3 paths, DynamoDB resources,
+or deployment steps into local workflows unless the corresponding infrastructure
+design, tests, cost boundaries, IAM policies, and documentation are added in
+the same change.
+
+See [AWS Production Profile](docs/aws-production-profile.md) and
+[ADR-005: AWS S3 Offline-Store Production Profile](docs/adr/ADR-005-aws-s3-offline-store-profile.md).
 
 ## Local Development Flows
 
@@ -467,13 +528,21 @@ All of these use:
 output/offline_store/
 ```
 
+For the documented AWS production profile, the same invariant uses:
+
+```text
+s3://featureforge-<environment>/offline-store/
+```
+
 Do not:
 
 - introduce a second local source path for Feast;
 - add an arbitrary offline-store override to materialization;
 - validate one feature store while Feast reads another;
 - move the Feast `FileSource` path without updating the canonical contract,
-  architecture documentation, ADRs, and parity tests.
+  architecture documentation, ADRs, and parity tests;
+- introduce environment-specific S3 paths that allow one component to validate
+  a different URI than the URI used by Feast or materialization.
 
 ### Preserve Correctness and Freshness Semantics
 
@@ -526,6 +595,9 @@ Backfill output paths must remain deterministic:
 Do not replace deterministic overwrite behavior with append-only or randomly
 named partition files unless you also introduce versioning, lineage, retention,
 and reader-selection semantics.
+
+For S3, preserve recovery from idempotent overwrites through bucket versioning.
+Do not treat object versioning as permission to bypass correctness validation.
 
 ### Preserve Failure Visibility
 
@@ -632,10 +704,16 @@ ruff check .
 pytest -v
 ```
 
-The current baseline result is:
+The current GitHub Actions baseline result is:
 
 ```text
 141 passed, 5 skipped, 0 failed
+```
+
+The local full integration environment result is:
+
+```text
+146 passed, 0 skipped, 0 failed
 ```
 
 The five skipped tests are in `tests/integration/test_online_serving.py` and
@@ -670,10 +748,11 @@ make docker-config
 make check-freshness
 ```
 
-For the current baseline repository state, the full suite should report:
+For the current baseline repository state, expect:
 
 ```text
-141 passed, 5 skipped, 0 failed
+Local:  146 passed, 0 skipped, 0 failed
+CI:     141 passed, 5 skipped, 0 failed
 ```
 
 Run focused checks after changing related code:
@@ -778,10 +857,12 @@ Update documentation whenever a change affects:
 - test or operational workflows;
 - failure recovery expectations;
 - project setup commands;
-- CI validation behavior.
+- CI validation behavior;
+- AWS environment, storage, encryption, IAM, lifecycle, or online-store profile;
+- production deployment, cost, resilience, or cloud-operational behavior.
 
 Use an ADR when a change establishes a durable architecture, ownership,
-reliability, or operational decision.
+reliability, security, or operational decision.
 
 Use a runbook when a change introduces a recognizable operational incident,
 diagnosis flow, recovery procedure, or prevention policy.
@@ -796,6 +877,8 @@ test: add controlled materialization failure simulation
 docs: add freshness and failure-handling runbooks
 docs: add ADR for freshness SLOs and fail-safe serving
 docs: document CI validation and local serving prerequisites
+docs: define AWS S3 and DynamoDB production profile
+docs: add ADR for AWS offline-store ownership and IAM boundaries
 fix: preserve UTC timestamp semantics in Spark features
 refactor: isolate canonical offline store configuration
 ```
@@ -824,7 +907,8 @@ git diff --cached
 A pull request should describe:
 
 - the problem being solved;
-- the data, temporal, correctness, freshness, or serving contract affected;
+- the data, temporal, correctness, freshness, serving, or cloud contract
+  affected;
 - the implementation approach;
 - tests run;
 - operational or migration implications;
@@ -832,9 +916,9 @@ A pull request should describe:
 - intentionally deferred follow-up work.
 
 For changes affecting the canonical offline source, feature semantics,
-correctness gates, freshness SLOs, materialization, manifests, or serving
-behavior, explain why the change preserves or intentionally changes the
-existing platform contract.
+correctness gates, freshness SLOs, materialization, manifests, serving behavior,
+AWS storage, IAM, encryption, or cloud operating profile, explain why the
+change preserves or intentionally changes the existing platform contract.
 
 A useful pull request structure is:
 
@@ -862,3 +946,4 @@ Important durable decisions are documented as ADRs:
 - [ADR-002: Canonical Offline Store Contract](docs/adr/ADR-002-canonical-offline-store-contract.md)
 - [ADR-003: Feature Freshness SLOs and Fail-Safe Serving](docs/adr/ADR-003-freshness-slos-and-fail-safe-serving.md)
 - [ADR-004: GitHub Actions CI for Reproducible Validation](docs/adr/ADR-004-github-actions-ci.md)
+- [ADR-005: AWS S3 Offline-Store Production Profile](docs/adr/ADR-005-aws-s3-offline-store-profile.md)
