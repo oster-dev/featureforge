@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   test:
-    name: Lint and test
+    name: Baseline lint and test
     runs-on: ubuntu-latest
 
     steps:
@@ -41,5 +41,127 @@ jobs:
       - name: Run Ruff lint
         run: ruff check .
 
-      - name: Run test suite
+      - name: Run baseline test suite
         run: pytest -v
+
+  serving-integration:
+    name: Redis and Feast serving integration
+    runs-on: ubuntu-latest
+    needs: test
+
+    env:
+      BACKFILL_START_DATE: "2026-03-10"
+      BACKFILL_END_DATE: "2026-03-12"
+      WINDOW_DAYS: "7"
+      MATERIALIZE_START_TIME: "2026-03-10T00:00:00+00:00"
+      MATERIALIZE_END_TIME: "2026-03-12T00:00:00+00:00"
+
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
+      - name: Install project and CI dependencies
+        run: python -m pip install -e ".[dev,feature-store,spark]"
+
+      - name: Verify package import
+        run: python -c "import featureforge; print(featureforge.__file__)"
+
+      - name: Verify Redis connection
+        run: |
+          python - <<'PY'
+          import socket
+          import time
+
+          for attempt in range(20):
+              try:
+                  with socket.create_connection(("localhost", 6379), timeout=2):
+                      print("Redis is reachable")
+                      break
+              except OSError:
+                  if attempt == 19:
+                      raise
+                  print(f"Waiting for Redis ({attempt + 1}/20)")
+                  time.sleep(2)
+          PY
+
+      - name: Generate deterministic source data
+        run: |
+          featureforge generate \
+            --config configs/synthetic_data.yaml \
+            --output output/source_data
+
+      - name: Run canonical backfill
+        run: |
+          featureforge backfill \
+            --input output/source_data \
+            --output output/offline_store \
+            --start-date "$BACKFILL_START_DATE" \
+            --end-date "$BACKFILL_END_DATE" \
+            --window-days "$WINDOW_DAYS"
+
+      - name: Verify offline feature partitions exist
+        run: |
+          find output/offline_store -name features.parquet
+          test -n "$(find output/offline_store -name 'features.parquet')"
+
+      - name: Show Feast online-store configuration
+        working-directory: feature_repo
+        run: |
+          echo "Feature repository configuration:"
+          cat feature_store.yaml
+
+      - name: Apply Feast feature repository
+        working-directory: feature_repo
+        run: feast apply
+
+      - name: Materialize validated feature values into Redis
+        run: |
+          featureforge materialize \
+            --repo feature_repo \
+            --start-time "$MATERIALIZE_START_TIME" \
+            --end-time "$MATERIALIZE_END_TIME" \
+            --manifest-output output
+
+      - name: Verify materialization manifest exists
+        run: |
+          find output/materialization_manifests -name "*.json"
+          test -n "$(find output/materialization_manifests -name '*.json')"
+
+      - name: Run online-serving integration tests
+        run: pytest -v tests/integration/test_online_serving.py
+
+      - name: Upload materialization manifests on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: materialization-manifests
+          path: output/materialization_manifests/
+          retention-days: 7
+
+      - name: Upload offline-store diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: offline-store-diagnostics
+          path: output/offline_store/
+          retention-days: 7
