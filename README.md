@@ -28,7 +28,7 @@ parts that make feature platforms trustworthy:
 - ML-ready training pipelines with time-based evaluation
 - full and incremental online materialization into Redis
 - online feature lookup and deterministic ranking
-- GitHub Actions baseline CI
+- two-layer GitHub Actions validation
 - documented AWS production operating profile
 - one-command end-to-end platform demonstration
 
@@ -53,7 +53,7 @@ engine alongside the Pandas reference, a complete ML training pipeline with
 historical retrieval and online serving, a canonical local offline-store
 contract shared by backfill, validation, Feast, materialization, and
 serving-parity tests, explicit freshness and failure-handling contracts,
-reproducible baseline CI, and a documented AWS production profile.
+two-layer CI, and a documented AWS production profile.
 
 ## Current Status
 
@@ -142,6 +142,13 @@ reproducible baseline CI, and a documented AWS production profile.
   - verifies `import featureforge`;
   - runs Ruff formatting and lint checks;
   - runs the pytest suite in a clean Ubuntu runner.
+- GitHub Actions Redis and Feast serving-integration CI:
+  - provisions a fresh Redis service container;
+  - generates deterministic source data;
+  - builds the canonical offline feature store;
+  - applies Feast definitions;
+  - materializes validated features into Redis;
+  - runs all online-serving integration tests without skips.
 - AWS production operating profile:
   - environment-owned S3 buckets for `dev`, `staging`, and `prod`;
   - Hive-partitioned Parquet offline store;
@@ -151,44 +158,92 @@ reproducible baseline CI, and a documented AWS production profile.
   - DynamoDB as the managed online-store profile;
   - documented architecture only; no AWS resources are provisioned yet.
 
-### Current Quality Gate
+## Current Quality Gate
 
-The GitHub Actions baseline CI workflow validates:
+FeatureForge validates the platform through two GitHub Actions jobs.
 
 ```text
-fresh Python 3.13 installation
+Baseline lint and test
         ↓
-editable package installation
+Fresh Python 3.13 installation
+        ↓
+Editable package installation
         ↓
 FeatureForge package import
         ↓
-ruff format --check .
+Ruff format and lint checks
         ↓
-ruff check .
-        ↓
-pytest -v
+Infrastructure-free pytest suite
 ```
-
-GitHub Actions baseline result:
 
 ```text
-141 passed, 5 skipped, 0 failed
+Redis and Feast serving integration
+        ↓
+Fresh Redis service container
+        ↓
+Deterministic source-data generation
+        ↓
+Canonical offline backfill
+        ↓
+Feast apply
+        ↓
+Validated materialization into Redis
+        ↓
+Online-serving parity and ranking tests
 ```
 
-The local full integration environment result is:
+Current CI results:
 
-```text
-146 passed, 0 skipped, 0 failed
-```
+| Validation layer | Scope | Result |
+|---|---|---|
+| Baseline CI | Fresh installation, package import, Ruff, and infrastructure-free tests | `141 passed, 5 skipped, 0 failed` |
+| Serving integration CI | Redis, data generation, canonical backfill, Feast apply, materialization, and online-serving tests | `5 passed, 0 skipped, 0 failed` |
+| Local full integration | Complete local test suite with Redis, Feast, and materialized values | `146 passed, 0 skipped, 0 failed` |
 
-The five tests skipped in GitHub Actions are online-serving integration tests in
-`tests/integration/test_online_serving.py`. They require a local Redis instance,
-applied Feast definitions, canonical offline feature snapshots, and materialized
-online feature values.
+The five skipped tests in the baseline job are online-serving integration tests
+in `tests/integration/test_online_serving.py`. They require Redis, applied Feast
+definitions, canonical offline feature snapshots, and materialized online
+feature values. The serving-integration job provisions those prerequisites and
+runs the same tests as real end-to-end contracts.
 
-This is an explicit infrastructure-dependent skip, not a hidden test failure.
 See [CONTRIBUTING.md](CONTRIBUTING.md) for local execution prerequisites and
 [ADR-004](docs/adr/ADR-004-github-actions-ci.md) for the CI decision.
+
+## Demo Evidence
+
+FeatureForge includes a documented local demo and committed evidence for both
+CI layers and the local serving workflow.
+
+### Baseline CI
+
+![Baseline lint and test succeeded](docs/images/ci-baseline-lint-and-test.png)
+
+### Redis and Feast serving integration
+
+![Redis and Feast serving integration succeeded](docs/images/ci-redis-and-feast-serving-integration.png)
+
+### Local pipeline and materialization
+
+![Local pipeline and materialization succeeded](docs/images/local-demo-pipeline-and-materialization.png)
+
+### Local freshness and ranking
+
+![Local freshness and ranking succeeded](docs/images/local-demo-freshness-and-ranking.png)
+
+Run the local end-to-end workflow:
+
+```bash
+docker compose up -d
+
+cd feature_repo
+feast apply
+cd ..
+
+make demo
+```
+
+See the [Demo Guide](docs/demo.md) for expected output, layer-level
+verification, troubleshooting, and cleanup.
 
 ## Current Data Flow
 
@@ -328,7 +383,8 @@ See:
 | CLI display | Rich | Human-readable local command output |
 | Testing | pytest | Unit, integration, and failure-simulation coverage |
 | Code quality | Ruff | Formatting and linting |
-| Baseline CI | GitHub Actions | Fresh installation, import, formatting, linting, and pytest validation |
+| Baseline CI | GitHub Actions | Fresh installation, import, formatting, linting, and infrastructure-free tests |
+| Serving integration CI | GitHub Actions + Redis | Fresh Redis, Feast apply, materialization, parity, and ranking tests |
 | Local online store | Redis via Docker Compose | Low-latency feature serving |
 | AWS online-store profile | DynamoDB | Managed production-oriented online feature serving |
 | Feature platform | Feast | Feature definitions, historical retrieval, materialization, online serving |
@@ -353,9 +409,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 
 python -m pip install --upgrade pip
-python -m pip install -e ".[dev]"
-python -m pip install pyspark
-python -m pip install feast
+python -m pip install -e ".[dev,feature-store,spark]"
 ```
 
 Verify the package and CLI:
@@ -570,6 +624,7 @@ Apply the feature repository after starting Redis:
 
 ```bash
 docker compose up -d
+
 cd feature_repo
 feast apply
 cd ..
@@ -840,6 +895,11 @@ Run the complete local workflow:
 
 ```bash
 docker compose up -d
+
+cd feature_repo
+feast apply
+cd ..
+
 make demo
 ```
 
@@ -849,11 +909,16 @@ This executes:
 generate
   → backfill into output/offline_store
   → persisted-feature correctness validation
-  → freshness check for the serving workflow
   → Feast full materialization into Redis
+  → freshness check for the serving workflow
   → online feature lookup
   → deterministic content ranking
-  → offline/online serving parity checks
+```
+
+The online-serving integration suite provides the separate parity validation:
+
+```bash
+pytest -v tests/integration/test_online_serving.py
 ```
 
 Customize the demo:
@@ -871,6 +936,8 @@ output/offline_store
 
 `OUTPUT_DIR` is intended for run artifacts rather than replacing the Feast
 source contract.
+
+For the complete reviewer walkthrough, see the [Demo Guide](docs/demo.md).
 
 ## Temporal Semantics
 
@@ -1094,11 +1161,40 @@ Run the same baseline checks as GitHub Actions:
 
 ```bash
 python -m pip install --upgrade pip
-python -m pip install -e ".[dev]"
+python -m pip install -e ".[dev,feature-store,spark]"
 python -c "import featureforge; print(featureforge.__file__)"
 ruff format --check .
 ruff check .
 pytest -v
+```
+
+Run the serving integration checks locally:
+
+```bash
+docker compose up -d
+
+cd feature_repo
+feast apply
+cd ..
+
+featureforge generate \
+  --config configs/synthetic_data.yaml \
+  --output output/source_data
+
+featureforge backfill \
+  --input output/source_data \
+  --output output/offline_store \
+  --start-date 2026-03-10 \
+  --end-date 2026-03-12 \
+  --window-days 7
+
+featureforge materialize \
+  --repo feature_repo \
+  --start-time 2026-03-10T00:00:00+00:00 \
+  --end-time 2026-03-12T00:00:00+00:00 \
+  --manifest-output output
+
+pytest -v tests/integration/test_online_serving.py
 ```
 
 Or use Make targets:
@@ -1109,6 +1205,7 @@ make lint
 make test
 make docker-config
 make check-freshness
+make demo
 ```
 
 For focused checks:
@@ -1119,45 +1216,8 @@ pytest tests/integration/ -v
 pytest tests/failure_simulations/ -v
 pytest tests/unit/test_feature_quality.py -v
 pytest tests/unit/test_materialization.py -v
+pytest tests/integration/test_online_serving.py -v
 ```
-
-### CI and Local Serving Tests
-
-GitHub Actions runs an infrastructure-free baseline on every push to `main`
-and every pull request. It does not provision Docker Compose, Redis, Feast, or
-materialized online feature values.
-
-As a result, the five tests in `tests/integration/test_online_serving.py` skip
-in baseline CI unless their environment is explicitly prepared.
-
-To execute the complete online-serving integration suite locally:
-
-```bash
-docker compose up -d
-
-cd feature_repo
-feast apply
-cd ..
-
-featureforge materialize \
-  --repo feature_repo \
-  --start-time <start-utc> \
-  --end-time <end-utc> \
-  --manifest-output output
-
-pytest -v tests/integration/test_online_serving.py
-```
-
-Use timezone-aware UTC timestamps for `<start-utc>` and `<end-utc>`. The test
-suite requires:
-
-- Redis to be reachable;
-- Feast definitions to be applied;
-- canonical offline feature snapshots in `output/offline_store/`;
-- feature values materialized into the Redis online store.
-
-Do not remove the skip guard merely to force a green CI result. The skip must
-continue to communicate the concrete infrastructure prerequisite.
 
 ## Local Infrastructure
 
@@ -1296,7 +1356,9 @@ See [AWS Production Profile](docs/aws-production-profile.md) and
   materialization.
 - Offline/online serving parity integration tests.
 - Ruff formatting and linting.
-- GitHub Actions CI for reproducible baseline validation.
+- GitHub Actions baseline CI for reproducible validation.
+- GitHub Actions Redis and Feast serving-integration CI.
+- Committed CI and local demo evidence.
 - ADR-001 through ADR-004 for local architecture, reliability, freshness, and
   CI decisions.
 - Documented AWS S3 and DynamoDB production profile.
@@ -1305,18 +1367,20 @@ See [AWS Production Profile](docs/aws-production-profile.md) and
 
 ### Next Steps
 
-1. Add a separate infrastructure-enabled CI integration job with Redis, Feast,
-   canonical offline snapshots, materialization, and online-serving tests.
-2. Extend materialization manifests with richer lineage and run metadata.
-3. Add scheduled freshness checks, feature-view ownership, alerting, and SLO
+1. Extend materialization manifests with richer lineage and run metadata.
+2. Add scheduled freshness checks, feature-view ownership, alerting, and SLO
    escalation.
-4. Add controlled simulations for Redis, Feast API, and object-storage failures.
-5. Convert the documented AWS profile into infrastructure as code.
-6. Provision an AWS development environment with explicit cost limits and
+3. Add controlled simulations for Redis, Feast API, and object-storage failures.
+4. Convert the documented AWS profile into infrastructure as code.
+5. Provision an AWS development environment with explicit cost limits and
    monitoring after the infrastructure design is reviewed.
-7. Implement hyperparameter tuning and advanced models such as XGBoost or
+6. Implement hyperparameter tuning and advanced models such as XGBoost or
    LightGBM.
-8. Add MLflow experiment tracking and a model registry.
+7. Add MLflow experiment tracking and a model registry.
+8. Publish `v0.1.0` with release notes and the documented demo evidence.
+9. Write a technical article about canonical feature ownership, point-in-time
+   correctness, materialization, freshness, and CI design.
+10. Make a focused external Feast or MLflow documentation or test contribution.
 
 ## Project Scope
 
@@ -1335,8 +1399,9 @@ Version 1 focuses on:
 - offline/online parity validation;
 - tests and operational documentation;
 - ML-ready training pipelines;
-- reproducible baseline CI;
-- documented AWS production architecture.
+- reproducible two-layer CI;
+- documented AWS production architecture;
+- reproducible demo evidence.
 
 Kafka, Flink, Kubernetes, Terraform-heavy infrastructure, and complex model
 training are intentionally outside the initial version of FeatureForge.

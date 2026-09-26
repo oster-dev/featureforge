@@ -13,7 +13,8 @@ The architecture prioritizes:
 - explicit correctness and freshness gates;
 - visible failure behavior;
 - offline/online serving parity;
-- deterministic operational workflows.
+- deterministic operational workflows;
+- independent baseline and infrastructure-enabled CI validation.
 
 ## Architecture Overview
 
@@ -61,8 +62,10 @@ featureforge/
 ├── data/                 Generated and training artifacts
 ├── docs/
 │   ├── adr/              Architecture decisions
+│   ├── images/           CI and local-demo evidence
 │   ├── runbooks/         Operational recovery procedures
-│   └── aws-production-profile.md
+│   ├── aws-production-profile.md
+│   └── demo.md
 ├── feature_repo/         Feast entities, sources, views, services, demos
 ├── scripts/              Training and diagnostic workflows
 ├── src/featureforge/     Application and platform implementation
@@ -70,6 +73,7 @@ featureforge/
 │   ├── failure_simulations/
 │   ├── integration/
 │   └── unit/
+├── .github/workflows/    GitHub Actions workflows
 ├── ARCHITECTURE.md
 ├── CONTRIBUTING.md
 ├── Makefile
@@ -224,6 +228,7 @@ This path is a local V1 platform contract shared by:
 | Materialization | Validates the canonical source before invoking Feast |
 | Serving parity | Compares Redis values with the latest canonical offline partition |
 | Makefile workflows | Orchestrates the local lifecycle |
+| Serving integration CI | Rebuilds and validates the complete source-to-serving path in a fresh runner |
 
 The central invariant is:
 
@@ -498,6 +503,12 @@ Redis-backed Feast online feature value
 This validates that the materialization path did not silently alter the values
 that the offline pipeline produced.
 
+These five online-serving contracts run:
+
+- locally after Redis, Feast, canonical backfill, and materialization are
+  prepared;
+- automatically in the dedicated Redis and Feast GitHub Actions integration job.
+
 ## Testing Strategy
 
 FeatureForge treats tests as enforceable platform contracts.
@@ -555,16 +566,19 @@ docs/runbooks/
 
 ## Continuous Integration
 
-GitHub Actions provides the baseline quality gate for every push to `main` and
-every pull request.
+FeatureForge uses two GitHub Actions jobs on every push to `main` and every
+pull request.
 
-The workflow runs in a clean Ubuntu environment with Python 3.13 and validates:
+### Baseline lint and test
+
+The baseline job runs in a clean Ubuntu environment with Python 3.13 and
+validates:
 
 - editable installation from the `src/` layout;
 - package importability;
 - Ruff formatting;
 - Ruff linting;
-- the pytest suite.
+- the complete pytest suite without provisioning serving infrastructure.
 
 ```text
 push / pull request
@@ -580,19 +594,87 @@ Ruff format and lint checks
 pytest validation suite
 ```
 
-The baseline CI workflow intentionally does not provision Redis, Docker
-Compose, Feast, or materialized online features. The five online-serving tests
-therefore skip when their infrastructure prerequisites are absent.
+The baseline job intentionally does not provision Redis, Docker Compose, Feast,
+or materialized online features. The five online-serving tests therefore skip
+with explicit infrastructure prerequisites.
 
-This separates two validation layers:
+Expected baseline result:
 
-| Layer | Environment | Scope |
-|---|---|---|
-| Baseline CI | Clean GitHub Actions Ubuntu runner | Packaging, importability, formatting, linting, unit tests, failure simulations, Spark parity, CLI, and quality contracts |
-| Serving integration | Docker Compose, Redis, Feast, canonical snapshots | Materialization, online lookup, ranking, and offline/online parity |
+```text
+141 passed, 5 skipped, 0 failed
+```
 
-The decision is documented in
+### Redis and Feast serving integration
+
+The second job starts a fresh Redis service container and validates the full
+offline-to-online serving path in a clean GitHub Actions runner:
+
+```text
+fresh Ubuntu runner
+        ↓
+Redis service container
+        ↓
+deterministic source-data generation
+        ↓
+canonical offline backfill
+        ↓
+Feast apply
+        ↓
+persisted-feature correctness validation
+        ↓
+Feast materialization into Redis
+        ↓
+online-serving parity and ranking tests
+```
+
+The job verifies that canonical feature partitions and a materialization manifest
+exist before executing the serving suite. On failure, it uploads the offline
+store and materialization manifests as CI artifacts for diagnosis.
+
+Expected serving-integration result:
+
+```text
+5 passed, 0 skipped, 0 failed
+```
+
+This separation preserves a fast baseline feedback loop while independently
+proving Redis, Feast, materialization, online lookup, ranking, and
+offline/online parity.
+
+The CI decision is documented in
 [ADR-004: GitHub Actions CI for Reproducible Validation](docs/adr/ADR-004-github-actions-ci.md).
+
+## Demo Evidence
+
+FeatureForge provides committed evidence for the two CI layers and the local
+end-to-end workflow.
+
+```text
+CI evidence
+├── Baseline lint and test
+└── Redis and Feast serving integration
+
+Local evidence
+├── Pipeline and materialization
+└── Freshness and ranking
+```
+
+The reviewer workflow is documented in [Demo Guide](docs/demo.md). The local
+entry point is:
+
+```bash
+docker compose up -d
+
+cd feature_repo
+feast apply
+cd ..
+
+make demo
+```
+
+The demo generates deterministic data, backfills canonical features,
+materializes validated values into Redis, checks freshness, retrieves online
+features, and produces a deterministic ranked-content result.
 
 ## AWS Production Profile
 
@@ -734,6 +816,7 @@ FeatureForge follows these principles:
 - Never trust implicit timezone handling across Python/JVM boundaries.
 - Persist preprocessing with models to reduce training-serving skew.
 - Treat failure simulations and runbooks as version-controlled artifacts.
+- Keep baseline and infrastructure-enabled CI validation separate.
 - Keep environment boundaries, encryption, and IAM permissions explicit in the
   AWS production profile.
 
@@ -782,18 +865,20 @@ The same resolved URI must be consumed by:
 
 The next reliability and platform milestones are:
 
-1. Add an infrastructure-enabled CI integration job with Redis, Feast, canonical
-   snapshots, materialization, and online-serving validation.
-2. Add scheduled freshness checks, feature-view ownership, alerting, and SLO
+1. Add scheduled freshness checks, feature-view ownership, alerting, and SLO
    escalation.
-3. Extend materialization manifests with richer lineage and run metadata.
-4. Add controlled simulations for Redis, Feast API, and object-storage failures.
-5. Convert the documented AWS production profile into infrastructure as code.
-6. Provision an AWS development environment after the infrastructure design is
+2. Extend materialization manifests with richer lineage and run metadata.
+3. Add controlled simulations for Redis, Feast API, and object-storage failures.
+4. Convert the documented AWS production profile into infrastructure as code.
+5. Provision an AWS development environment after the infrastructure design is
    reviewed and cost boundaries are explicit.
-7. Add MLflow experiment tracking and a model registry.
-8. Add advanced models such as XGBoost or LightGBM where model complexity is
+6. Add MLflow experiment tracking and a model registry.
+7. Add advanced models such as XGBoost or LightGBM where model complexity is
    justified by the platform use case.
+8. Publish `v0.1.0` with release notes and documented demo evidence.
+9. Publish a technical article about canonical feature ownership,
+   point-in-time correctness, materialization, freshness, and CI design.
+10. Make a focused external Feast or MLflow documentation or test contribution.
 
 ## Architecture Decisions
 
