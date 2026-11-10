@@ -27,3 +27,18 @@ Redis key names and store semantics are unchanged.
 
 Flink jobs, container configuration, and integration tests are not part of
 this import.
+
+## Third import: real Redis store and WATCH retry
+
+Imported the two live Redis integration tests from the same source commit:
+
+- append-only play-count write and read behavior;
+- concurrent WATCH conflict and retry behavior.
+
+Adaptations: package imports, target paths, and the `integration`
+pytest marker.
+
+Redis key names, assertions, and store semantics are unchanged.
+
+Flink jobs, container configuration, and joined Kafka-to-Redis
+verification remain outside this import.

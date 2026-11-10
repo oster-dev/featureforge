@@ -72,6 +72,7 @@ include = ["featureforge*"]
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-ra"
+markers = ["integration: requires streaming infrastructure"]
 filterwarnings = [
   "ignore:The 'generic' unit for NumPy timedelta is deprecated:DeprecationWarning:feast\\.type_map",
 ]
