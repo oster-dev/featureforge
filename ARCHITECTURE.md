@@ -1,7 +1,8 @@
 # FeatureForge Architecture
 
 FeatureForge is a production-inspired feature platform for reproducible offline
-training data and low-latency online ML feature serving.
+training data, streaming feature computation, and low-latency online ML feature
+serving.
 
 The architecture prioritizes:
 
@@ -14,19 +15,21 @@ The architecture prioritizes:
 - visible failure behavior;
 - offline/online serving parity;
 - deterministic operational workflows;
-- independent baseline and infrastructure-enabled CI validation.
+- streaming ingestion, validation, and online materialization;
+- independent baseline, Redis/Feast, and Flink Kafka-to-Redis CI validation.
 
 ## Architecture Overview
 
-FeatureForge separates the platform into seven major concerns:
+FeatureForge separates the platform into eight major concerns:
 
 1. Source-data generation and validation.
 2. Point-in-time feature computation.
 3. Canonical offline feature storage.
 4. Historical retrieval and model training.
-5. Online materialization and serving.
-6. Operational validation, CI, and failure handling.
-7. A documented AWS production operating profile.
+5. Streaming ingestion, validation, and feature computation.
+6. Online materialization and serving.
+7. Operational validation, CI, and failure handling.
+8. A documented AWS production operating profile.
 
 ```text
 validated YAML configuration
@@ -52,6 +55,24 @@ freshness SLO check
         └── Feast materialization → Redis → online lookup → ranking
                                       ↓
                               offline/online parity
+
+raw interaction events
+        ↓
+Kafka
+        ↓
+Flink validation and routing
+        ↓
+validated event topic
+        ↓
+Flink event-time feature computation
+        ↓
+streaming feature topic
+        ↓
+Kafka-to-Redis materializer
+        ↓
+guarded Redis online store
+        ↓
+online feature retrieval
 ```
 
 ## Repository Boundaries
@@ -60,6 +81,7 @@ freshness SLO check
 featureforge/
 ├── configs/              Synthetic-data configuration
 ├── data/                 Generated and training artifacts
+├── docker/               Flink runtime image definition
 ├── docs/
 │   ├── adr/              Architecture decisions
 │   ├── images/           CI and local-demo evidence
@@ -67,6 +89,7 @@ featureforge/
 │   ├── aws-production-profile.md
 │   └── demo.md
 ├── feature_repo/         Feast entities, sources, views, services, demos
+├── jobs/                 Flink streaming jobs
 ├── scripts/              Training and diagnostic workflows
 ├── src/featureforge/     Application and platform implementation
 ├── tests/
@@ -83,8 +106,9 @@ featureforge/
 ```
 
 The implementation is intentionally layered. Generation, storage, feature
-computation, validation, materialization, and serving are separate concerns so
-that each can be tested independently and composed into end-to-end workflows.
+computation, validation, materialization, serving, and streaming are separate
+concerns so that each can be tested independently and composed into end-to-end
+workflows.
 
 ## Source Data
 
@@ -141,7 +165,7 @@ FeatureForge has Pandas and PySpark implementations of the same feature logic.
 Pandas is the readable correctness reference. PySpark is the parity-tested
 execution engine for future scale.
 
-The current feature views are:
+The current batch feature views are:
 
 ### User Engagement Features
 
@@ -448,11 +472,180 @@ output/models/baseline_logreg_pipeline.joblib
 output/models/baseline_logreg_metrics.json
 ```
 
+## Streaming Architecture
+
+FeatureForge includes a streaming path that turns raw interaction events into
+online feature values without replacing the canonical offline feature path.
+
+The streaming path is intentionally separate from the offline backfill path.
+Offline features provide reproducible historical snapshots and training data.
+Streaming features provide low-latency online updates.
+
+```text
+Raw interaction events
+        ↓
+Kafka: interaction-events.v1
+        ↓
+Flink validation and routing
+        ↓
+Kafka: interaction-events.validated.v1
+        ↓
+Flink event-time feature computation
+        ↓
+Kafka: features.user-play-count-1h.v1
+        ↓
+Kafka-to-Redis materializer
+        ↓
+Redis online store
+        ↓
+Online feature retrieval
+```
+
+The first streaming feature is:
+
+```text
+user_play_count_1h
+```
+
+It counts unique play events for a user in a one-hour event-time window.
+
+### Streaming Contracts
+
+The streaming contracts define the boundary between producers, Flink jobs, and
+the online store.
+
+`InteractionEventV1` validates:
+
+- event identity;
+- event and ingestion timestamps;
+- user and content identity;
+- event type;
+- play duration;
+- source;
+- schema version.
+
+The contract normalizes timestamps to UTC and rejects:
+
+- invalid timestamps;
+- ingestion before event time;
+- invalid entity IDs;
+- unsupported event types or sources;
+- unknown fields;
+- invalid play semantics.
+
+The routing layer separates valid event JSON from structured validation
+failures. Invalid input produces a rejection record with a stable schema and
+reason code; it does not silently disappear or block subsequent valid events.
+
+### Event-Time Semantics
+
+Streaming features use event time, not ingestion time.
+
+The feature-time mapping preserves right-closed window membership:
+
+```text
+start < event_time <= end
+```
+
+A millisecond-level timestamp mapper converts event timestamps into Flink
+window timestamps while preserving this boundary behavior.
+
+For example, an event at exactly `11:30:00` belongs to the one-hour window
+ending at `12:29`, not the window ending at `12:30`.
+
+This matches the reference implementation and prevents boundary drift between
+the batch reference, streaming job, and online store.
+
+### Flink Jobs
+
+The validation job reads raw Kafka events and routes them into valid or
+rejected topics:
+
+```text
+interaction-events.v1
+    -> interaction-events.validated.v1
+    -> interaction-events.rejected.v1
+```
+
+The user play-count job reads validated events and writes streaming features:
+
+```text
+interaction-events.validated.v1
+    -> features.user-play-count-1h.v1
+    -> interaction-events.user-play-count-1h.late.v1
+```
+
+The job performs:
+
+- event-time timestamp assignment;
+- event-ID-based deduplication;
+- user-keyed sliding-window aggregation;
+- one-hour window computation;
+- late-event side-output routing;
+- Kafka feature emission.
+
+The Flink jobs use bounded replay mode for deterministic integration testing.
+In bounded mode, a job consumes the available Kafka range and terminates after
+processing it.
+
+### Streaming Online Store
+
+The Redis online store maintains the latest feature value for each user.
+
+For `user_play_count_1h`, the store policy is:
+
+- A newer observation window replaces an older one.
+- For the same observation window, the play count may only increase.
+- Identical deliveries leave the stored value unchanged.
+- A replayed older value cannot undo a later correction.
+- Concurrent writers use bounded Redis `WATCH` retries.
+
+The store is intentionally feature-specific. It is not a generic revision
+policy for arbitrary features and cannot repair an already inflated count.
+
+The Redis key layout is:
+
+```text
+featureforge-stream:online:v1:user_play_count_1h:<user_id>
+```
+
+The stored payload is a validated JSON feature record containing:
+
+```text
+feature_schema_version
+feature_name
+user_id
+play_count
+observation_time
+window_start_exclusive
+```
+
+### Kafka-to-Redis Materializer
+
+The materializer consumes the streaming feature topic and writes validated
+feature records into Redis.
+
+It uses:
+
+- explicit consumer-group offsets;
+- synchronous offset commits;
+- bounded or continuous consumption;
+- single-partition topic validation;
+- Redis connectivity validation;
+- guarded online-store writes.
+
+The materializer writes before committing an offset. If a Redis write fails,
+the corresponding Kafka offset is not committed, allowing a later run to retry
+the record.
+
+The materializer refuses an empty Kafka range rather than silently completing
+without doing work.
+
 ## Online Serving and Ranking
 
 Redis is the local online store, provisioned through Docker Compose.
-Feast materializes feature values into Redis, and serving code retrieves them
-through feature services.
+Feast materializes canonical offline feature values into Redis, while the
+streaming materializer writes streaming feature updates into Redis.
 
 The serving layer provides typed lookup results for:
 
@@ -509,6 +702,53 @@ These five online-serving contracts run:
   prepared;
 - automatically in the dedicated Redis and Feast GitHub Actions integration job.
 
+## Streaming Verification
+
+Streaming correctness is verified at several levels.
+
+### Redis Store Verification
+
+The Redis store tests verify:
+
+- feature round trips;
+- unknown-user behavior;
+- newer-window replacement;
+- stale-window rejection;
+- identical-delivery idempotency;
+- monotone same-window corrections;
+- replay protection;
+- concurrent `WATCH` retry behavior.
+
+These tests run against real Redis and must not skip in the Redis integration
+CI job.
+
+### Joined Streaming Verification
+
+The joined Kafka-to-Redis test verifies the complete streaming path:
+
+```text
+Kafka input
+  -> Flink validation
+  -> Flink feature computation
+  -> Kafka feature topic
+  -> Redis materializer
+  -> Redis read
+```
+
+It creates isolated Kafka topics, produces a valid play event, runs both Flink
+jobs in bounded mode, materializes the resulting feature into Redis, and reads
+the final online value.
+
+The test asserts:
+
+- the expected user;
+- a play count of one;
+- the right-closed feature window;
+- the exact one-hour window relationship.
+
+This proves that streaming computation, Kafka transport, materialization, and
+Redis storage work together as one system.
+
 ## Testing Strategy
 
 FeatureForge treats tests as enforceable platform contracts.
@@ -525,7 +765,12 @@ Unit tests cover:
 - freshness behavior;
 - materialization timestamp contracts;
 - online lookup and ranking behavior;
-- Pandas/PySpark parity.
+- Pandas/PySpark parity;
+- streaming event contracts;
+- streaming routing;
+- event-time mapping;
+- streaming feature semantics;
+- Kafka-to-Redis materializer behavior.
 
 Integration tests cover:
 
@@ -535,7 +780,10 @@ Integration tests cover:
 - historical retrieval;
 - training workflows;
 - materialization and online serving;
-- offline/online parity.
+- offline/online parity;
+- Redis online-store behavior;
+- concurrent Redis writes;
+- joined Kafka-to-Flink-to-Redis execution.
 
 Failure simulations cover:
 
@@ -566,7 +814,7 @@ docs/runbooks/
 
 ## Continuous Integration
 
-FeatureForge uses two GitHub Actions jobs on every push to `main` and every
+FeatureForge uses three GitHub Actions jobs on every push to `main` and every
 pull request.
 
 ### Baseline lint and test
@@ -578,7 +826,8 @@ validates:
 - package importability;
 - Ruff formatting;
 - Ruff linting;
-- the complete pytest suite without provisioning serving infrastructure.
+- the complete pytest suite without provisioning Redis, Flink, Feast, or
+  materialized online features.
 
 ```text
 push / pull request
@@ -594,14 +843,20 @@ Ruff format and lint checks
 pytest validation suite
 ```
 
-The baseline job intentionally does not provision Redis, Docker Compose, Feast,
-or materialized online features. The five online-serving tests therefore skip
-with explicit infrastructure prerequisites.
+The baseline job intentionally excludes tests marked `integration`:
+
+```yaml
+pytest -v -m "not integration"
+```
+
+The five online-serving tests skip because they require Redis and materialized
+Feast offline snapshots. The streaming integration tests are deselected because
+they require Redis, Kafka, and Flink infrastructure.
 
 Expected baseline result:
 
 ```text
-141 passed, 5 skipped, 0 failed
+254 passed, 5 skipped, 11 deselected, 0 failed
 ```
 
 ### Redis and Feast serving integration
@@ -627,36 +882,74 @@ Feast materialization into Redis
 online-serving parity and ranking tests
 ```
 
-The job verifies that canonical feature partitions and a materialization manifest
-exist before executing the serving suite. On failure, it uploads the offline
-store and materialization manifests as CI artifacts for diagnosis.
+The job also explicitly executes the Redis online-store and concurrency
+integration tests. It validates the resulting JUnit report and fails if any
+streaming Redis test is skipped, failed, or errored.
 
 Expected serving-integration result:
 
 ```text
-5 passed, 0 skipped, 0 failed
+Redis store tests: 10 passed
+Online-serving tests: 5 passed
 ```
 
 This separation preserves a fast baseline feedback loop while independently
 proving Redis, Feast, materialization, online lookup, ranking, and
 offline/online parity.
 
+### Flink Kafka-to-Redis integration
+
+The third job starts the complete streaming stack and verifies the joined
+Kafka-to-Redis flow:
+
+```text
+fresh Ubuntu runner
+        ↓
+Docker Compose stack
+        ↓
+Kafka, Flink JobManager, TaskManager, and Redis
+        ↓
+service health checks
+        ↓
+joined Kafka-to-Redis integration test
+```
+
+The job runs:
+
+```bash
+pytest -v -m integration \
+  tests/integration/test_user_play_count_kafka_to_redis.py
+```
+
+It proves that a Kafka event can be validated, transformed by Flink,
+materialized into Redis, and read back as an online feature.
+
+Expected streaming-integration result:
+
+```text
+1 passed, 0 skipped, 0 failed
+```
+
+On failure, the job uploads streaming diagnostics as a CI artifact.
+
 The CI decision is documented in
 [ADR-004: GitHub Actions CI for Reproducible Validation](docs/adr/ADR-004-github-actions-ci.md).
 
 ## Demo Evidence
 
-FeatureForge provides committed evidence for the two CI layers and the local
+FeatureForge provides committed evidence for the CI layers and the local
 end-to-end workflow.
 
 ```text
 CI evidence
 ├── Baseline lint and test
-└── Redis and Feast serving integration
+├── Redis and Feast serving integration
+└── Flink Kafka-to-Redis integration
 
 Local evidence
 ├── Pipeline and materialization
-└── Freshness and ranking
+├── Freshness and ranking
+└── Streaming Kafka-to-Redis verification
 ```
 
 The reviewer workflow is documented in [Demo Guide](docs/demo.md). The local
@@ -665,9 +958,11 @@ entry point is:
 ```bash
 docker compose up -d
 
+
 cd feature_repo
 feast apply
 cd ..
+
 
 make demo
 ```
@@ -693,19 +988,31 @@ flowchart LR
     Raw[Raw behavioral events] --> Spark[PySpark batch feature jobs]
     Spark --> S3Offline[S3 canonical offline store<br/>partitioned Parquet]
 
+
     S3Offline --> Correctness[Persisted feature correctness gate]
     S3Offline --> Freshness[Feature freshness SLO checks]
 
+
     Correctness --> Feast[Feast Feature Views and Services]
     Freshness --> Ops[Monitoring, alerting, and SLO escalation]
+
 
     Labels[Observation labels] --> Historical[Point-in-time historical retrieval]
     Feast --> Historical
     Historical --> Training[Training and evaluation]
 
+
     Feast --> Materialize[Full or incremental materialization]
     Materialize --> Dynamo[DynamoDB online store]
     Dynamo --> Serving[Online feature lookup and ranking]
+
+
+    Events[Raw behavioral events] --> Kafka[Managed Kafka]
+    Kafka --> Flink[Managed Flink streaming jobs]
+    Flink --> Features[Streaming feature topic]
+    Features --> Materializer[Streaming materializer]
+    Materializer --> Dynamo
+
 
     S3Offline --> Manifests[Run manifests and lineage metadata]
     Correctness --> Manifests
@@ -730,6 +1037,7 @@ Key production-profile decisions:
   - `featureforge-serving-reader`.
 - DynamoDB is the documented AWS online-store profile. Redis remains the
   local Docker Compose online store.
+- Managed Kafka and Flink are the documented streaming execution profile.
 
 The canonical-source invariant is unchanged in AWS:
 
@@ -817,6 +1125,12 @@ FeatureForge follows these principles:
 - Persist preprocessing with models to reduce training-serving skew.
 - Treat failure simulations and runbooks as version-controlled artifacts.
 - Keep baseline and infrastructure-enabled CI validation separate.
+- Use event time for streaming feature computation.
+- Deduplicate streaming events by logical event identity.
+- Preserve right-closed feature-window semantics across batch and streaming.
+- Materialize streaming features only after successful validation.
+- Commit Kafka offsets only after successful Redis writes.
+- Keep streaming store policies explicit and feature-specific.
 - Keep environment boundaries, encryption, and IAM permissions explicit in the
   AWS production profile.
 
@@ -841,8 +1155,12 @@ The project intentionally remains a focused local platform implementation:
   object-store failures, network faults, or production-scale chaos.
 - The ranking function is a transparent deterministic demonstration, not a
   learned production ranking model.
-- Kafka, Flink, Kubernetes, Terraform-heavy infrastructure, and production-scale
-  distributed serving are outside V1.
+- Kafka and Flink are local Docker Compose services; managed Kafka and managed
+  Flink are documented production profiles, not yet deployed.
+- Streaming coverage currently focuses on `user_play_count_1h`; additional
+  streaming features and cross-feature orchestration remain future work.
+- Streaming replay, late-event, checkpoint-recovery, and multi-partition
+  behavior require additional dedicated verification.
 
 ## Future Architecture
 
@@ -865,20 +1183,25 @@ The same resolved URI must be consumed by:
 
 The next reliability and platform milestones are:
 
-1. Add scheduled freshness checks, feature-view ownership, alerting, and SLO
+1. Verify streaming replay idempotency end to end.
+2. Verify late-event routing and reconciliation behavior.
+3. Add streaming checkpoint and recovery verification.
+4. Add scheduled freshness checks, feature-view ownership, alerting, and SLO
    escalation.
-2. Extend materialization manifests with richer lineage and run metadata.
-3. Add controlled simulations for Redis, Feast API, and object-storage failures.
-4. Convert the documented AWS production profile into infrastructure as code.
-5. Provision an AWS development environment after the infrastructure design is
+5. Extend materialization manifests with richer lineage and run metadata.
+6. Add controlled simulations for Redis, Kafka, Flink, Feast API, and
+   object-storage failures.
+7. Convert the documented AWS production profile into infrastructure as code.
+8. Provision an AWS development environment after the infrastructure design is
    reviewed and cost boundaries are explicit.
-6. Add MLflow experiment tracking and a model registry.
-7. Add advanced models such as XGBoost or LightGBM where model complexity is
-   justified by the platform use case.
-8. Publish `v0.1.0` with release notes and documented demo evidence.
-9. Publish a technical article about canonical feature ownership,
-   point-in-time correctness, materialization, freshness, and CI design.
-10. Make a focused external Feast or MLflow documentation or test contribution.
+9. Add MLflow experiment tracking and a model registry.
+10. Add advanced models such as XGBoost or LightGBM where model complexity is
+    justified by the platform use case.
+11. Publish `v0.1.0` with release notes and documented demo evidence.
+12. Publish a technical article about canonical feature ownership,
+    point-in-time correctness, streaming materialization, freshness, and CI
+    design.
+13. Make a focused external Feast or MLflow documentation or test contribution.
 
 ## Architecture Decisions
 
@@ -889,3 +1212,4 @@ Important durable decisions are documented as ADRs:
 - [ADR-003: Feature Freshness SLOs and Fail-Safe Serving](docs/adr/ADR-003-freshness-slos-and-fail-safe-serving.md)
 - [ADR-004: GitHub Actions CI for Reproducible Validation](docs/adr/ADR-004-github-actions-ci.md)
 - [ADR-005: AWS S3 Offline-Store Production Profile](docs/adr/ADR-005-aws-s3-offline-store-profile.md)
+- [ADR-006: Streaming Feature Platform Integration](docs/adr/ADR-006-streaming-feature-platform-integration.md)
