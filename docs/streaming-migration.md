@@ -42,3 +42,18 @@ Redis key names, assertions, and store semantics are unchanged.
 
 Flink jobs, container configuration, and joined Kafka-to-Redis
 verification remain outside this import.
+
+## Fourth import: Flink runtime and joined Kafka-to-Redis verification
+
+Imported the Flink runtime configuration, validation and user play-count
+jobs, and a joined Kafka-to-Redis integration test from the same source
+commit.
+
+Adaptations: package imports, Kafka topic names, and the joined test's
+right-closed window assertion.
+
+The Flink image installs the project without transitive dependencies to
+avoid conflicting with the base image's Apache Beam installation. Pydantic
+is installed explicitly for the streaming contracts.
+
+Kafka-to-Redis materialization is verified end to end for one play event.
