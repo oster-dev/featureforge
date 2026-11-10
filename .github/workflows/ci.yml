@@ -170,6 +170,8 @@ jobs:
           test -n "$(find output/materialization_manifests -name '*.json')"
 
       - name: Run streaming Redis integration tests
+        env:
+          FEATUREFORGE_REDIS_URL: redis://127.0.0.1:6379/0
         run: |
           python -m pytest -v -m integration \
             tests/integration/test_streaming_redis_online_store.py \
