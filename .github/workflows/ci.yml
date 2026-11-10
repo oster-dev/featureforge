@@ -41,7 +41,7 @@ jobs:
         run: python -m pip install --upgrade pip
 
       - name: Install project and CI dependencies
-        run: python -m pip install -e ".[dev,feature-store,spark]"
+        run: python -m pip install -e ".[dev,feature-store,spark,streaming]"
 
       - name: Verify package import
         run: python -c "import featureforge; print(featureforge.__file__)"
@@ -103,7 +103,7 @@ jobs:
         run: python -m pip install --upgrade pip
 
       - name: Install project and CI dependencies
-        run: python -m pip install -e ".[dev,feature-store,spark]"
+        run: python -m pip install -e ".[dev,feature-store,spark,streaming]"
 
       - name: Verify package import
         run: python -c "import featureforge; print(featureforge.__file__)"

@@ -14,3 +14,16 @@ Computation and validation semantics are unchanged.
 
 Kafka jobs, Redis materializers, and runtime configuration are not part
 of this initial import.
+
+## Second import: routing, play-count store, and materializer
+
+Imported structured event routing, the guarded Redis play-count store, the
+Kafka-to-Redis materializer, and their unit tests from the same source commit.
+
+Adaptations: package imports, test filenames, fixture location, and a new
+`streaming` optional dependency group.
+
+Redis key names and store semantics are unchanged.
+
+Flink jobs, container configuration, and integration tests are not part of
+this import.
