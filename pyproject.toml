@@ -59,6 +59,11 @@ spark = [
   "pyspark>=3.5,<4.0",
 ]
 
+streaming = [
+  "confluent-kafka>=2.6,<3",
+  "redis>=4.2.2,<6",
+]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["featureforge*"]
