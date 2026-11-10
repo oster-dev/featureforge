@@ -53,7 +53,7 @@ jobs:
         run: ruff check .
 
       - name: Run baseline test suite
-        run: pytest -v
+        run: pytest -v -m "not integration"
 
   serving-integration:
     name: Redis and Feast serving integration
@@ -168,6 +168,28 @@ jobs:
         run: |
           find output/materialization_manifests -name "*.json"
           test -n "$(find output/materialization_manifests -name '*.json')"
+
+      - name: Run streaming Redis integration tests
+        env:
+          FEATUREFORGE_REDIS_URL: redis://127.0.0.1:6379/0
+        run: |
+          python -m pytest -v -m integration \
+            tests/integration/test_streaming_redis_online_store.py \
+            tests/integration/test_streaming_redis_online_store_concurrency.py \
+            --junitxml=/tmp/featureforge-streaming-redis.xml
+
+          python - <<'PYTEST_REPORT'
+          import xml.etree.ElementTree as ET
+
+          report = ET.parse("/tmp/featureforge-streaming-redis.xml")
+          cases = report.findall(".//testcase")
+          if not cases:
+              raise SystemExit("No streaming Redis tests recorded.")
+          for outcome in ("skipped", "failure", "error"):
+              if report.findall(f".//{outcome}"):
+                  raise SystemExit(f"Streaming Redis report contains: {outcome}")
+          print(f"Verified {len(cases)} streaming Redis tests without skips.")
+          PYTEST_REPORT
 
       - name: Run online-serving integration tests
         run: pytest -v tests/integration/test_online_serving.py
