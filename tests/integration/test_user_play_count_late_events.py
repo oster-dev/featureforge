@@ -138,7 +138,15 @@ def test_late_event_corrects_emitted_window_and_expired_event_is_routed():
 
     try:
         futures = admin.create_topics(
-            [NewTopic(topic, num_partitions=1, replication_factor=1) for topic in topics],
+            [
+                NewTopic(
+                    topic,
+                    num_partitions=1,
+                    replication_factor=1,
+                    config={"message.timestamp.type": "LogAppendTime"},
+                )
+                for topic in topics
+            ],
             request_timeout=15,
             operation_timeout=15,
         )
@@ -181,8 +189,7 @@ def test_late_event_corrects_emitted_window_and_expired_event_is_routed():
         original = make_event(user_id, 11, 30)
         publish(input_topic, original)
 
-        # With the configured ten-minute watermark delay, this event
-        # advances event time far enough to emit the window ending at noon.
+        # Advance event time far enough to emit the noon window.
         publish(input_topic, make_event(progress_user, 12, 11))
 
         initial = wait_for_record(
@@ -197,8 +204,7 @@ def test_late_event_corrects_emitted_window_and_expired_event_is_routed():
         )
         assert initial["window_start_exclusive"] == "2026-01-01T11:00:00Z"
 
-        # A different event ID at the same event time is a legitimate
-        # additional play, not a duplicate of the original.
+        # A new event ID is an additional play, not a duplicate.
         correction = make_event(user_id, 11, 30)
         assert correction.event_id != original.event_id
         publish(input_topic, correction)
@@ -215,8 +221,7 @@ def test_late_event_corrects_emitted_window_and_expired_event_is_routed():
         )
         assert corrected["window_start_exclusive"] == initial["window_start_exclusive"]
 
-        # Advance beyond every window assigned to an 11:30 event plus
-        # the configured thirty-minute allowed-lateness period.
+        # Advance past all windows for an 11:30 event and their lateness.
         publish(input_topic, make_event(advance_user, 14, 0))
 
         wait_for_record(
@@ -227,7 +232,7 @@ def test_late_event_corrects_emitted_window_and_expired_event_is_routed():
                 observation_time="2026-01-01T13:10:00Z",
                 play_count=1,
             ),
-            description="watermark-driven emission of the 13:10 progress window",
+            description=("watermark-driven emission of the 13:10 progress window"),
         )
 
         too_late = make_event(user_id, 11, 30)

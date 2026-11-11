@@ -147,7 +147,15 @@ def test_invalid_events_are_rejected_and_valid_followups_are_processed():
 
     try:
         futures = admin.create_topics(
-            [NewTopic(topic, num_partitions=1, replication_factor=1) for topic in topics],
+            [
+                NewTopic(
+                    topic,
+                    num_partitions=1,
+                    replication_factor=1,
+                    config={"message.timestamp.type": "LogAppendTime"},
+                )
+                for topic in topics
+            ],
             request_timeout=15,
             operation_timeout=15,
         )

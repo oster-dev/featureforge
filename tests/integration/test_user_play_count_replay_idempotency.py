@@ -21,9 +21,18 @@ SUBPROCESS_TIMEOUT_SECONDS = 180
 
 
 def create_topics(bootstrap_servers: str, topics: list[str]) -> None:
+    """Create isolated topics with broker-time Kafka record timestamps."""
     admin = AdminClient({"bootstrap.servers": bootstrap_servers})
     futures = admin.create_topics(
-        [NewTopic(topic, num_partitions=1, replication_factor=1) for topic in topics],
+        [
+            NewTopic(
+                topic,
+                num_partitions=1,
+                replication_factor=1,
+                config={"message.timestamp.type": "LogAppendTime"},
+            )
+            for topic in topics
+        ],
         request_timeout=15,
         operation_timeout=15,
     )
