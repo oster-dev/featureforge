@@ -1,6 +1,5 @@
 """Isolated skip-rate window, correction, duplicate, and late-routing proofs."""
 
-
 import json
 import re
 import subprocess
@@ -17,7 +16,6 @@ from featureforge.streaming.contracts.events import InteractionEventV1
 from featureforge.streaming.reference.user_skip_rate import calculate_user_skip_rate_24h
 
 
-
 def run_command(*arguments: str) -> str:
     result = subprocess.run(
         arguments,
@@ -29,33 +27,24 @@ def run_command(*arguments: str) -> str:
     return result.stdout + result.stderr
 
 
-
 def flink_api(path: str) -> dict:
     with urlopen(f"http://127.0.0.1:8081/{path}", timeout=10) as response:
         return json.load(response)
-
 
 
 def wait_for_job_terminal(job_id: str, timeout: float = 120.0) -> None:
     deadline = time.monotonic() + timeout
     last = None
 
-
     while time.monotonic() < deadline:
         last = flink_api(f"jobs/{job_id}")
-
 
         if last["state"] in {"CANCELED", "FAILED", "FINISHED"}:
             return
 
-
         time.sleep(1)
 
-
-    raise AssertionError(
-        f"Job {job_id} did not reach a terminal state; last state={last['state']}"
-    )
-
+    raise AssertionError(f"Job {job_id} did not reach a terminal state; last state={last['state']}")
 
 
 @pytest.mark.integration
@@ -104,10 +93,8 @@ def test_skip_rate_stream_contract(
 ) -> None:
     from confluent_kafka import Consumer, Producer, TopicPartition
 
-
     overview = flink_api("overview")
     assert overview["slots-available"] >= 1, "This test requires at least one free Flink task slot"
-
 
     namespace = uuid4().hex
     prefix = f"test.skip-rate.{namespace}"
@@ -115,7 +102,6 @@ def test_skip_rate_stream_contract(
     output_topic = f"{prefix}.features"
     late_topic = f"{prefix}.late"
     user_id = f"skip_rate_{namespace}"
-
 
     for topic in (input_topic, output_topic, late_topic):
         run_command(
@@ -136,10 +122,8 @@ def test_skip_rate_stream_contract(
             "1",
         )
 
-
     observation = datetime.now(UTC).replace(second=0, microsecond=0)
     progress_time = observation + timedelta(minutes=11)
-
 
     def event(kind: str, *, seconds_before: int, user: str = user_id):
         return InteractionEventV1.model_validate(
@@ -156,7 +140,6 @@ def test_skip_rate_stream_contract(
             }
         )
 
-
     initial_play = event("play", seconds_before=120)
     initial_skip = event("skip", seconds_before=90)
     late_play = event("play", seconds_before=60)
@@ -167,7 +150,6 @@ def test_skip_rate_stream_contract(
         seconds_before=-660,
         user=f"progress_{namespace}",
     )
-
 
     producer = Producer(
         {
@@ -188,15 +170,12 @@ def test_skip_rate_stream_contract(
         }
     )
 
-
     def produce(events):
         errors = []
-
 
         def delivered(error, message):
             if error is not None:
                 errors.append(str(error))
-
 
         for item in events:
             producer.produce(
@@ -206,7 +185,6 @@ def test_skip_rate_stream_contract(
             )
         assert producer.flush(35) == 0, "Producer delivery timed out"
         assert not errors, errors
-
 
     def next_target(timeout: float):
         message = consumer.poll(timeout)
@@ -219,19 +197,16 @@ def test_skip_rate_stream_contract(
         if datetime.fromisoformat(record["observation_time"]) != observation:
             return None
 
-
         assert record["feature_schema_version"] == "v1"
         assert record["feature_name"] == "user_skip_rate_24h"
         assert datetime.fromisoformat(record["window_start_exclusive"]) == observation - timedelta(
             hours=24
         )
 
-
         total = record["play_count"] + record["skip_count"]
         expected_rate = record["skip_count"] / total if total else 0.0
         assert record["skip_rate"] == pytest.approx(expected_rate)
         return record
-
 
     def wait_for_counts(plays: int, skips: int, logical_events):
         expected_rate = calculate_user_skip_rate_24h(
@@ -253,11 +228,9 @@ def test_skip_rate_stream_contract(
                 return record
         raise AssertionError(f"Expected plays={plays}, skips={skips}; last target output={last}")
 
-
     job_id = None
     try:
         consumer.assign([TopicPartition(output_topic, 0, 0)])
-
 
         submission = run_command(
             "docker",
@@ -288,7 +261,6 @@ def test_skip_rate_stream_contract(
         assert match is not None, submission
         job_id = match.group(1)
 
-
         deadline = time.monotonic() + 240
         while True:
             job = flink_api(f"jobs/{job_id}")
@@ -302,7 +274,6 @@ def test_skip_rate_stream_contract(
                 break
             assert time.monotonic() < deadline, job
             time.sleep(1)
-
 
         if scenario in {"boundary", "zero"}:
             if scenario == "boundary":
@@ -327,10 +298,8 @@ def test_skip_rate_stream_contract(
                 expected_plays = 0
                 target_skips = 0
 
-
             produce(sorted(inputs, key=lambda item: item.event_time) + [progress])
             latest = wait_for_counts(expected_plays, target_skips, inputs)
-
 
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
@@ -342,21 +311,17 @@ def test_skip_rate_stream_contract(
                         target_skips,
                     )
 
-
             assert (latest["play_count"], latest["skip_count"]) == (expected_plays, target_skips)
             assert flink_api(f"jobs/{job_id}")["state"] == "RUNNING"
             return
-
 
         if scenario == "too_late":
             produce([initial_play, progress])
             wait_for_counts(1, 0, [initial_play])
 
-
             old_event = event("skip", seconds_before=26 * 60 * 60)
             consumer.assign([TopicPartition(late_topic, 0, 0)])
             produce([old_event])
-
 
             deadline = time.monotonic() + 90
             matched = None
@@ -372,7 +337,6 @@ def test_skip_rate_stream_contract(
                     assert original == old_event
                     break
 
-
             assert matched is not None, f"No late output for event_id={old_event.event_id}"
             assert matched["error_schema_version"] == "v1"
             assert matched["feature_name"] == "user_skip_rate_24h"
@@ -380,26 +344,21 @@ def test_skip_rate_stream_contract(
             assert flink_api(f"jobs/{job_id}")["state"] == "RUNNING"
             return
 
-
         logical_events = [initial_play, initial_skip]
         produce([*logical_events, progress])
         wait_for_counts(1, 1, logical_events)
-
 
         logical_events.append(late_play)
         produce([late_play])
         wait_for_counts(2, 1, logical_events)
 
-
         logical_events.append(late_skip)
         produce([late_skip])
         wait_for_counts(2, 2, logical_events)
 
-
         logical_events.append(probe_play)
         produce([initial_play, initial_skip, late_play, late_skip, probe_play])
         latest = wait_for_counts(3, 2, logical_events)
-
 
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
@@ -408,7 +367,6 @@ def test_skip_rate_stream_contract(
                 latest = record
                 assert (record["play_count"], record["skip_count"]) == (3, 2)
                 assert record["skip_rate"] == pytest.approx(0.4)
-
 
         assert (latest["play_count"], latest["skip_count"]) == (3, 2)
         assert flink_api(f"jobs/{job_id}")["state"] == "RUNNING"
