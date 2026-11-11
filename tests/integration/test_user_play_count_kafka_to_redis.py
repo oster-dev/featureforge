@@ -21,7 +21,15 @@ EVENT_TIME = datetime(2026, 1, 1, 11, 30, tzinfo=UTC)
 def create_topics(bootstrap_servers: str, topics: list[str]) -> None:
     admin = AdminClient({"bootstrap.servers": bootstrap_servers})
     futures = admin.create_topics(
-        [NewTopic(topic, num_partitions=1, replication_factor=1) for topic in topics]
+        [
+            NewTopic(
+                topic,
+                num_partitions=1,
+                replication_factor=1,
+                config={"message.timestamp.type": "LogAppendTime"},
+            )
+            for topic in topics
+        ]
     )
 
     for topic, future in futures.items():
