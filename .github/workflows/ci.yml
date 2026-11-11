@@ -335,7 +335,27 @@ jobs:
             tests/integration/test_user_play_count_kafka_to_redis.py \
             tests/integration/test_user_play_count_replay_idempotency.py \
             tests/integration/test_streaming_validation_routing.py \
-            tests/integration/test_user_play_count_late_events.py \
+            tests/integration/test_user_play_count_late_events.py
+
+          # Fresh TaskManager for the skip-rate suite: repeated PyFlink job
+          # submissions accumulate state (metaspace, Python workers) on one TM.
+          docker compose restart taskmanager
+          for attempt in $(seq 1 60); do
+            slots="$(curl -s http://127.0.0.1:8081/overview \
+              | python -c 'import sys, json; print(json.load(sys.stdin)["slots-available"])' \
+              2>/dev/null || echo 0)"
+            if [ "$slots" -ge 1 ]; then
+              echo "TaskManager ready with $slots free slot(s)"
+              break
+            fi
+            if [ "$attempt" = "60" ]; then
+              echo "TaskManager did not register after restart"
+              exit 1
+            fi
+            sleep 2
+          done
+
+          python -m pytest -v -ra -m integration \
             tests/integration/test_user_skip_rate_job.py \
             tests/integration/test_skip_rate_flink_to_redis.py \
             tests/integration/test_skip_rate_materialization.py \

@@ -45,6 +45,40 @@ def wait_for_job_terminal(job_id: str, timeout: float = 120.0) -> None:
     raise AssertionError(f"Job {job_id} did not reach a terminal state; last state={last['state']}")
 
 
+def job_root_cause(job_id: str) -> str:
+    try:
+        exceptions = flink_api(f"jobs/{job_id}/exceptions")
+    except OSError as error:
+        return f"<could not read job exceptions: {error}>"
+    entries = exceptions.get("exceptionHistory", {}).get("entries", [])
+    root = exceptions.get("root-exception")
+    if not root and entries:
+        root = entries[0].get("stacktrace")
+    return (root or "<no exception recorded>")[:4000]
+
+
+def cancel_job(job_id: str) -> None:
+    result = subprocess.run(
+        (
+            "docker",
+            "compose",
+            "exec",
+            "-T",
+            "jobmanager",
+            "/opt/flink/bin/flink",
+            "cancel",
+            job_id,
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    print(result.stdout + result.stderr)
+    if flink_api(f"jobs/{job_id}")["state"] == "FAILED":
+        print(f"Job {job_id} root cause:\n{job_root_cause(job_id)}")
+
+
 def wait_for_free_slot(timeout: float = 180.0) -> None:
     deadline = time.monotonic() + timeout
     last = None
@@ -226,7 +260,10 @@ def test_skip_rate_stream_contract(
         last = None
         while time.monotonic() < deadline:
             job_state = flink_api(f"jobs/{job_id}")["state"]
-            assert job_state not in {"FAILED", "CANCELED", "FINISHED"}, f"Job {job_id}: {job_state}"
+            if job_state in {"FAILED", "CANCELED", "FINISHED"}:
+                raise AssertionError(
+                    f"Job {job_id} is {job_state}; root cause:\n{job_root_cause(job_id)}"
+                )
             record = next_target(1.0)
             if record is None:
                 continue
@@ -383,16 +420,5 @@ def test_skip_rate_stream_contract(
     finally:
         consumer.close()
         if job_id is not None:
-            print(
-                run_command(
-                    "docker",
-                    "compose",
-                    "exec",
-                    "-T",
-                    "jobmanager",
-                    "/opt/flink/bin/flink",
-                    "cancel",
-                    job_id,
-                )
-            )
+            cancel_job(job_id)
             wait_for_job_terminal(job_id)

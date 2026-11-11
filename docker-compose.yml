@@ -76,6 +76,7 @@ services:
         taskmanager.host: taskmanager
         taskmanager.numberOfTaskSlots: 2
         taskmanager.memory.process.size: 3456m
+        taskmanager.memory.jvm-metaspace.size: 768m
         parallelism.default: 1
         restart-strategy.type: fixed-delay
         restart-strategy.fixed-delay.attempts: 30

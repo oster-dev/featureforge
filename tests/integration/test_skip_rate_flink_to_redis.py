@@ -32,6 +32,40 @@ def flink_api(path: str) -> dict:
         return json.load(response)
 
 
+def job_root_cause(job_id: str) -> str:
+    try:
+        exceptions = flink_api(f"jobs/{job_id}/exceptions")
+    except OSError as error:
+        return f"<could not read job exceptions: {error}>"
+    entries = exceptions.get("exceptionHistory", {}).get("entries", [])
+    root = exceptions.get("root-exception")
+    if not root and entries:
+        root = entries[0].get("stacktrace")
+    return (root or "<no exception recorded>")[:4000]
+
+
+def cancel_job(job_id: str) -> None:
+    result = subprocess.run(
+        (
+            "docker",
+            "compose",
+            "exec",
+            "-T",
+            "jobmanager",
+            "/opt/flink/bin/flink",
+            "cancel",
+            job_id,
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    print(result.stdout + result.stderr)
+    if flink_api(f"jobs/{job_id}")["state"] == "FAILED":
+        print(f"Job {job_id} root cause:\n{job_root_cause(job_id)}")
+
+
 def wait_for_free_slot(timeout: float = 180.0) -> None:
     deadline = time.monotonic() + timeout
     last = None
@@ -334,15 +368,4 @@ def test_skip_rate_flink_to_redis_corrections_and_replay() -> None:
                     client.delete(*keys)
         finally:
             if job_id is not None:
-                print(
-                    run_command(
-                        "docker",
-                        "compose",
-                        "exec",
-                        "-T",
-                        "jobmanager",
-                        "/opt/flink/bin/flink",
-                        "cancel",
-                        job_id,
-                    )
-                )
+                cancel_job(job_id)
