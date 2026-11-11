@@ -45,6 +45,17 @@ def wait_for_job_terminal(job_id: str, timeout: float = 120.0) -> None:
     raise AssertionError(f"Job {job_id} did not reach a terminal state; last state={last['state']}")
 
 
+def wait_for_free_slot(timeout: float = 180.0) -> None:
+    deadline = time.monotonic() + timeout
+    last = None
+    while time.monotonic() < deadline:
+        last = flink_api("overview")
+        if last["slots-available"] >= 1:
+            return
+        time.sleep(2)
+    raise AssertionError(f"No free Flink task slot became available; overview={last}")
+
+
 @pytest.mark.integration
 @pytest.mark.parametrize(
     ("scenario", "offset", "expected_skips"),
@@ -91,8 +102,7 @@ def test_skip_rate_stream_contract(
 ) -> None:
     from confluent_kafka import Consumer, Producer, TopicPartition
 
-    overview = flink_api("overview")
-    assert overview["slots-available"] >= 1, "This test requires at least one free Flink task slot"
+    wait_for_free_slot()
 
     namespace = uuid4().hex
     prefix = f"test.skip-rate.{namespace}"
@@ -215,6 +225,8 @@ def test_skip_rate_stream_contract(
         deadline = time.monotonic() + 240
         last = None
         while time.monotonic() < deadline:
+            job_state = flink_api(f"jobs/{job_id}")["state"]
+            assert job_state not in {"FAILED", "CANCELED", "FINISHED"}, f"Job {job_id}: {job_state}"
             record = next_target(1.0)
             if record is None:
                 continue

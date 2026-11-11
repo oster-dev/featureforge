@@ -45,6 +45,9 @@ services:
         jobmanager.rpc.address: jobmanager
         jobmanager.memory.process.size: 1024m
         parallelism.default: 1
+        restart-strategy.type: fixed-delay
+        restart-strategy.fixed-delay.attempts: 30
+        restart-strategy.fixed-delay.delay: 3s
         python.client.executable: /opt/pyflink/bin/python
         python.executable: /opt/pyflink/bin/python
     volumes:
@@ -61,6 +64,7 @@ services:
   taskmanager:
     image: featureforge-stream-flink:1.20.3
     command: taskmanager
+    restart: on-failure
     depends_on:
       jobmanager:
         condition: service_healthy
@@ -73,6 +77,9 @@ services:
         taskmanager.numberOfTaskSlots: 2
         taskmanager.memory.process.size: 3456m
         parallelism.default: 1
+        restart-strategy.type: fixed-delay
+        restart-strategy.fixed-delay.attempts: 30
+        restart-strategy.fixed-delay.delay: 3s
         python.client.executable: /opt/pyflink/bin/python
         python.executable: /opt/pyflink/bin/python
     volumes:

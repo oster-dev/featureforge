@@ -32,6 +32,17 @@ def flink_api(path: str) -> dict:
         return json.load(response)
 
 
+def wait_for_free_slot(timeout: float = 180.0) -> None:
+    deadline = time.monotonic() + timeout
+    last = None
+    while time.monotonic() < deadline:
+        last = flink_api("overview")
+        if last["slots-available"] >= 1:
+            return
+        time.sleep(2)
+    raise AssertionError(f"No free Flink task slot became available; overview={last}")
+
+
 @pytest.mark.integration
 def test_skip_rate_flink_to_redis_corrections_and_replay() -> None:
     from confluent_kafka import Consumer, Producer, TopicPartition
@@ -40,8 +51,7 @@ def test_skip_rate_flink_to_redis_corrections_and_replay() -> None:
     from featureforge.streaming.materialize_skip_rate import materialize
     from featureforge.streaming.skip_rate_store import RedisUserSkipRateStore
 
-    overview = flink_api("overview")
-    assert overview["slots-available"] >= 1, "This test requires at least one free Flink task slot"
+    wait_for_free_slot()
 
     namespace = uuid4().hex
     prefix = f"test.skip-rate-online.{namespace}"
