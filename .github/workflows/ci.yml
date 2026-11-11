@@ -65,7 +65,7 @@ jobs:
       BACKFILL_END_DATE: "2026-03-12"
       WINDOW_DAYS: "7"
       MATERIALIZE_START_TIME: "2026-03-10T00:00:00+00:00"
-      MATERIALIZE_END_TIME: "2026-03-12T00:00:00+00:00"
+      MATERIALIZE_END_TIME: "2026-03-13T00:00:00+00:00"
 
     services:
       redis:
@@ -169,13 +169,14 @@ jobs:
           find output/materialization_manifests -name "*.json"
           test -n "$(find output/materialization_manifests -name '*.json')"
 
-      - name: Run streaming Redis integration tests
+      - name: Run Redis and unified online integration tests
         env:
           FEATUREFORGE_REDIS_URL: redis://127.0.0.1:6379/0
         run: |
           python -m pytest -v -m integration \
             tests/integration/test_streaming_redis_online_store.py \
             tests/integration/test_streaming_redis_online_store_concurrency.py \
+            tests/integration/test_unified_online.py \
             --junitxml=/tmp/featureforge-streaming-redis.xml
 
           python - <<'PYTEST_REPORT'
@@ -184,11 +185,25 @@ jobs:
           report = ET.parse("/tmp/featureforge-streaming-redis.xml")
           cases = report.findall(".//testcase")
           if not cases:
-              raise SystemExit("No streaming Redis tests recorded.")
+              raise SystemExit("No Redis or unified online tests recorded.")
+
+          required_suites = (
+              "test_streaming_redis_online_store",
+              "test_streaming_redis_online_store_concurrency",
+              "test_unified_online",
+          )
+          for suite in required_suites:
+              if not any(
+                  case.get("classname", "").split(".")[-1] == suite
+                  for case in cases
+              ):
+                  raise SystemExit(f"Missing integration test module: {suite}")
+
           for outcome in ("skipped", "failure", "error"):
               if report.findall(f".//{outcome}"):
-                  raise SystemExit(f"Streaming Redis report contains: {outcome}")
-          print(f"Verified {len(cases)} streaming Redis tests without skips.")
+                  raise SystemExit(f"Integration report contains: {outcome}")
+
+          print(f"Verified {len(cases)} integration tests without skips.")
           PYTEST_REPORT
 
       - name: Run online-serving integration tests
@@ -268,7 +283,7 @@ jobs:
             tests/integration/test_user_play_count_kafka_to_redis.py \
             tests/integration/test_user_play_count_replay_idempotency.py
 
-      - name: Upload streaming diagnostics on failure
+      - name: Collect streaming diagnostics on failure
         if: failure()
         run: docker compose logs --no-color > streaming-diagnostics.log
 
