@@ -4,7 +4,7 @@ import argparse
 import json
 from datetime import UTC, datetime, timedelta
 
-from pyflink.common import Duration, Time, Types, WatermarkStrategy
+from pyflink.common import Configuration, Duration, Time, Types, WatermarkStrategy
 from pyflink.common.serialization import SimpleStringSchema
 from pyflink.common.watermark_strategy import TimestampAssigner
 from pyflink.datastream import RuntimeExecutionMode, StreamExecutionEnvironment
@@ -182,13 +182,22 @@ def parse_arguments() -> argparse.Namespace:
         default="featureforge-stream-user-play-count-1h",
     )
     parser.add_argument("--bounded", action="store_true")
+    parser.add_argument(
+        "--no-restart",
+        action="store_true",
+        help="Disable automatic job restarts for fail-fast diagnostic runs.",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     arguments = parse_arguments()
 
-    env = StreamExecutionEnvironment.get_execution_environment()
+    configuration = Configuration()
+    if arguments.no_restart:
+        configuration.set_string("restart-strategy.type", "none")
+
+    env = StreamExecutionEnvironment.get_execution_environment(configuration)
     env.set_runtime_mode(RuntimeExecutionMode.STREAMING)
     env.set_parallelism(1)
     env.enable_checkpointing(10_000)
