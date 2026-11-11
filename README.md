@@ -30,7 +30,13 @@ parts that make feature platforms trustworthy:
 - streaming feature computation with sliding event-time windows
 - Kafka-to-Redis online materialization
 - guarded Redis online-store writes with WATCH/MULTI concurrency control
+- feature-specific streaming update policies
+  (append-only counts and componentwise count vectors)
+- `user_play_count_1h` and `user_skip_rate_24h` streaming features
+- bounded replay idempotency and event-identity conflict verification
+- rejected-event routing and continuous late-event verification
 - joined Kafka-to-Flink-to-Redis end-to-end verification
+- unified batch and streaming online feature access
 - ML-ready training pipelines with time-based evaluation
 - three-layer GitHub Actions validation
 - documented AWS production operating profile
@@ -59,9 +65,10 @@ build those components correctly. It includes a parity-tested PySpark execution
 engine alongside the Pandas reference, a complete ML training pipeline with
 historical retrieval and online serving, a canonical local offline-store
 contract shared by backfill, validation, Feast, materialization, and
-serving-parity tests, a verified Kafka-to-Flink-to-Redis streaming path,
-explicit freshness and failure-handling contracts, three-layer CI, and a
-documented AWS production profile.
+serving-parity tests, a verified Kafka-to-Flink-to-Redis streaming path with two
+streaming features and distinct feature-specific update policies, unified
+batch and streaming online access, explicit freshness and failure-handling
+contracts, three-layer CI, and a documented AWS production profile.
 
 ## Current Status
 
@@ -116,7 +123,7 @@ documented AWS production profile.
 
 - Streaming event contracts for validated interaction events
   (`interaction-events.v1`) and emitted features
-  (`features.user-play-count-1h.v1`).
+  (`features.user-play-count-1h.v1`, `features.user-skip-rate-24h.v1`).
 - Kafka-based event ingestion with an internal Docker listener for Flink and
   an external listener for host-side tools.
 - A Flink validation and routing job:
@@ -134,20 +141,66 @@ documented AWS production profile.
   - play-count aggregation with right-closed window semantics;
   - feature emission to the feature topic;
   - late-event side output to a dedicated late topic.
-- A Kafka-to-Redis materializer that consumes feature topics and writes
-  guarded feature records into the Redis online store.
-- A guarded Redis streaming store with an explicit update policy:
+- A Flink `user_skip_rate_24h` feature job:
+  - event-time timestamp assignment with a bounded watermark strategy;
+  - deduplication by event ID with a 48-hour TTL state;
+  - keying by user ID;
+  - sliding 24-hour event-time windows with a one-minute slide;
+  - independent play-count and skip-count aggregation plus the computed
+    skip rate;
+  - feature emission to the feature topic;
+  - late-event side output to a dedicated late topic.
+- A deterministic Python reference for `user_skip_rate_24h` that deduplicates
+  logical events by `event_id`, validates identity conflicts across the
+  complete supplied input, and excludes `ingested_at` from logical identity.
+- Kafka-to-Redis materializers that consume feature topics and write guarded
+  feature records into the Redis online store:
+  - `materialize.py` for `user_play_count_1h`;
+  - `materialize_skip_rate.py` for `user_skip_rate_24h`.
+- A guarded Redis play-count streaming store with an explicit update policy:
   - newer windows replace older windows;
   - same-window counts may only increase;
   - identical deliveries return `unchanged`;
   - older windows and decreasing same-window counts are discarded as `stale`;
   - concurrent writes use `WATCH`/`MULTI` with bounded retries;
   - connection failures and exhausted retries are never swallowed.
+- A guarded Redis skip-rate streaming store with a componentwise
+  count-vector policy:
+  - newer windows replace older windows, including zero count vectors;
+  - same-window updates compare `(play_count, skip_count)` componentwise,
+    not skip-rate magnitudes;
+  - both counts at least as large with one larger is a valid correction;
+  - both counts at most as large with one smaller is `stale`;
+  - one count increasing while the other decreases raises
+    `SkipRateUpdateConflictError`;
+  - concurrent writes use `WATCH`/`MULTI` with bounded retries.
 - Real Redis integration tests for round trips, window ordering, idempotency,
-  same-window corrections, replay protection, and concurrent `WATCH` retries.
+  same-window corrections, replay protection, concurrent `WATCH` retries, and
+  the skip-rate count-vector policy.
 - A joined Kafka-to-Flink-to-Redis integration test that produces a play
   event, runs both Flink jobs in bounded mode, materializes the feature topic
   into Redis, and reads the feature value back from the online store.
+- Bounded replay idempotency verification: repeated deliveries of the same
+  logical event with different `ingested_at` timestamps leave the final Redis
+  value unchanged.
+- Event-identity conflict verification: two events with the same `event_id`
+  and different logical payloads fail the feature job loudly with
+  `EventIdentityConflictError`.
+- Rejected-event routing verification: invalid JSON and contract-invalid
+  events are routed to the rejected topic through the real Kafka and Flink
+  path without preventing valid follow-up records from being processed.
+- Continuous late-event verification: a late play correction updates an
+  already emitted window in a continuous job, and events too late for all
+  assigned windows are routed to the late topic after observed watermark
+  progress.
+- Skip-rate integration verification: Redis store policy, Kafka-to-Redis
+  materialization with offset resume, the real Flink feature job, the joined
+  Flink-to-Kafka-to-Redis path, late corrections in both rate directions,
+  duplicate suppression, and replay of retained feature output.
+- Unified online feature access: `OnlineFeatureClient` and the
+  `python -m featureforge.online` JSON CLI read Feast batch features and the
+  streaming `user_play_count_1h` feature through one interface with explicit
+  availability, observation time, and freshness classification.
 - Streaming migration provenance documenting the integration of the streaming
   layer into FeatureForge.
 
@@ -195,6 +248,8 @@ Validated materialization into Redis
         ↓
 Online-serving parity and ranking tests
         ↓
+Unified online access tests
+        ↓
 Streaming Redis store and concurrency tests
 ```
 
@@ -205,19 +260,46 @@ Docker Compose stack (Kafka, Flink, Redis)
         ↓
 Health checks for Kafka, JobManager, and Redis
         ↓
-Joined Kafka-to-Flink-to-Redis verification
+Joined pipeline, replay, routing, late-event,
+and skip-rate integration verification
         ↓
 Diagnostics upload on failure
 ```
 
-Current CI results:
+Latest recorded CI results:
 
 | Validation layer | Scope | Result |
 |---|---|---|
 | Baseline CI | Fresh installation, package import, Ruff, and infrastructure-free tests | `254 passed, 5 skipped, 11 deselected, 0 failed` |
-| Serving integration CI | Redis, data generation, canonical backfill, Feast apply, materialization, online-serving tests, and streaming Redis store tests | `15 passed, 0 skipped, 0 failed` |
+| Serving integration CI | Redis, data generation, canonical backfill, Feast apply, materialization, online-serving tests, unified online access, and streaming Redis store tests | `15 passed, 0 skipped, 0 failed` |
 | Flink Kafka-to-Redis CI | Full streaming stack and joined end-to-end test | `1 passed, 0 skipped, 0 failed` |
-| Local full integration | Complete local test suite with Redis, Kafka, Flink, Feast, and materialized values | `265 passed, 5 skipped, 0 failed` |
+| Local full integration | Complete local test suite with Redis, Kafka, Flink, Feast, and materialized values | `299 passed, 5 skipped, 0 failed` |
+
+The Flink integration CI job now selects eight integration modules:
+
+- `test_user_play_count_kafka_to_redis.py` (joined pipeline);
+- `test_user_play_count_replay_idempotency.py` (replay idempotency and
+  identity conflicts);
+- `test_streaming_validation_routing.py` (rejected-event routing);
+- `test_user_play_count_late_events.py` (continuous late correction and
+  too-late routing);
+- `test_user_skip_rate_job.py` (isolated skip-rate Flink job);
+- `test_skip_rate_flink_to_redis.py` (joined skip-rate path);
+- `test_skip_rate_materialization.py` (skip-rate Kafka-to-Redis);
+- `test_redis_skip_rate_store.py` (skip-rate Redis store policy).
+
+The expanded CI selection including the four skip-rate modules is pending its
+first recorded GitHub Actions run.
+
+Local skip-rate verification recorded on November 11, 2026:
+
+| Execution | Result |
+|---|---|
+| Unit tests including skip-rate contracts, reference, and update policy | `350 passed` |
+| Skip-rate Redis store integration tests | `12 passed in 0.74s` |
+| Skip-rate materialization integration test | `1 passed in 1.91s` |
+| Skip-rate Flink-to-Redis integration test | `1 passed in 40.90s` |
+| Skip-rate Flink job integration tests | `8 passed in 176.64s` |
 
 The five skipped tests in the baseline job are online-serving integration tests
 in `tests/integration/test_online_serving.py`. They require Redis, applied Feast
@@ -225,9 +307,11 @@ definitions, canonical offline feature snapshots, and materialized online
 feature values. The serving-integration job provisions those prerequisites and
 runs the same tests as real end-to-end contracts.
 
-The eleven deselected tests in the baseline job are the ten streaming Redis
-store/concurrency tests plus the joined Kafka-to-Redis test. They run in their
-dedicated infrastructure jobs, where skips, failures, and errors fail the job.
+The deselected tests in the baseline job are the streaming integration tests:
+the Redis store and concurrency tests, the joined Kafka-to-Redis test, the
+replay idempotency, routing, and late-event tests, and the skip-rate modules.
+They run in their dedicated infrastructure jobs, where skips, failures, and
+errors fail the job.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for local execution prerequisites and
 [ADR-004](docs/adr/ADR-004-github-actions-ci.md) for the CI decision.
@@ -271,6 +355,7 @@ Run the streaming verification:
 docker compose up -d --build
 
 pytest -v -m integration tests/integration/test_user_play_count_kafka_to_redis.py
+pytest -v -m integration tests/integration/test_skip_rate_flink_to_redis.py
 ```
 
 See the [Demo Guide](docs/demo.md) for expected output, layer-level
@@ -343,13 +428,26 @@ Flink user_play_count_1h job
         ├── play-count aggregation
         ├── features → features.user-play-count-1h.v1
         └── late events → late-events topic (side output)
+
+Flink user_skip_rate_24h job
+        ├── event-time watermarking
+        ├── deduplication by event ID (48h TTL state)
+        ├── sliding 24-hour event-time windows (right-closed, 1-minute slide)
+        ├── play-count and skip-count aggregation plus skip rate
+        ├── features → features.user-skip-rate-24h.v1
+        └── late events → late-events topic (side output)
         ↓
-Kafka-to-Redis materializer
+Kafka-to-Redis materializers
         ↓
-guarded Redis streaming store
-(newer windows win, same-window counts only increase, identical deliveries unchanged)
+guarded Redis streaming stores
+(play count: same-window counts only increase;
+skip rate: componentwise count-vector ordering)
         ↓
-online feature read (RedisUserPlayCountStore.read)
+online feature reads
+(RedisUserPlayCountStore.read, RedisUserSkipRateStore.read)
+        ↓
+unified online access
+(OnlineFeatureClient, batch and streaming)
 ```
 
 Both paths converge on Redis as the online serving layer.
@@ -443,12 +541,13 @@ docker compose up -d --build
 ```text
 jobs/
 ├── validate_and_route_events.py
-└── user_play_count_1h.py
+├── user_play_count_1h.py
+└── user_skip_rate_24h.py
 ```
 
-Both jobs support continuous and bounded (replay) execution modes. The bounded
+All jobs support continuous and bounded (replay) execution modes. The bounded
 mode drains configured topics and finishes, which is what the joined
-integration test uses for deterministic verification.
+integration tests use for deterministic verification.
 
 Example bounded run inside the JobManager container:
 
@@ -462,17 +561,30 @@ docker compose exec jobmanager python /opt/flink/jobs/user_play_count_1h.py \
   --bounded
 ```
 
+Skip-rate bounded run:
+
+```bash
+docker compose exec jobmanager python /opt/flink/jobs/user_skip_rate_24h.py \
+  --bootstrap-servers kafka:29092 \
+  --input-topic interaction-events.validated.v1 \
+  --feature-topic features.user-skip-rate-24h.v1 \
+  --late-topic interaction-events.user-skip-rate-24h.late.v1 \
+  --group-id user-skip-rate \
+  --bounded
+```
+
 ### Right-Closed Window Semantics
 
-The streaming play-count feature uses minute-aligned, right-closed one-hour
-windows:
+The streaming features use minute-aligned, right-closed event-time windows:
 
 ```text
 (window_start_exclusive, observation_time]
 ```
 
-An event exactly at a window boundary belongs to the preceding window. An
-event at exactly `11:30:00` is assigned to the window:
+`user_play_count_1h` uses one-hour windows; `user_skip_rate_24h` uses 24-hour
+windows with a one-minute slide. An event exactly at a window boundary belongs
+to the preceding window. An event at exactly `11:30:00` is assigned to the
+window:
 
 ```text
 window_start_exclusive = 11:29
@@ -495,17 +607,77 @@ append-only counts without retractions:
 | Same window | Lower count | Discard (`stale`) |
 | Older window | Any | Discard (`stale`) |
 
+The `RedisUserSkipRateStore` compares `(play_count, skip_count)` componentwise
+within the same observation window. It does not compare skip rates by
+magnitude:
+
+| Incoming feature | Existing value | Result |
+|---|---|---|
+| Newer window | Any (including zero vectors) | Replace |
+| Same window | Both counts ≥, one larger | Replace (valid correction in either rate direction) |
+| Same window | Identical count vector | `unchanged` |
+| Same window | Both counts ≤, one smaller | Discard (`stale`) |
+| Same window | One count up, one count down | `SkipRateUpdateConflictError` |
+| Older window | Any | Discard (`stale`) |
+
+A lower skip rate is not automatically stale: changing `(1, 1)` to `(2, 1)`
+lowers the rate from `0.5` to `1/3`, but is a valid correction because the play
+count increases. The store never merges conflicting count vectors by
+componentwise maxima.
+
 Concurrent modifications of a watched key trigger `WatchError` and are retried
 with bounded attempts. Connection failures and exhausted retries raise instead
 of being silently swallowed.
+
+### User Skip Rate 24h
+
+`user_skip_rate_24h` computes:
+
+```text
+skip_count / (play_count + skip_count)
+```
+
+over the right-closed event-time window:
+
+```text
+(observation_time - 24 hours, observation_time]
+```
+
+Key properties:
+
+- the deterministic Python reference deduplicates logical events by
+  `event_id` and validates identity conflicts across the complete supplied
+  input, before any user, event-type, or window filter is applied;
+- `ingested_at` is excluded from logical identity;
+- only `play` and `skip` events contribute to the counts; `impression` and
+  `complete` events contribute to neither;
+- a zero denominator returns `0.0`;
+- the Flink job uses a 10-minute bounded-out-of-orderness allowance, 30
+  minutes of allowed lateness, and a 48-hour processing-time deduplication
+  TTL;
+- the materializer supports single-partition feature topics, rejects empty
+  readable ranges and tombstones, validates feature payloads, and commits
+  Kafka offsets only after Redis processing succeeds.
+
+Materialize skip-rate features into Redis:
+
+```bash
+python -m featureforge.streaming.materialize_skip_rate \
+  --bootstrap-servers 127.0.0.1:9092 \
+  --redis-url redis://127.0.0.1:6379/0 \
+  --topic features.user-skip-rate-24h.v1 \
+  --group-id user-skip-rate-materializer \
+  --bounded
+```
 
 ### Joined End-to-End Verification
 
 ```bash
 pytest -v -m integration tests/integration/test_user_play_count_kafka_to_redis.py
+pytest -v -m integration tests/integration/test_skip_rate_flink_to_redis.py
 ```
 
-The test:
+The play-count test:
 
 1. creates unique Kafka topics per run;
 2. produces one valid `play` event;
@@ -514,6 +686,11 @@ The test:
 5. runs the materializer in bounded mode;
 6. reads the feature back from Redis;
 7. asserts user ID, play count, and the exact right-closed window timestamps.
+
+The skip-rate test runs the same joined path for `user_skip_rate_24h` and
+additionally verifies late corrections in both rate directions, duplicate
+suppression, and replay of retained feature output through a fresh materializer
+consumer group.
 
 ## Core Architecture
 
@@ -536,7 +713,7 @@ The test:
 | Testing | pytest | Unit, integration, and failure-simulation coverage |
 | Code quality | Ruff | Formatting and linting |
 | Baseline CI | GitHub Actions | Fresh installation, import, formatting, linting, and infrastructure-free tests |
-| Serving integration CI | GitHub Actions + Redis | Fresh Redis, Feast apply, materialization, parity, ranking, and streaming store tests |
+| Serving integration CI | GitHub Actions + Redis | Fresh Redis, Feast apply, materialization, parity, ranking, unified online, and streaming store tests |
 | Streaming integration CI | GitHub Actions + Docker Compose | Kafka, Flink, Redis stack and joined end-to-end verification |
 | Local online store | Redis via Docker Compose | Low-latency feature serving |
 | AWS online-store profile | DynamoDB | Managed production-oriented online feature serving |
@@ -654,7 +831,8 @@ output/single_snapshot/
 FeatureForge currently provides two local reference feature views. Both are
 implemented twice: once in Pandas (`features.py`, the correctness reference)
 and once in PySpark (`spark_features.py`, parity-tested against it). The
-streaming path adds `user_play_count_1h` as a Flink-computed feature.
+streaming path adds `user_play_count_1h` and `user_skip_rate_24h` as
+Flink-computed features.
 
 #### User Engagement Features
 
@@ -1000,8 +1178,8 @@ This provides:
 
 ## Online Serving
 
-FeatureForge provides online feature serving through Feast and Redis, plus a
-streaming write path from Kafka.
+FeatureForge provides online feature serving through Feast and Redis, a
+streaming write path from Kafka, and one unified read interface across both.
 
 ### Start the Stack
 
@@ -1043,6 +1221,40 @@ python feature_repo/personalization_demo.py \
 
 This retrieves user engagement features, evaluates candidate content, and
 returns a ranked list.
+
+### Unified Batch and Streaming Online Access
+
+`src/featureforge/online.py` provides `OnlineFeatureClient`, one read interface
+for:
+
+- user engagement batch features through Feast;
+- content popularity batch features through Feast;
+- the streaming `user_play_count_1h` feature through the Redis streaming
+  store.
+
+Each returned feature includes its name, entity ID, backend, value,
+availability, observation time when available, age and freshness classification
+against the caller's reference time, schema version when available, and error
+type when applicable.
+
+Availability and freshness are separate dimensions. A valid zero remains
+present; a missing value is never replaced with zero. Combined reads explicitly
+report `atomic: false`.
+
+The same interface is available as a JSON CLI:
+
+```bash
+python -m featureforge.online \
+  --user-id user_000290 \
+  --reference-time 2026-03-25T00:00:00+00:00 \
+  --max-batch-age-hours 48 \
+  --max-streaming-age-hours 2
+```
+
+Exit codes: `0` for successful reads including explicit missing values, `1`
+for responses containing feature errors, `2` for invalid CLI requests.
+
+Skip-rate online access through the unified interface is not yet implemented.
 
 ### End-to-End Platform Demo
 
@@ -1144,14 +1356,16 @@ The partition therefore represents the feature state available as of that
 timestamp. This boundary is enforced identically in the Pandas and PySpark
 implementations.
 
-The streaming `user_play_count_1h` feature uses the same right-closed
-convention with minute-aligned sliding windows:
+The streaming features use the same right-closed convention with
+minute-aligned sliding windows:
 
 ```text
 (window_start_exclusive, observation_time]
 ```
 
-An event exactly on a boundary belongs to the preceding window.
+`user_play_count_1h` uses one-hour windows and `user_skip_rate_24h` uses
+24-hour windows. An event exactly on a boundary belongs to the preceding
+window.
 
 ### Label Window
 
@@ -1184,10 +1398,11 @@ files or create random output names.
 
 On the streaming path, idempotency is enforced at two levels:
 
-- Flink deduplicates events by event ID with a 24-hour TTL state, so repeated
-  Kafka delivery does not emit a duplicate feature contribution.
-- The Redis store treats an identical re-delivery of the same feature value as
-  `unchanged` and discards stale or decreasing same-window values.
+- Flink deduplicates events by event ID with a 24-hour TTL state for the play
+  count and a 48-hour TTL state for the skip rate, so repeated Kafka delivery
+  does not emit a duplicate feature contribution.
+- The Redis stores treat an identical re-delivery of the same feature value as
+  `unchanged` and discard stale or out-of-policy same-window values.
 
 Every backfill writes a JSON manifest containing:
 
@@ -1257,6 +1472,10 @@ invalid feature data into the online serving layer.
 The Flink validation job applies the same executable contracts to live events.
 Invalid events are routed to a rejected topic with structured failure reasons
 instead of entering the feature pipeline.
+
+Events with the same `event_id` but conflicting logical payloads fail the
+feature jobs loudly with `EventIdentityConflictError` instead of silently
+producing a merged or arbitrary result.
 
 ## Failure Handling and Runbooks
 
@@ -1382,6 +1601,7 @@ Run the streaming end-to-end verification:
 docker compose up -d --build
 
 pytest -v -m integration tests/integration/test_user_play_count_kafka_to_redis.py
+pytest -v -m integration tests/integration/test_skip_rate_flink_to_redis.py
 ```
 
 Or use Make targets:
@@ -1404,6 +1624,8 @@ pytest tests/failure_simulations/ -v
 pytest tests/unit/test_feature_quality.py -v
 pytest tests/unit/test_materialization.py -v
 pytest tests/unit/test_streaming_user_play_count.py -v
+pytest tests/unit/test_user_skip_rate.py -v
+pytest tests/unit/test_skip_rate_update_policy.py -v
 pytest tests/integration/test_online_serving.py -v
 ```
 
@@ -1455,6 +1677,8 @@ FeatureForge documents important architectural decisions as ADRs:
 - [ADR-003: Feature Freshness SLOs and Fail-Safe Serving](docs/adr/ADR-003-freshness-slos-and-fail-safe-serving.md)
 - [ADR-004: GitHub Actions CI for Reproducible Validation](docs/adr/ADR-004-github-actions-ci.md)
 - [ADR-005: AWS S3 Offline-Store Production Profile](docs/adr/ADR-005-aws-s3-offline-store-profile.md)
+- [ADR-006: Streaming Feature Platform Integration](docs/adr/ADR-006-streaming-feature-platform-integration.md)
+- [ADR-007: User Skip Rate 24h Streaming Integration](docs/adr/ADR-007-skip-rate-streaming-integration.md)
 
 Streaming integration decisions and provenance are documented in
 [docs/streaming-migration.md](docs/streaming-migration.md).
@@ -1572,8 +1796,8 @@ See [AWS Production Profile](docs/aws-production-profile.md) and
 - GitHub Actions baseline CI for reproducible validation.
 - GitHub Actions Redis and Feast serving-integration CI.
 - Committed CI and local demo evidence.
-- ADR-001 through ADR-005 for local architecture, reliability, freshness,
-  CI, and AWS production decisions.
+- ADR-001 through ADR-007 for local architecture, reliability, freshness,
+  CI, AWS production, streaming platform, and skip-rate decisions.
 - Documented AWS S3 and DynamoDB production profile.
 
 ### Completed Streaming Layer
@@ -1588,30 +1812,44 @@ See [AWS Production Profile](docs/aws-production-profile.md) and
   concurrency control.
 - Real Redis integration tests for the streaming store.
 - Joined Kafka-to-Flink-to-Redis end-to-end integration test.
+- Bounded replay idempotency verification with offset resume.
+- Event-identity conflict verification with fail-fast job mode.
+- Rejected-event routing verification through the real Kafka and Flink path.
+- Continuous late-correction and too-late routing verification.
+- Unified batch and streaming online feature access with freshness
+  classification.
+- Flink `user_skip_rate_24h` job with 24-hour sliding windows, independent
+  play/skip counts, and a 48-hour deduplication TTL.
+- Deterministic `user_skip_rate_24h` reference with full-input identity
+  validation.
+- Skip-rate Redis store with componentwise count-vector ordering.
+- Skip-rate Kafka-to-Redis materializer with offset resume.
+- Skip-rate integration tests: store policy, materialization, joined
+  Flink-to-Redis path, and isolated Flink job.
 - Dedicated Flink Kafka-to-Redis CI job.
 - Streaming migration provenance.
 
 ### Next Steps
 
-1. Verify replay idempotency end to end: send the same play event twice and
-   prove the Redis value stays unchanged.
-2. Add late-event behavior verification for the streaming path.
-3. Extend the streaming path with additional features such as skip rate.
-4. Extend materialization manifests with richer lineage and run metadata.
-5. Add scheduled freshness checks, feature-view ownership, alerting, and SLO
+1. Expose `user_skip_rate_24h` through the unified online access interface.
+2. Add versioned streaming-history publication and historical retrieval.
+3. Add checkpoint and savepoint recovery evidence for the Flink jobs.
+4. Verify deduplication behavior explicitly at the state TTL boundary.
+5. Extend materialization manifests with richer lineage and run metadata.
+6. Add scheduled freshness checks, feature-view ownership, alerting, and SLO
    escalation.
-6. Add controlled simulations for Redis, Kafka, Flink, and object-storage
+7. Add controlled simulations for Redis, Kafka, Flink, and object-storage
    failures.
-7. Convert the documented AWS profile into infrastructure as code.
-8. Provision an AWS development environment with explicit cost limits and
+8. Convert the documented AWS profile into infrastructure as code.
+9. Provision an AWS development environment with explicit cost limits and
    monitoring after the infrastructure design is reviewed.
-9. Implement hyperparameter tuning and advanced models such as XGBoost or
-   LightGBM.
-10. Add MLflow experiment tracking and a model registry.
-11. Publish `v0.1.0` with release notes and the documented demo evidence.
-12. Write a technical article about canonical feature ownership, point-in-time
+10. Implement hyperparameter tuning and advanced models such as XGBoost or
+    LightGBM.
+11. Add MLflow experiment tracking and a model registry.
+12. Publish `v0.1.0` with release notes and the documented demo evidence.
+13. Write a technical article about canonical feature ownership, point-in-time
     correctness, streaming materialization, freshness, and CI design.
-13. Make a focused external Feast, PyFlink, or MLflow documentation or test
+14. Make a focused external Feast, PyFlink, or MLflow documentation or test
     contribution.
 
 ## Project Scope
@@ -1629,6 +1867,7 @@ Version 1 focuses on:
 - controlled failure simulations and operational runbooks;
 - online materialization (batch Feast and streaming Kafka-to-Redis);
 - offline/online parity validation;
+- feature-specific streaming update policies;
 - tests and operational documentation;
 - ML-ready training pipelines;
 - reproducible three-layer CI;

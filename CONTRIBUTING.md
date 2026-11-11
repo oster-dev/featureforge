@@ -1,9 +1,12 @@
 # Contributing to FeatureForge
 
+
 Thank you for contributing to FeatureForge.
+
 
 FeatureForge is a production-inspired project for Data Infrastructure, Feature
 Infrastructure, and ML Platform Engineering. The project prioritizes:
+
 
 - reproducibility;
 - event-time correctness;
@@ -14,56 +17,75 @@ Infrastructure, and ML Platform Engineering. The project prioritizes:
 - visible operational behavior;
 - offline/online serving parity;
 - streaming ingestion, validation, and online materialization;
+- feature-specific streaming update policies;
+- unified batch and streaming online feature access;
 - deterministic workflows;
 - independent baseline, Redis/Feast, and Flink Kafka-to-Redis CI validation;
 - documented production architecture.
 
+
 Before contributing, read:
+
 
 - [README.md](README.md)
 - [ARCHITECTURE.md](ARCHITECTURE.md)
 - [Demo Guide](docs/demo.md)
+- [Streaming Migration Provenance](docs/streaming-migration.md)
 - [AWS Production Profile](docs/aws-production-profile.md)
 - [ADR-001: Offline/Online Feature Store Split](docs/adr/ADR-001-offline-online-feature-store-split.md)
 - [ADR-002: Canonical Offline Store Contract](docs/adr/ADR-002-canonical-offline-store-contract.md)
 - [ADR-003: Feature Freshness SLOs and Fail-Safe Serving](docs/adr/ADR-003-freshness-slos-and-fail-safe-serving.md)
 - [ADR-004: GitHub Actions CI for Reproducible Validation](docs/adr/ADR-004-github-actions-ci.md)
 - [ADR-005: AWS S3 Offline-Store Production Profile](docs/adr/ADR-005-aws-s3-offline-store-profile.md)
+- [ADR-006: Streaming Feature Platform Integration](docs/adr/ADR-006-streaming-feature-platform-integration.md)
+- [ADR-007: User Skip Rate 24h Streaming Integration](docs/adr/ADR-007-skip-rate-streaming-integration.md)
+
 
 ## Development Setup
 
+
 ### Prerequisites
+
 
 - Python 3.11, 3.12, or 3.13
 - Docker Desktop for Redis, Kafka, Flink, and Feast serving workflows
 - GNU Make
 - Git
 
+
 ### Create a Virtual Environment
+
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 ```
 
+
 ### Install Dependencies
+
 
 Install the package with development, feature-store, Spark, and streaming
 dependencies:
+
 
 ```bash
 python -m pip install --upgrade pip
 python -m pip install -e ".[dev,feature-store,spark,streaming]"
 ```
 
+
 Verify the CLI and package import:
+
 
 ```bash
 python -c "import featureforge; print(featureforge.__file__)"
 featureforge --help
 ```
 
+
 Expected commands:
+
 
 ```text
 generate
@@ -74,7 +96,17 @@ materialize
 materialize-incremental
 ```
 
+
+The unified online access interface is available as a module entry point:
+
+
+```bash
+python -m featureforge.online --help
+```
+
+
 ## Repository Layout
+
 
 ```text
 featureforge/
@@ -86,6 +118,7 @@ featureforge/
 │   ├── images/           CI and local-demo evidence
 │   ├── runbooks/         Operational recovery procedures
 │   ├── aws-production-profile.md
+│   ├── streaming-migration.md
 │   └── demo.md
 ├── feature_repo/         Feast entities, sources, views, services, demos
 ├── jobs/                 Flink streaming jobs
@@ -104,44 +137,59 @@ featureforge/
 └── pyproject.toml
 ```
 
+
 Generated data and run artifacts are intentionally recreated locally and should
 not be committed unless a contribution explicitly requires a fixture.
+
 
 Screenshots under `docs/images/` are intentional, version-controlled portfolio
 evidence. Do not add screenshots that expose private desktop content, browser
 tabs, credentials, or irrelevant personal information.
 
+
 ## Local Infrastructure
+
 
 FeatureForge uses Docker Compose for local serving and streaming workflows.
 
+
 ### Redis for Feast Serving
 
+
 Start Redis:
+
 
 ```bash
 make docker-up
 ```
 
+
 Verify the service:
+
 
 ```bash
 docker exec featureforge-redis redis-cli ping
 ```
 
+
 Expected output:
+
 
 ```text
 PONG
 ```
 
+
 Stop Redis:
+
 
 ```bash
 make docker-down
 ```
 
+
 Apply Feast definitions after Redis is running:
+
 
 ```bash
 cd feature_repo
@@ -149,33 +197,44 @@ feast apply
 cd ..
 ```
 
+
 The local Feast repository uses:
+
 
 ```text
 feature_repo/feature_store.yaml
 ```
 
+
 Its local Redis connection is:
+
 
 ```text
 localhost:6379
 ```
 
+
 ### Streaming Stack
 
+
 The streaming stack provides Kafka, Flink, and Redis:
+
 
 ```bash
 docker compose up -d --build
 ```
 
+
 Verify the services:
+
 
 ```bash
 docker compose ps
 ```
 
+
 Expected services:
+
 
 ```text
 kafka
@@ -184,34 +243,44 @@ taskmanager
 redis
 ```
 
+
 Kafka and JobManager must be healthy before the TaskManager starts. Redis must
-publish host port `6379` for the local materializer and integration tests.
+publish host port `6379` for the local materializers and integration tests.
+
 
 The streaming jobs are mounted into Flink from:
+
 
 ```text
 jobs/
 ```
 
+
 The Flink image is built from:
+
 
 ```text
 docker/flink/Dockerfile
 ```
+
 
 The Flink image intentionally installs FeatureForge without transitive
 dependencies to avoid conflicting with Apache Beam dependencies already present
 in the base Flink image. Pydantic is installed explicitly for the streaming
 contracts.
 
+
 ## AWS Production Profile
+
 
 FeatureForge currently runs as a local reference platform. Local development,
 the test suite, and GitHub Actions do not require AWS credentials, AWS
 resources, or cloud deployment.
 
+
 The documented AWS production profile defines how the local platform can evolve
 without changing its core feature contracts:
+
 
 ```text
 Local V1
@@ -219,6 +288,7 @@ Local V1
   Redis via Docker Compose
   Feast FileSource on local Parquet
   Kafka and Flink via Docker Compose
+
 
 AWS profile
   s3://featureforge-<environment>/offline-store/
@@ -230,7 +300,9 @@ AWS profile
   Managed Kafka and Flink
 ```
 
+
 The AWS profile preserves the canonical-source invariant:
+
 
 ```text
 Backfill writer
@@ -241,8 +313,10 @@ Backfill writer
     = Serving parity-test source
 ```
 
+
 The following AWS architecture decisions are documented but are not yet
 implemented or provisioned:
+
 
 - One S3 bucket per environment: `dev`, `staging`, and `prod`.
 - One customer-managed SSE-KMS key per environment.
@@ -256,19 +330,25 @@ implemented or provisioned:
 - DynamoDB as the managed AWS online-store profile.
 - Managed Kafka and Flink as the streaming execution profile.
 
+
 Do not introduce AWS SDK calls, AWS credentials, S3 paths, DynamoDB resources,
 or deployment steps into local workflows unless the corresponding infrastructure
 design, tests, cost boundaries, IAM policies, and documentation are added in
 the same change.
 
+
 See [AWS Production Profile](docs/aws-production-profile.md) and
 [ADR-005: AWS S3 Offline-Store Production Profile](docs/adr/ADR-005-aws-s3-offline-store-profile.md).
 
+
 ## Local Development Flows
+
 
 ### Generate Synthetic Source Data
 
+
 Generate deterministic source Parquet datasets:
+
 
 ```bash
 featureforge generate \
@@ -276,7 +356,9 @@ featureforge generate \
   --output output/source_data
 ```
 
+
 The command writes:
+
 
 ```text
 output/source_data/
@@ -287,9 +369,12 @@ output/source_data/
 └── run_manifest.json
 ```
 
+
 ### Compute a Single Feature Snapshot
 
+
 Compute one user engagement snapshot at an explicit observation timestamp:
+
 
 ```bash
 featureforge compute-features \
@@ -299,9 +384,12 @@ featureforge compute-features \
   --window-days 7
 ```
 
+
 ### Run a Feature Backfill
 
+
 Backfill an inclusive date range into the canonical local offline store:
+
 
 ```bash
 featureforge backfill \
@@ -313,7 +401,9 @@ featureforge backfill \
   --engine pandas
 ```
 
+
 The deterministic output layout is:
+
 
 ```text
 output/offline_store/
@@ -327,16 +417,21 @@ output/offline_store/
     └── backfill-YYYY-MM-DD-to-YYYY-MM-DD.json
 ```
 
+
 Backfills overwrite the same canonical feature partitions when invoked with
 the same input data, date range, window, and code. This is the current V1
 idempotency behavior.
 
+
 The backfill runner supports:
+
 
 - `pandas` as the readable correctness reference;
 - `spark` as the parity-tested scalable engine.
 
+
 Use Spark explicitly:
+
 
 ```bash
 featureforge backfill \
@@ -348,39 +443,52 @@ featureforge backfill \
   --engine spark
 ```
 
+
 ### Check Offline Feature Freshness
+
 
 Feature correctness and freshness are separate platform concerns.
 
+
 Correctness asks:
+
 
 ```text
 Are persisted feature values structurally and semantically valid?
 ```
 
+
 Freshness asks:
+
 
 ```text
 Is the newest persisted feature snapshot recent enough for the intended
 serving workflow?
 ```
 
+
 Freshness is based on the newest Hive-style partition under the canonical
 offline store:
+
 
 ```text
 output/offline_store/<feature-view>/observation_date=YYYY-MM-DD/
 ```
 
+
 It uses business observation time, not filesystem modification time.
 
+
 Run the default local freshness check:
+
 
 ```bash
 make check-freshness
 ```
 
+
 Run the CLI with an explicit UTC reference time and maximum lag:
+
 
 ```bash
 featureforge check-freshness \
@@ -388,7 +496,9 @@ featureforge check-freshness \
   --max-lag-hours 24
 ```
 
+
 The command:
+
 
 - checks `output/offline_store/`;
 - evaluates every required feature view independently;
@@ -396,21 +506,27 @@ The command:
 - returns exit code `0` when all checks pass;
 - returns a non-zero exit code when a required view is stale or missing.
 
+
 Stable failed-check names include:
+
 
 ```text
 user_engagement_features.freshness
 content_popularity_features.freshness
 ```
 
+
 Do not add a global `datetime.now(UTC)` freshness requirement to all historical
 materialization paths. Historical re-materialization can be valid when the
 persisted feature data is correct for the requested interval, even if it is not
 fresh for a present-time serving workflow.
 
+
 ### Run Feast Materialization
 
+
 Full materialization requires explicit timezone-aware UTC timestamps:
+
 
 ```bash
 featureforge materialize \
@@ -420,7 +536,9 @@ featureforge materialize \
   --manifest-output output
 ```
 
+
 Incremental materialization uses Feast's stored watermark:
+
 
 ```bash
 featureforge materialize-incremental \
@@ -429,79 +547,105 @@ featureforge materialize-incremental \
   --manifest-output output
 ```
 
+
 Materialization always validates the canonical offline store:
+
 
 ```text
 output/offline_store/
 ```
 
+
 The CLI intentionally does not accept `--offline-store-dir`. This prevents a
 caller from validating a different path than the one configured in Feast
 `FileSource` definitions.
 
+
 The persisted-feature correctness gate is mandatory before every Feast write.
 If correctness validation fails:
+
 
 - Feast is not invoked;
 - a blocked materialization manifest is written;
 - `MaterializationBlockedError` is raised;
 - the CLI exits with a non-zero status.
 
+
 Completed and blocked manifests are written under:
+
 
 ```text
 output/materialization_manifests/
 ```
 
+
 ### Run Historical Retrieval
 
+
 Run the Feast historical retrieval demo:
+
 
 ```bash
 python feature_repo/historical_retrieval_demo.py
 ```
 
+
 This produces:
+
 
 ```text
 data/historical_features.parquet
 ```
 
+
 The historical retrieval path performs point-in-time-correct feature joins with
 the observation labels.
 
+
 ### Train the Baseline Model
 
+
 Train the sklearn baseline model:
+
 
 ```bash
 python scripts/train_baseline.py
 ```
 
+
 This produces:
+
 
 ```text
 output/models/baseline_logreg_pipeline.joblib
 output/models/baseline_logreg_metrics.json
 ```
 
+
 Run diagnostic analysis:
+
 
 ```bash
 python scripts/diagnose_baseline.py
 ```
 
+
 ### Run Online Feature Lookup
 
+
 Run the online feature lookup demo for a specific user:
+
 
 ```bash
 python feature_repo/online_lookup_demo.py --user-id user_000290
 ```
 
+
 ### Run Personalization Ranking
 
+
 Run the deterministic content-ranking demo:
+
 
 ```bash
 python feature_repo/personalization_demo.py \
@@ -509,13 +653,44 @@ python feature_repo/personalization_demo.py \
   --top-k 5
 ```
 
+
+### Run the Unified Online Access CLI
+
+
+Read Feast batch features and the streaming play count through one interface:
+
+
+```bash
+python -m featureforge.online \
+  --user-id user_000290 \
+  --reference-time 2026-03-25T00:00:00+00:00 \
+  --max-batch-age-hours 48 \
+  --max-streaming-age-hours 2
+```
+
+
+Exit codes: `0` for successful reads including explicit missing values, `1`
+for responses containing feature errors, `2` for invalid CLI requests.
+
+
+The unified integration test is available under an isolated test prefix:
+
+
+```bash
+pytest -v tests/integration/test_unified_online.py
+```
+
+
 ### Run the End-to-End Demo
+
 
 The reviewer workflow starts Redis, applies Feast definitions, and then runs the
 complete local demonstration:
 
+
 ```bash
 docker compose up -d
+
 
 
 cd feature_repo
@@ -523,10 +698,13 @@ feast apply
 cd ..
 
 
+
 make demo
 ```
 
+
 The demo performs:
+
 
 ```text
 generate deterministic source data
@@ -538,62 +716,85 @@ generate deterministic source data
   → deterministic content ranking
 ```
 
+
 The separately runnable serving suite verifies online/offline parity:
+
 
 ```bash
 pytest -v tests/integration/test_online_serving.py
 ```
 
+
 Customize the demo:
+
 
 ```bash
 make demo USER_ID=user_000290 TOP_K=5
 make demo OUTPUT_DIR=output_demo
 ```
 
+
 `OUTPUT_DIR` contains run-scoped artifacts. It does not replace the canonical
 Feast source path at `output/offline_store/`.
+
 
 See the [Demo Guide](docs/demo.md) for expected output, evidence, verification,
 troubleshooting, and cleanup.
 
+
 ## Streaming Development
 
+
 The streaming path turns raw interaction events into online feature values.
+
 
 ```text
 Raw interaction events
   -> Kafka: interaction-events.v1
   -> Flink validation and routing
   -> Kafka: interaction-events.validated.v1
-  -> Flink user play-count computation
-  -> Kafka: features.user-play-count-1h.v1
-  -> Kafka-to-Redis materializer
-  -> Redis online store
+  -> Flink feature computation
+       ├── user_play_count_1h (1-hour windows)
+       └── user_skip_rate_24h (24-hour windows)
+  -> Kafka feature topics
+       ├── features.user-play-count-1h.v1
+       └── features.user-skip-rate-24h.v1
+  -> Kafka-to-Redis materializers
+  -> guarded Redis online stores
 ```
 
+
 ### Start the Streaming Stack
+
 
 ```bash
 docker compose up -d --build
 ```
 
+
 Wait until Kafka, JobManager, and Redis are healthy:
+
 
 ```bash
 docker compose ps
 ```
 
-### Run the Joined Streaming Test
 
-Run the end-to-end Kafka-to-Flink-to-Redis verification:
+### Run the Joined Streaming Tests
+
+
+Run the end-to-end Kafka-to-Flink-to-Redis verifications:
+
 
 ```bash
 pytest -v -m integration \
-  tests/integration/test_user_play_count_kafka_to_redis.py
+  tests/integration/test_user_play_count_kafka_to_redis.py \
+  tests/integration/test_skip_rate_flink_to_redis.py
 ```
 
-The test:
+
+The play-count test:
+
 
 1. Creates isolated Kafka topics.
 2. Produces a valid play event.
@@ -603,9 +804,18 @@ The test:
 6. Reads the resulting feature from Redis.
 7. Asserts the expected user, play count, and right-closed feature window.
 
+
+The skip-rate test runs the same joined path for `user_skip_rate_24h` and
+additionally verifies late corrections in both rate directions, duplicate
+suppression, and replay of retained feature output through a fresh materializer
+consumer group.
+
+
 ### Run Redis Store Tests
 
+
 Run the Redis online-store and concurrency tests:
+
 
 ```bash
 pytest -v -m integration \
@@ -613,29 +823,112 @@ pytest -v -m integration \
   tests/integration/test_streaming_redis_online_store_concurrency.py
 ```
 
-These tests require a healthy Redis instance.
 
-### Run All Streaming Integration Tests
+Run the skip-rate Redis store tests:
+
 
 ```bash
 pytest -v -m integration \
-  tests/integration/test_streaming_redis_online_store.py \
-  tests/integration/test_streaming_redis_online_store_concurrency.py \
-  tests/integration/test_user_play_count_kafka_to_redis.py
+  tests/integration/test_redis_skip_rate_store.py
 ```
 
-Expected result:
 
-```text
-11 passed, 0 skipped, 0 failed
+These tests require a healthy Redis instance.
+
+
+### Run Replay, Routing, and Late-Event Tests
+
+
+Run the bounded replay idempotency and identity-conflict tests:
+
+
+```bash
+pytest -v -m integration \
+  tests/integration/test_user_play_count_replay_idempotency.py
 ```
+
+
+Run the rejected-event routing test:
+
+
+```bash
+pytest -v -m integration \
+  tests/integration/test_streaming_validation_routing.py
+```
+
+
+Run the continuous late-event test:
+
+
+```bash
+pytest -v -m integration \
+  tests/integration/test_user_play_count_late_events.py
+```
+
+
+Run the isolated skip-rate Flink-job test:
+
+
+```bash
+pytest -v -m integration \
+  tests/integration/test_user_skip_rate_job.py
+```
+
+
+Run the skip-rate materialization test:
+
+
+```bash
+pytest -v -m integration \
+  tests/integration/test_skip_rate_materialization.py
+```
+
+
+### Run All Streaming Integration Tests
+
+
+Run the complete Flink integration selection used by CI:
+
+
+```bash
+pytest -v -m integration \
+  tests/integration/test_user_play_count_kafka_to_redis.py \
+  tests/integration/test_user_play_count_replay_idempotency.py \
+  tests/integration/test_streaming_validation_routing.py \
+  tests/integration/test_user_play_count_late_events.py \
+  tests/integration/test_user_skip_rate_job.py \
+  tests/integration/test_skip_rate_flink_to_redis.py \
+  tests/integration/test_skip_rate_materialization.py \
+  tests/integration/test_redis_skip_rate_store.py
+```
+
+
+Locally recorded results from November 11, 2026:
+
+
+| Module | Result |
+|---|---|
+| `test_redis_skip_rate_store.py` | `12 passed in 0.74s` |
+| `test_skip_rate_materialization.py` | `1 passed in 1.91s` |
+| `test_skip_rate_flink_to_redis.py` | `1 passed in 40.90s` |
+| `test_user_skip_rate_job.py` | `8 passed in 176.64s` |
+| `test_streaming_redis_online_store.py` + concurrency | `11 passed` (previously recorded) |
+| `test_user_play_count_kafka_to_redis.py` | `1 passed` (previously recorded) |
+
+
+The expanded eight-module CI selection is pending its first recorded GitHub
+Actions run.
+
 
 ### Streaming Contracts
+
 
 The streaming contracts define the boundary between producers, Flink jobs, and
 the online store.
 
+
 `InteractionEventV1` validates:
+
 
 - event identity;
 - event and ingestion timestamps;
@@ -645,7 +938,9 @@ the online store.
 - source;
 - schema version.
 
+
 The contract normalizes timestamps to UTC and rejects:
+
 
 - invalid timestamps;
 - ingestion before event time;
@@ -654,27 +949,52 @@ The contract normalizes timestamps to UTC and rejects:
 - unknown fields;
 - invalid play semantics.
 
+
+`UserSkipRateFeatureV1` additionally validates:
+
+
+- non-negative integer play and skip counts;
+- a skip rate that exactly matches
+  `skip_count / (play_count + skip_count)`;
+- an exactly 24-hour feature window;
+- feature name and schema version;
+- a user ID without whitespace.
+
+
 The routing layer separates valid event JSON from structured validation
 failures. Invalid input produces a rejection record with a stable schema and
 reason code; it does not silently disappear or block subsequent valid events.
 
+
 ### Event-Time Semantics
+
 
 Streaming features use event time, not ingestion time.
 
+
 The feature-time mapping preserves right-closed window membership:
+
 
 ```text
 start < event_time <= end
 ```
 
+
 A millisecond-level timestamp mapper converts event timestamps into Flink
 window timestamps while preserving this boundary behavior.
+
 
 For example, an event at exactly `11:30:00` belongs to the one-hour window
 ending at `12:29`, not the window ending at `12:30`.
 
+
+`user_play_count_1h` uses one-hour windows and `user_skip_rate_24h` uses
+24-hour windows with a one-minute slide. Both preserve the same right-closed
+boundary behavior.
+
+
 Do not change this boundary behavior without updating:
+
 
 1. the reference feature implementation;
 2. the Flink job;
@@ -684,11 +1004,15 @@ Do not change this boundary behavior without updating:
 6. architecture documentation;
 7. an ADR if the platform contract changes.
 
+
 ### Streaming Online Store Policy
 
-The Redis online store maintains the latest feature value for each user.
+
+The Redis online stores maintain the latest feature value for each user.
+
 
 For `user_play_count_1h`, the policy is:
+
 
 - A newer observation window replaces an older one.
 - For the same observation window, the play count may only increase.
@@ -696,16 +1020,40 @@ For `user_play_count_1h`, the policy is:
 - A replayed older value cannot undo a later correction.
 - Concurrent writers use bounded Redis `WATCH` retries.
 
-The store is intentionally feature-specific. It is not a generic revision
-policy for arbitrary features and cannot repair an already inflated count.
 
-The Redis key layout is:
+For `user_skip_rate_24h`, the store compares `(play_count, skip_count)`
+componentwise within the same observation window. It does not compare skip
+rates by magnitude:
+
+
+- A newer observation window replaces an older one, including a zero count
+  vector.
+- For the same observation window, both counts at least as large with one
+  larger is a valid correction, in either rate direction.
+- Identical count vectors leave the stored value unchanged.
+- Both counts at most as large with one smaller is discarded as `stale`.
+- One count increasing while the other decreases raises
+  `SkipRateUpdateConflictError`.
+- Concurrent writers use bounded Redis `WATCH` retries.
+
+
+The stores are intentionally feature-specific. They are not a generic revision
+policy for arbitrary features and cannot repair an already inflated count. The
+skip-rate store never merges conflicting count vectors by componentwise
+maxima.
+
+
+The Redis key layouts are:
+
 
 ```text
 featureforge-stream:online:v1:user_play_count_1h:<user_id>
+featureforge-stream:online:v1:user_skip_rate_24h:<user_id>
 ```
 
+
 The stored payload is a validated JSON feature record containing:
+
 
 ```text
 feature_schema_version
@@ -714,14 +1062,20 @@ user_id
 play_count
 observation_time
 window_start_exclusive
+skip_count (skip rate only)
+skip_rate (skip rate only)
 ```
 
-### Kafka-to-Redis Materializer
 
-The materializer consumes the streaming feature topic and writes validated
+### Kafka-to-Redis Materializers
+
+
+The materializers consume the streaming feature topics and write validated
 feature records into Redis.
 
-It uses:
+
+They use:
+
 
 - explicit consumer-group offsets;
 - synchronous offset commits;
@@ -730,19 +1084,38 @@ It uses:
 - Redis connectivity validation;
 - guarded online-store writes.
 
-The materializer writes before committing an offset. If a Redis write fails,
+
+The materializers write before committing an offset. If a Redis write fails,
 the corresponding Kafka offset is not committed, allowing a later run to retry
 the record.
 
-The materializer refuses an empty Kafka range rather than silently completing
+
+The materializers refuse an empty Kafka range rather than silently completing
 without doing work.
 
+
+The skip-rate materializer is available as a module entry point:
+
+
+```bash
+python -m featureforge.streaming.materialize_skip_rate \
+  --bootstrap-servers 127.0.0.1:9092 \
+  --redis-url redis://127.0.0.1:6379/0 \
+  --topic features.user-skip-rate-24h.v1 \
+  --group-id user-skip-rate-materializer \
+  --bounded
+```
+
+
 ### Kafka Topic Naming
+
 
 Kafka topic names may contain ASCII alphanumerics, periods, underscores, and
 hyphens. Do not use colons in Kafka topic names.
 
+
 Use valid names such as:
+
 
 ```text
 featureforge-stream.integration.input.{run_id}
@@ -751,37 +1124,49 @@ featureforge-stream.integration.features.{run_id}
 featureforge-stream.integration.late.{run_id}
 ```
 
+
 Redis key prefixes may continue to use colons because Redis does not have the
 same topic-name restriction.
 
+
 ## Pandas and PySpark Parity
+
 
 `src/featureforge/spark_features.py` computes the same two feature views as
 `features.py` using PySpark.
 
+
 Before changing either implementation, run:
+
 
 ```bash
 pytest tests/unit/test_spark_features.py -v
 pytest tests/unit/test_spark_parquet_features.py -v
 ```
 
+
 If you modify feature logic in `features.py`, make the equivalent change in
 `spark_features.py`, then ensure the parity suite still passes. A change that
 passes the Pandas tests but breaks Spark parity is incomplete.
 
+
 When working with timestamps in `spark_features.py`:
+
 
 - never pass a Python `datetime` directly into a Spark `TimestampType` column;
 - never rely on `spark.sql.session.timeZone` alone to guarantee UTC behavior;
 - convert values to UTC epoch microseconds before Spark processing;
 - convert them back only after collection.
 
+
 ## Development Rules
+
 
 ### Preserve the Canonical Source Contract
 
+
 For the local Feast workflow:
+
 
 ```text
 backfill output
@@ -792,19 +1177,25 @@ backfill output
     = serving parity-test source
 ```
 
+
 All of these use:
+
 
 ```text
 output/offline_store/
 ```
 
+
 For the documented AWS production profile, the same invariant uses:
+
 
 ```text
 s3://featureforge-<environment>/offline-store/
 ```
 
+
 Do not:
+
 
 - introduce a second local source path for Feast;
 - add an arbitrary offline-store override to materialization;
@@ -814,9 +1205,12 @@ Do not:
 - introduce environment-specific S3 paths that allow one component to validate
   a different URI than the URI used by Feast or materialization.
 
+
 ### Preserve Correctness and Freshness Semantics
 
+
 Do not conflate correctness with freshness.
+
 
 ```text
 Correctness: Are persisted feature values valid?
@@ -824,31 +1218,42 @@ Freshness:   Are persisted feature snapshots current enough for the intended
              serving workflow?
 ```
 
+
 Correctness remains mandatory before every Feast materialization. Freshness
 remains an explicit serving-safety check based on business-time
 `observation_date` partitions and an explicit UTC reference time.
 
+
 Do not use filesystem modification time as the primary freshness signal.
+
 
 ### Preserve Event-Time Semantics
 
+
 Features and labels use event time, not ingestion time.
 
+
 Feature window:
+
 
 ```text
 (observation_time - window_days, observation_time]
 ```
 
+
 Label window:
+
 
 ```text
 observation_time < event_time <= label_window_end
 ```
 
+
 Streaming features preserve the same right-closed event-time semantics.
 
+
 Do not alter these boundaries without:
+
 
 1. updating feature implementations;
 2. updating Spark parity logic;
@@ -858,22 +1263,29 @@ Do not alter these boundaries without:
 6. updating architecture documentation;
 7. documenting the decision in an ADR if it changes the platform contract.
 
+
 ### Preserve Idempotency
 
+
 Backfill output paths must remain deterministic:
+
 
 ```text
 <offline-store-root>/<feature-view>/observation_date=YYYY-MM-DD/features.parquet
 ```
 
+
 Do not replace deterministic overwrite behavior with append-only or randomly
 named partition files unless you also introduce versioning, lineage, retention,
 and reader-selection semantics.
 
+
 For S3, preserve recovery from idempotent overwrites through bucket versioning.
 Do not treat object versioning as permission to bypass correctness validation.
 
-Streaming replay behavior must preserve the online-store policy:
+
+Streaming replay behavior must preserve the online-store policies:
+
 
 ```text
 Repeated delivery
@@ -881,12 +1293,59 @@ Repeated delivery
     -> unchanged Redis value
 ```
 
+
 Do not allow a replayed older value to overwrite a newer online feature.
+
+
+### Preserve Event-Identity Semantics
+
+
+Logical event identity is `event_id`. `ingested_at` is receipt metadata and is
+excluded from logical identity.
+
+
+Events with the same `event_id` and different logical payloads must fail
+loudly with `EventIdentityConflictError`. Do not silently keep the first
+delivery, overwrite with the latest delivery, or merge conflicting payloads.
+
+
+Identity validation covers the complete supplied input before user, event-type,
+or window filters are applied. Do not scope conflict detection to only the
+active window.
+
+
+### Preserve Feature-Specific Store Policies
+
+
+Each streaming feature declares its own guarded update policy:
+
+
+```text
+user_play_count_1h:
+  same-window count may only increase (append-only)
+
+user_skip_rate_24h:
+  same-window (play_count, skip_count) compared componentwise
+```
+
+Do not:
+
+- force a new streaming feature into the play-count policy;
+- compare skip rates by magnitude;
+- merge conflicting count vectors by componentwise maxima;
+- treat a lower skip rate as automatically stale.
+
+
+A new streaming feature requires its own policy, deduplication horizon,
+late-event behavior, and materialization boundary, documented in an ADR.
+
 
 ### Preserve Failure Visibility
 
+
 Do not make failures look like successful runs. Failure behavior should provide
 one or more of:
+
 
 - a clear exception;
 - a non-zero CLI exit code;
@@ -895,70 +1354,94 @@ one or more of:
 - a reproducible failure-simulation test;
 - a runbook with recovery and verification steps.
 
+
 Maintain controlled reliability tests under:
+
 
 ```text
 tests/failure_simulations/
 ```
 
+
 Maintain operator procedures under:
+
 
 ```text
 docs/runbooks/
 ```
 
+
 ### Preserve CI Separation
 
+
 Keep the CI jobs independent:
+
 
 ```text
 Baseline lint and test
   → fast, clean, infrastructure-free validation
 
+
 Redis and Feast serving integration
   → Redis, generated data, canonical backfill, Feast apply,
-    materialization, and real online-serving contracts
+    materialization, unified online access, and real online-serving contracts
+
 
 Flink Kafka-to-Redis integration
   → Kafka, Flink, Redis, streaming jobs, materialization,
-    and joined streaming verification
+    replay, routing, late events, and joined streaming verification
 ```
+
 
 Do not add Redis, Kafka, Flink, Docker Compose, or materialization setup to the
 baseline job.
 
+
 Do not remove serving-test skip guards from the baseline suite to manufacture a
 misleading passing result.
 
+
 When changing online-serving behavior, validate both levels:
+
 
 ```bash
 pytest -v -m "not integration"
 pytest -v tests/integration/test_online_serving.py
 ```
 
+
 When changing streaming behavior, validate the appropriate integration level:
+
 
 ```bash
 pytest -v -m integration \
   tests/integration/test_streaming_redis_online_store.py \
-  tests/integration/test_streaming_redis_online_store_concurrency.py
+  tests/integration/test_streaming_redis_online_store_concurrency.py \
+  tests/integration/test_redis_skip_rate_store.py
 ```
+
 
 For joined streaming changes, run:
 
+
 ```bash
 pytest -v -m integration \
-  tests/integration/test_user_play_count_kafka_to_redis.py
+  tests/integration/test_user_play_count_kafka_to_redis.py \
+  tests/integration/test_skip_rate_flink_to_redis.py
 ```
+
 
 ## Testing Guidelines
 
+
 Every behavior change should include an appropriate test.
+
 
 ### Unit Tests
 
+
 Use `tests/unit/` for isolated contracts and domain logic:
+
 
 - Pydantic validation;
 - configuration validation;
@@ -980,15 +1463,21 @@ Use `tests/unit/` for isolated contracts and domain logic:
 - online lookup behavior;
 - missing online entities;
 - ranking and stable tie-breaking;
+- unified online access and its CLI;
 - streaming event validation;
 - streaming routing;
 - event-time mapping;
 - streaming feature semantics;
-- Kafka-to-Redis materializer behavior.
+- Kafka-to-Redis materializer behavior;
+- skip-rate payloads and same-window count ordering;
+- the deterministic skip-rate reference.
+
 
 ### Integration Tests
 
+
 Use `tests/integration/` for executable multi-component paths:
+
 
 - CLI argument parsing and execution;
 - source-Parquet read/write flow;
@@ -1000,18 +1489,34 @@ Use `tests/integration/` for executable multi-component paths:
 - offline/online serving parity;
 - Redis online-store behavior;
 - concurrent Redis writes;
-- joined Kafka-to-Flink-to-Redis execution.
+- unified Feast/Redis online access;
+- joined Kafka-to-Flink-to-Redis execution;
+- bounded replay idempotency;
+- event-identity conflicts;
+- rejected-event routing;
+- continuous late-event behavior;
+- the skip-rate Redis store, materializer, joined path, and Flink job.
+
 
 The five online-serving integration tests are run automatically in the
 Redis and Feast serving-integration CI job after a fresh Redis, Feast, and
 materialization environment has been prepared.
 
-The joined streaming test is run automatically in the Flink Kafka-to-Redis
-integration CI job after the streaming stack is healthy.
+
+The unified online access integration test is run automatically in the same
+serving-integration job.
+
+
+The joined streaming, replay, routing, late-event, and skip-rate tests are run
+automatically in the Flink Kafka-to-Redis integration CI job after the
+streaming stack is healthy.
+
 
 ### Failure Simulations
 
+
 Use `tests/failure_simulations/` for controlled reliability scenarios:
+
 
 - stale offline features fail freshness validation;
 - fresh offline features pass freshness validation;
@@ -1020,18 +1525,24 @@ Use `tests/failure_simulations/` for controlled reliability scenarios:
 - missing Feast repositories fail clearly for full materialization;
 - missing Feast repositories fail clearly for incremental materialization.
 
+
 Do not remove a temporal, correctness, freshness, idempotency, parity, or
 failure-simulation test merely to make a failing suite pass. Understand and fix
 the underlying contract violation.
 
+
 ## Continuous Integration
+
 
 GitHub Actions runs three validation jobs on every push to `main` and every
 pull request.
 
+
 ### Baseline lint and test
 
+
 The clean Ubuntu runner uses Python 3.13 and validates:
+
 
 - editable installation from the `src/` layout;
 - `import featureforge` after installation;
@@ -1039,23 +1550,34 @@ The clean Ubuntu runner uses Python 3.13 and validates:
 - Ruff linting;
 - the full pytest suite without serving or streaming infrastructure.
 
-Expected result:
+
+Last recorded result:
+
 
 ```text
 254 passed, 5 skipped, 11 deselected, 0 failed
 ```
 
+
+The baseline suite has since grown by the unified-online, routing, late-event,
+and skip-rate unit tests; the updated count is pending the next recorded run.
+
+
 The five skipped tests are in `tests/integration/test_online_serving.py` and
 require Redis, applied Feast definitions, canonical offline snapshots, and
 materialized online values.
 
-The eleven deselected tests are streaming integration tests that require Redis,
+
+The deselected tests are streaming integration tests that require Redis,
 Kafka, Flink, or a combination of those services.
+
 
 ### Redis and Feast serving integration
 
+
 The second GitHub Actions job runs in a clean Ubuntu runner and provisions a
 Redis service container. It then:
+
 
 ```text
 generate deterministic source data
@@ -1063,18 +1585,24 @@ generate deterministic source data
   → apply Feast definitions
   → validate and materialize features into Redis
   → run online-serving parity and ranking tests
+  → run unified online access tests
   → run Redis online-store and concurrency integration tests
 ```
 
+
 The Redis integration tests must complete without skips.
+
 
 The job uploads materialization manifests and offline-store diagnostics as
 workflow artifacts if a failure occurs.
 
+
 The local equivalent is:
+
 
 ```bash
 docker compose up -d
+
 
 
 cd feature_repo
@@ -1082,9 +1610,11 @@ feast apply
 cd ..
 
 
+
 featureforge generate \
   --config configs/synthetic_data.yaml \
   --output output/source_data
+
 
 
 featureforge backfill \
@@ -1095,6 +1625,7 @@ featureforge backfill \
   --window-days 7
 
 
+
 featureforge materialize \
   --repo feature_repo \
   --start-time 2026-03-10T00:00:00+00:00 \
@@ -1102,43 +1633,66 @@ featureforge materialize \
   --manifest-output output
 
 
+
 pytest -v tests/integration/test_online_serving.py
 ```
 
+
 ### Flink Kafka-to-Redis integration
 
+
 The third GitHub Actions job starts the complete streaming stack and verifies
-the joined Kafka-to-Redis flow:
+the joined Kafka-to-Redis flows:
+
 
 ```text
 fresh Ubuntu runner
   → Docker Compose stack
   → Kafka, Flink JobManager, TaskManager, and Redis
   → service health checks
-  → joined Kafka-to-Redis integration test
+  → streaming integration tests
 ```
+
 
 The job runs:
 
+
 ```bash
-pytest -v -m integration \
-  tests/integration/test_user_play_count_kafka_to_redis.py
+pytest -v -ra -m integration \
+  tests/integration/test_user_play_count_kafka_to_redis.py \
+  tests/integration/test_user_play_count_replay_idempotency.py \
+  tests/integration/test_streaming_validation_routing.py \
+  tests/integration/test_user_play_count_late_events.py \
+  tests/integration/test_user_skip_rate_job.py \
+  tests/integration/test_skip_rate_flink_to_redis.py \
+  tests/integration/test_skip_rate_materialization.py \
+  tests/integration/test_redis_skip_rate_store.py
 ```
 
-Expected result:
+
+Last recorded result for the original selection:
+
 
 ```text
 1 passed, 0 skipped, 0 failed
 ```
 
+
+The expanded eight-module selection is pending its first recorded run.
+
+
 On failure, the job uploads streaming diagnostics as a workflow artifact.
+
 
 The CI architecture decision is documented in
 [ADR-004: GitHub Actions CI for Reproducible Validation](docs/adr/ADR-004-github-actions-ci.md).
 
+
 ## Validation Before a Commit
 
+
 Run all relevant checks before opening a pull request or creating a commit:
+
 
 ```bash
 ruff format --check .
@@ -1146,45 +1700,63 @@ ruff check .
 pytest -m "not integration" --ignore=tests/integration/test_online_serving.py
 ```
 
+
 When changes affect Redis, streaming, or the joined streaming path, also run:
+
 
 ```bash
 pytest -v -m integration \
   tests/integration/test_streaming_redis_online_store.py \
   tests/integration/test_streaming_redis_online_store_concurrency.py \
-  tests/integration/test_user_play_count_kafka_to_redis.py
+  tests/integration/test_redis_skip_rate_store.py \
+  tests/integration/test_user_play_count_kafka_to_redis.py \
+  tests/integration/test_user_play_count_replay_idempotency.py \
+  tests/integration/test_skip_rate_flink_to_redis.py \
+  tests/integration/test_skip_rate_materialization.py \
+  tests/integration/test_user_skip_rate_job.py
 ```
+
 
 When changes affect online serving, Feast definitions, materialization, or the
 canonical offline store, also run:
 
+
 ```bash
 docker compose up -d
+
 
 
 cd feature_repo
 feast apply
 cd ..
+
 
 
 pytest -v tests/integration/test_online_serving.py
+pytest -v tests/integration/test_unified_online.py
 ```
 
+
 For a reviewer-facing end-to-end validation, run:
+
 
 ```bash
 docker compose up -d
 
 
+
 cd feature_repo
 feast apply
 cd ..
+
 
 
 make demo
 ```
 
+
 You may also use the existing Make targets:
+
 
 ```bash
 make validate
@@ -1195,16 +1767,24 @@ make check-freshness
 make demo
 ```
 
-For the current repository state, expect:
+
+For the current repository state, the last recorded results are:
+
 
 ```text
 Baseline CI:                  254 passed, 5 skipped, 11 deselected
 Redis integration tests:      10 passed, 0 skipped
 Joined streaming test:         1 passed, 0 skipped
-Flink Kafka-to-Redis CI:       1 passed, 0 skipped
+Skip-rate unit tests:        350 unit tests passed in total
+Skip-rate store tests:        12 passed, 0 skipped
+Skip-rate materialization:     1 passed, 0 skipped
+Skip-rate Flink-to-Redis:     1 passed, 0 skipped
+Skip-rate Flink job:           8 passed, 0 skipped
 ```
 
+
 Run focused checks after changing related code:
+
 
 ```bash
 pytest tests/unit/test_feature_quality.py -v
@@ -1217,16 +1797,23 @@ pytest tests/unit/test_streaming_events.py -v
 pytest tests/unit/test_streaming_feature_time.py -v
 pytest tests/unit/test_streaming_materialize.py -v
 pytest tests/unit/test_streaming_user_play_count.py -v
+pytest tests/unit/test_user_skip_rate.py -v
+pytest tests/unit/test_skip_rate_update_policy.py -v
 make check-freshness
 ```
 
+
 All relevant checks should pass before a pull request is opened.
+
 
 ## Troubleshooting
 
+
 ### Offline Feature Freshness Failures
 
+
 If freshness validation fails:
+
 
 1. Run `make check-freshness` or invoke `featureforge check-freshness` with an explicit reference time.
 2. Identify the failed feature view from the stable check name.
@@ -1239,24 +1826,32 @@ If freshness validation fails:
 9. Re-run materialization only if the current serving workflow requires refreshed online values.
 10. Verify online lookup or offline/online parity.
 
+
 Do not use filesystem modification time as evidence of feature freshness. Do not
 bypass freshness by changing the canonical Feast source path.
+
 
 For the detailed operational procedure, see
 [`docs/runbooks/stale-features.md`](docs/runbooks/stale-features.md).
 
+
 ### Feast or Online-Serving Issues
+
 
 If online lookup, materialization, or serving integration tests fail:
 
+
 1. Confirm Docker is running.
 2. Confirm Redis is healthy:
+
 
    ```bash
    docker exec featureforge-redis redis-cli ping
    ```
 
+
 3. Confirm the Feast repository has been applied:
+
 
    ```bash
    cd feature_repo
@@ -1264,41 +1859,54 @@ If online lookup, materialization, or serving integration tests fail:
    cd ..
    ```
 
+
 4. Confirm canonical offline feature partitions exist:
+
 
    ```bash
    find output/offline_store -name features.parquet
    ```
+
 
 5. Confirm correctness validation passes before materialization.
 6. Run `make check-freshness` if the serving workflow requires current values.
 7. Run materialization again with explicit timezone-aware UTC timestamps.
 8. Inspect completed or blocked materialization manifests.
 
+
 For a failing GitHub Actions serving-integration job, download:
+
 
 ```text
 materialization-manifests
 offline-store-diagnostics
 ```
 
+
 These artifacts are uploaded automatically when the integration job fails.
+
 
 For the detailed procedure, see
 [`docs/runbooks/failed-materialization.md`](docs/runbooks/failed-materialization.md).
 
+
 ### Streaming Stack Issues
+
 
 If Kafka, Flink, or streaming integration tests fail:
 
+
 1. Confirm Docker is running.
 2. Confirm the streaming stack is healthy:
+
 
    ```bash
    docker compose ps
    ```
 
+
 3. Confirm Kafka is reachable from the host:
+
 
    ```bash
    docker compose exec kafka /opt/kafka/bin/kafka-topics.sh \
@@ -1306,62 +1914,101 @@ If Kafka, Flink, or streaming integration tests fail:
      --list
    ```
 
+
 4. Confirm Redis has a host port mapping:
+
 
    ```bash
    docker compose ps redis
    ```
 
+
    Expected output must include:
+
 
    ```text
    127.0.0.1:6379->6379/tcp
    ```
 
+
 5. Confirm Redis is reachable:
+
 
    ```bash
    docker exec featureforge-stream-redis-1 redis-cli ping
    ```
 
+
 6. Inspect Flink logs:
+
 
    ```bash
    docker compose logs jobmanager --tail 100
    docker compose logs taskmanager --tail 100
    ```
 
+
 7. Inspect Kafka logs:
+
 
    ```bash
    docker compose logs kafka --tail 100
    ```
 
+
 8. Rebuild the Flink image if the jobs or source code changed:
+
 
    ```bash
    docker compose build jobmanager
    docker compose up -d
    ```
 
+
 9. Recreate Redis if its host port mapping is missing:
+
 
    ```bash
    docker compose -p featureforge-stream up -d --force-recreate redis
    ```
 
+
 10. Confirm no other local container already occupies port `6379`:
+
 
    ```bash
    docker ps --format 'table {{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Ports}}\t{{.Status}}'
    ```
 
+
 If another Redis container occupies port `6379`, stop only the conflicting
 container after confirming that it belongs to an obsolete local workflow.
 
+
+### Skip-Rate Store Conflicts
+
+
+If `SkipRateUpdateConflictError` occurs during skip-rate materialization:
+
+
+1. Inspect the error message for the affected `user_id` and
+   `observation_time`.
+2. Compare the stored and incoming `(play_count, skip_count)` vectors.
+3. Identify which upstream producer emitted the incomparable vectors.
+4. Do not manually merge the vectors in Redis.
+5. Fix or replay the upstream feature computation so that same-window count
+   vectors are componentwise comparable.
+
+
+A skip-rate store conflict indicates an upstream contract violation, not a
+store bug. Do not weaken the store policy to make the conflict disappear.
+
+
 ### Failed Backfills
 
+
 If a backfill fails:
+
 
 1. Inspect the error for invalid input parameters.
 2. Verify `--window-days` is positive.
@@ -1375,12 +2022,16 @@ If a backfill fails:
 6. Re-run with an explicit and valid date range.
 7. Confirm a backfill manifest appears under `output/offline_store/manifests/`.
 
+
 For the detailed procedure, see
 [`docs/runbooks/failed-backfill.md`](docs/runbooks/failed-backfill.md).
 
+
 ## Documentation Expectations
 
+
 Update documentation whenever a change affects:
+
 
 - data contracts;
 - feature definitions;
@@ -1394,7 +2045,9 @@ Update documentation whenever a change affects:
 - streaming routing behavior;
 - Flink job behavior;
 - Kafka topic contracts;
-- Redis online-store policy;
+- Redis online-store policies;
+- feature-specific update semantics;
+- unified online access behavior;
 - test or operational workflows;
 - failure recovery expectations;
 - project setup commands;
@@ -1403,15 +2056,20 @@ Update documentation whenever a change affects:
 - AWS environment, storage, encryption, IAM, lifecycle, or online-store profile;
 - production deployment, cost, resilience, or cloud-operational behavior.
 
+
 Use an ADR when a change establishes a durable architecture, ownership,
 reliability, security, or operational decision.
+
 
 Use a runbook when a change introduces a recognizable operational incident,
 diagnosis flow, recovery procedure, or prevention policy.
 
+
 ## Commit Guidance
 
+
 Prefer small, focused commits. Examples:
+
 
 ```text
 feat: add offline feature freshness checks
@@ -1428,12 +2086,22 @@ refactor: isolate canonical offline store configuration
 test: add Redis integration coverage for streaming play counts
 feat: verify Flink Kafka-to-Redis play-count flow
 ci: run joined Flink Kafka-to-Redis verification
+feat: add unified batch and streaming online access
+test: verify streaming replay idempotency and identity conflicts
+test: verify rejected-event routing through real Kafka and Flink
+test: verify continuous late-event correction and too-late routing
+feat: integrate user skip rate 24h streaming feature
+ci: expand Flink integration selection with skip-rate modules
+docs: add ADR for skip-rate streaming integration
 ```
+
 
 Commit messages should describe the platform behavior or contract being changed,
 not only the file names that changed.
 
+
 Before committing:
+
 
 ```bash
 git status
@@ -1441,7 +2109,9 @@ git diff --check
 git diff
 ```
 
+
 After staging:
+
 
 ```bash
 git add <files>
@@ -1449,9 +2119,12 @@ git diff --cached --check
 git diff --cached
 ```
 
+
 ## Pull Request Guidance
 
+
 A pull request should describe:
+
 
 - the problem being solved;
 - the data, temporal, correctness, freshness, serving, streaming, CI, or cloud
@@ -1462,33 +2135,45 @@ A pull request should describe:
 - documentation, demo evidence, or ADR updates;
 - intentionally deferred follow-up work.
 
+
 For changes affecting the canonical offline source, feature semantics,
 correctness gates, freshness SLOs, materialization, manifests, serving behavior,
-streaming contracts, Kafka topics, Redis store policy, Flink jobs, CI workflows,
+streaming contracts, Kafka topics, Redis store policies, Flink jobs, CI workflows,
 AWS storage, IAM, encryption, or cloud operating profile, explain why the change
 preserves or intentionally changes the existing platform contract.
 
+
 A useful pull request structure is:
+
 
 ```text
 ## Problem
 
+
 ## Change
+
 
 ## Contract impact
 
+
 ## Validation
+
 
 ## Operational impact
 
+
 ## Documentation and ADRs
+
 
 ## Follow-up work
 ```
 
+
 ## Architecture Decisions
 
+
 Important durable decisions are documented as ADRs:
+
 
 - [ADR-001: Offline/Online Feature Store Split](docs/adr/ADR-001-offline-online-feature-store-split.md)
 - [ADR-002: Canonical Offline Store Contract](docs/adr/ADR-002-canonical-offline-store-contract.md)
@@ -1496,3 +2181,8 @@ Important durable decisions are documented as ADRs:
 - [ADR-004: GitHub Actions CI for Reproducible Validation](docs/adr/ADR-004-github-actions-ci.md)
 - [ADR-005: AWS S3 Offline-Store Production Profile](docs/adr/ADR-005-aws-s3-offline-store-profile.md)
 - [ADR-006: Streaming Feature Platform Integration](docs/adr/ADR-006-streaming-feature-platform-integration.md)
+- [ADR-007: User Skip Rate 24h Streaming Integration](docs/adr/ADR-007-skip-rate-streaming-integration.md)
+
+
+Streaming integration decisions and provenance are documented in
+[docs/streaming-migration.md](docs/streaming-migration.md).
