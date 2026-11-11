@@ -1,4 +1,4 @@
-"""Verify replay-safe Kafka-to-Flink-to-Redis user play-count materialization."""
+"""Verify bounded replay idempotency and explicit event-identity failures."""
 
 import json
 import subprocess
@@ -18,125 +18,146 @@ BOOTSTRAP_SERVERS = "127.0.0.1:9092"
 REDIS_URL = "redis://127.0.0.1:6379/0"
 EVENT_TIME = datetime(2026, 1, 1, 11, 30, tzinfo=UTC)
 SUBPROCESS_TIMEOUT_SECONDS = 180
-CONFLICT_TIMEOUT_SECONDS = 30
 
 
 def create_topics(bootstrap_servers: str, topics: list[str]) -> None:
     admin = AdminClient({"bootstrap.servers": bootstrap_servers})
     futures = admin.create_topics(
-        [NewTopic(topic, num_partitions=1, replication_factor=1) for topic in topics]
+        [NewTopic(topic, num_partitions=1, replication_factor=1) for topic in topics],
+        request_timeout=15,
+        operation_timeout=15,
     )
 
     for topic, future in futures.items():
         try:
-            future.result()
+            future.result(timeout=30)
         except Exception as error:
-            if "TOPIC_ALREADY_EXISTS" not in str(error):
-                raise RuntimeError(f"Could not create topic {topic!r}") from error
+            raise RuntimeError(f"Could not create topic {topic!r}") from error
 
 
-def run_flink_job(arguments: list[str]) -> None:
-    completed = subprocess.run(
-        [
-            "docker",
-            "compose",
-            "exec",
-            "-T",
-            "jobmanager",
-            "python",
-            "/opt/flink/jobs/validate_and_route_events.py",
-            *arguments,
-        ],
+def run_command(command: list[str]) -> subprocess.CompletedProcess[str]:
+    """Capture process results; timeouts remain failures."""
+    return subprocess.run(
+        command,
         check=False,
         text=True,
         capture_output=True,
         timeout=SUBPROCESS_TIMEOUT_SECONDS,
     )
 
-    if completed.returncode != 0:
-        raise AssertionError(
-            "Flink validation job failed:\n"
-            f"stdout:\n{completed.stdout}\n"
-            f"stderr:\n{completed.stderr}"
-        )
 
-
-def run_play_count_job(
-    arguments: list[str],
-    timeout_seconds: int = SUBPROCESS_TIMEOUT_SECONDS,
+def assert_success(
+    completed: subprocess.CompletedProcess[str],
+    description: str,
 ) -> None:
-    try:
-        completed = subprocess.run(
+    assert completed.returncode == 0, (
+        f"{description} failed with exit code {completed.returncode}:\n"
+        f"stdout:\n{completed.stdout}\n"
+        f"stderr:\n{completed.stderr}"
+    )
+
+
+def flink_command(script: str, arguments: list[str]) -> list[str]:
+    return [
+        "docker",
+        "compose",
+        "exec",
+        "-T",
+        "jobmanager",
+        "python",
+        f"/opt/flink/jobs/{script}",
+        *arguments,
+    ]
+
+
+def run_validation(
+    input_topic: str,
+    validated_topic: str,
+    rejected_topic: str,
+    run_id: str,
+) -> None:
+    completed = run_command(
+        flink_command(
+            "validate_and_route_events.py",
             [
-                "docker",
-                "compose",
-                "exec",
-                "-T",
-                "jobmanager",
-                "python",
-                "/opt/flink/jobs/user_play_count_1h.py",
-                *arguments,
+                "--bootstrap-servers",
+                "kafka:29092",
+                "--input-topic",
+                input_topic,
+                "--validated-topic",
+                validated_topic,
+                "--rejected-topic",
+                rejected_topic,
+                "--group-id",
+                f"validation-{run_id}",
+                "--job-name",
+                f"validation-{run_id}",
+                "--bounded",
             ],
-            check=False,
-            text=True,
-            capture_output=True,
-            timeout=timeout_seconds,
         )
-    except subprocess.TimeoutExpired as error:
-        stderr = (error.stderr or b"").decode("utf-8", errors="replace")
+    )
+    assert_success(completed, "Flink validation job")
 
-        if "EventIdentityConflictError" in stderr:
-            return
 
-        raise AssertionError(
-            "Flink user play-count job timed out without the expected "
-            "event-identity conflict:\n"
-            f"stdout:\n{error.stdout}\n"
-            f"stderr:\n{stderr}"
-        ) from error
+def run_play_count(
+    validated_topic: str,
+    feature_topic: str,
+    late_topic: str,
+    run_id: str,
+    *,
+    no_restart: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    arguments = [
+        "--bootstrap-servers",
+        "kafka:29092",
+        "--input-topic",
+        validated_topic,
+        "--feature-topic",
+        feature_topic,
+        "--late-topic",
+        late_topic,
+        "--group-id",
+        f"user-play-count-{run_id}",
+        "--job-name",
+        f"user-play-count-{run_id}",
+        "--bounded",
+    ]
+    if no_restart:
+        arguments.append("--no-restart")
 
-    if completed.returncode != 0:
-        if "EventIdentityConflictError" in completed.stderr:
-            return
-
-        raise AssertionError(
-            "Flink user play-count job failed:\n"
-            f"stdout:\n{completed.stdout}\n"
-            f"stderr:\n{completed.stderr}"
-        )
+    return run_command(flink_command("user_play_count_1h.py", arguments))
 
 
 def run_materializer(arguments: list[str]) -> dict[str, dict[str, int]]:
-    completed = subprocess.run(
+    completed = run_command(
         [
             sys.executable,
             "-m",
             "featureforge.streaming.materialize",
             *arguments,
-        ],
-        check=False,
-        text=True,
-        capture_output=True,
-        timeout=SUBPROCESS_TIMEOUT_SECONDS,
+        ]
     )
-
-    if completed.returncode != 0:
-        raise AssertionError(
-            "Kafka-to-Redis materializer failed:\n"
-            f"stdout:\n{completed.stdout}\n"
-            f"stderr:\n{completed.stderr}"
-        )
-
+    assert_success(completed, "Kafka-to-Redis materializer")
     return json.loads(completed.stdout)
 
 
-def produce_events(topic: str, payloads: list[str]) -> None:
+def produce_events(topic: str, events: list[InteractionEventV1]) -> None:
+    errors: list[str] = []
+
+    def on_delivery(error, message) -> None:
+        if error is not None:
+            errors.append(str(error))
+
     producer = Producer({"bootstrap.servers": BOOTSTRAP_SERVERS})
+    for event in events:
+        producer.produce(
+            topic,
+            value=event.model_dump_json().encode("utf-8"),
+            on_delivery=on_delivery,
+        )
 
-    for payload in payloads:
-        producer.produce(topic, value=payload.encode("utf-8"))
-
-    assert producer.flush(10) == 0
+    assert producer.flush(15) == 0, "Kafka producer still has pending messages"
+    assert not errors, f"Kafka delivery failed: {errors}"
 
 
 def make_event(
@@ -165,6 +186,7 @@ def test_replayed_play_event_does_not_change_redis_value() -> None:
     validated_topic = f"featureforge-stream.integration.replay.validated.{run_id}"
     feature_topic = f"featureforge-stream.integration.replay.features.{run_id}"
     late_topic = f"featureforge-stream.integration.replay.late.{run_id}"
+    rejected_topic = f"featureforge-stream.integration.replay.rejected.{run_id}"
     key_prefix = f"featureforge-stream:integration:replay:{run_id}"
 
     user_id = f"integration_user_{run_id}"
@@ -173,61 +195,26 @@ def test_replayed_play_event_does_not_change_redis_value() -> None:
 
     create_topics(
         BOOTSTRAP_SERVERS,
-        [input_topic, validated_topic, feature_topic, late_topic],
+        [input_topic, validated_topic, feature_topic, late_topic, rejected_topic],
     )
 
-    original_event = make_event(
-        event_id=event_id,
-        ingested_at=EVENT_TIME,
-        user_id=user_id,
-        content_id=content_id,
+    original = make_event(event_id, EVENT_TIME, user_id, content_id)
+    replay = make_event(
+        event_id,
+        EVENT_TIME + timedelta(minutes=1),
+        user_id,
+        content_id,
     )
-    replayed_event = make_event(
-        event_id=event_id,
-        ingested_at=EVENT_TIME + timedelta(minutes=1),
-        user_id=user_id,
-        content_id=content_id,
-    )
+    produce_events(input_topic, [original, replay])
 
-    produce_events(
-        input_topic,
-        [
-            original_event.model_dump_json(),
-            replayed_event.model_dump_json(),
-        ],
+    run_validation(input_topic, validated_topic, rejected_topic, run_id)
+    completed = run_play_count(
+        validated_topic,
+        feature_topic,
+        late_topic,
+        run_id,
     )
-
-    run_flink_job(
-        [
-            "--bootstrap-servers",
-            "kafka:29092",
-            "--input-topic",
-            input_topic,
-            "--validated-topic",
-            validated_topic,
-            "--rejected-topic",
-            late_topic,
-            "--group-id",
-            f"validation-{run_id}",
-            "--bounded",
-        ]
-    )
-
-    run_play_count_job(
-        [
-            "--bootstrap-servers",
-            "kafka:29092",
-            "--input-topic",
-            validated_topic,
-            "--feature-topic",
-            feature_topic,
-            "--late-topic",
-            late_topic,
-            "--group-id",
-            f"user-play-count-{run_id}",
-            "--bounded",
-        ]
-    )
+    assert_success(completed, "Initial Flink user play-count job")
 
     materializer_arguments = [
         "--bootstrap-servers",
@@ -243,9 +230,6 @@ def test_replayed_play_event_does_not_change_redis_value() -> None:
         "--bounded",
     ]
 
-    first_result = run_materializer(materializer_arguments)
-    assert first_result == {"store_results": {"written": 60}}
-
     with Redis.from_url(
         REDIS_URL,
         decode_responses=True,
@@ -253,69 +237,51 @@ def test_replayed_play_event_does_not_change_redis_value() -> None:
         socket_timeout=3,
     ) as redis_client:
         store = RedisUserPlayCountStore(redis_client, key_prefix=key_prefix)
-        first_feature = store.read(user_id)
+        key = store.key_for(user_id)
 
-    assert first_feature is not None
-    assert first_feature.play_count == 1
-    assert first_feature.observation_time == datetime(2026, 1, 1, 12, 29, tzinfo=UTC)
-    assert first_feature.window_start_exclusive == datetime(
-        2026, 1, 1, 11, 29, tzinfo=UTC
-    )
+        try:
+            first_result = run_materializer(materializer_arguments)
+            assert first_result == {"store_results": {"written": 60}}
 
-    replayed_again = make_event(
-        event_id=event_id,
-        ingested_at=EVENT_TIME + timedelta(minutes=2),
-        user_id=user_id,
-        content_id=content_id,
-    )
+            first_feature = store.read(user_id)
+            first_payload = redis_client.get(key)
 
-    produce_events(input_topic, [replayed_again.model_dump_json()])
+            assert first_feature is not None
+            assert first_feature.user_id == user_id
+            assert first_feature.play_count == 1
+            assert first_feature.observation_time == datetime(2026, 1, 1, 12, 29, tzinfo=UTC)
+            assert first_feature.window_start_exclusive == datetime(2026, 1, 1, 11, 29, tzinfo=UTC)
 
-    run_flink_job(
-        [
-            "--bootstrap-servers",
-            "kafka:29092",
-            "--input-topic",
-            input_topic,
-            "--validated-topic",
-            validated_topic,
-            "--rejected-topic",
-            late_topic,
-            "--group-id",
-            f"validation-replay-{run_id}",
-            "--bounded",
-        ]
-    )
+            replayed_again = make_event(
+                event_id,
+                EVENT_TIME + timedelta(minutes=2),
+                user_id,
+                content_id,
+            )
+            produce_events(input_topic, [replayed_again])
 
-    run_play_count_job(
-        [
-            "--bootstrap-servers",
-            "kafka:29092",
-            "--input-topic",
-            validated_topic,
-            "--feature-topic",
-            feature_topic,
-            "--late-topic",
-            late_topic,
-            "--group-id",
-            f"user-play-count-replay-{run_id}",
-            "--bounded",
-        ]
-    )
+            replay_run_id = f"replay-{run_id}"
+            run_validation(
+                input_topic,
+                validated_topic,
+                rejected_topic,
+                replay_run_id,
+            )
+            completed = run_play_count(
+                validated_topic,
+                feature_topic,
+                late_topic,
+                replay_run_id,
+            )
+            assert_success(completed, "Replay Flink user play-count job")
 
-    second_result = run_materializer(materializer_arguments)
-    assert second_result == {"store_results": {"stale": 59, "unchanged": 1}}
+            second_result = run_materializer(materializer_arguments)
+            assert second_result == {"store_results": {"stale": 59, "unchanged": 1}}
 
-    with Redis.from_url(
-        REDIS_URL,
-        decode_responses=True,
-        socket_connect_timeout=3,
-        socket_timeout=3,
-    ) as redis_client:
-        store = RedisUserPlayCountStore(redis_client, key_prefix=key_prefix)
-        replayed_feature = store.read(user_id)
-
-    assert replayed_feature == first_feature
+            assert store.read(user_id) == first_feature
+            assert redis_client.get(key) == first_payload
+        finally:
+            redis_client.delete(key)
 
 
 @pytest.mark.integration
@@ -325,65 +291,43 @@ def test_conflicting_event_identity_fails_the_play_count_job() -> None:
     validated_topic = f"featureforge-stream.integration.conflict.validated.{run_id}"
     feature_topic = f"featureforge-stream.integration.conflict.features.{run_id}"
     late_topic = f"featureforge-stream.integration.conflict.late.{run_id}"
+    rejected_topic = f"featureforge-stream.integration.conflict.rejected.{run_id}"
 
     user_id = f"integration_user_{run_id}"
     event_id = uuid.uuid4()
 
     create_topics(
         BOOTSTRAP_SERVERS,
-        [input_topic, validated_topic, feature_topic, late_topic],
+        [input_topic, validated_topic, feature_topic, late_topic, rejected_topic],
     )
 
-    original_event = make_event(
-        event_id=event_id,
-        ingested_at=EVENT_TIME,
-        user_id=user_id,
-        content_id=f"content_{run_id}",
+    original = make_event(
+        event_id,
+        EVENT_TIME,
+        user_id,
+        f"content_{run_id}",
     )
-    conflicting_event = make_event(
-        event_id=event_id,
-        ingested_at=EVENT_TIME + timedelta(minutes=1),
-        user_id=user_id,
-        content_id=f"conflicting_content_{run_id}",
+    conflicting = make_event(
+        event_id,
+        EVENT_TIME + timedelta(minutes=1),
+        user_id,
+        f"conflicting_content_{run_id}",
+    )
+    produce_events(input_topic, [original, conflicting])
+
+    run_validation(input_topic, validated_topic, rejected_topic, run_id)
+    completed = run_play_count(
+        validated_topic,
+        feature_topic,
+        late_topic,
+        run_id,
+        no_restart=True,
     )
 
-    produce_events(
-        input_topic,
-        [
-            original_event.model_dump_json(),
-            conflicting_event.model_dump_json(),
-        ],
-    )
+    output = f"{completed.stdout}\n{completed.stderr}"
 
-    run_flink_job(
-        [
-            "--bootstrap-servers",
-            "kafka:29092",
-            "--input-topic",
-            input_topic,
-            "--validated-topic",
-            validated_topic,
-            "--rejected-topic",
-            late_topic,
-            "--group-id",
-            f"validation-conflict-{run_id}",
-            "--bounded",
-        ]
+    assert completed.returncode != 0, (
+        f"Conflicting event identity unexpectedly completed successfully:\n{output}"
     )
-
-    run_play_count_job(
-        [
-            "--bootstrap-servers",
-            "kafka:29092",
-            "--input-topic",
-            validated_topic,
-            "--feature-topic",
-            feature_topic,
-            "--late-topic",
-            late_topic,
-            "--group-id",
-            f"user-play-count-conflict-{run_id}",
-            "--bounded",
-        ],
-        timeout_seconds=CONFLICT_TIMEOUT_SECONDS,
-    )
+    assert "EventIdentityConflictError" in output, output
+    assert f"Conflicting logical payload for event_id={event_id}" in output, output

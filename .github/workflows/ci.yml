@@ -260,12 +260,13 @@ jobs:
             done
           done
 
-      - name: Run joined Kafka-to-Redis test
+      - name: Run joined Kafka-to-Redis and replay integration tests
         env:
           FEATUREFORGE_REDIS_URL: redis://127.0.0.1:6379/0
         run: |
           pytest -v -m integration \
-            tests/integration/test_user_play_count_kafka_to_redis.py
+            tests/integration/test_user_play_count_kafka_to_redis.py \
+            tests/integration/test_user_play_count_replay_idempotency.py
 
       - name: Upload streaming diagnostics on failure
         if: failure()
