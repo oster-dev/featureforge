@@ -100,7 +100,7 @@ The joined test verifies the following bounded execution path:
    metadata.
 
 This established the initial end-to-end proof for one play event. It did
-not establish checkpoint recovery, continuous-operation guarantees, or
+not establish checkpoint recovery, sustained continuous operation, or
 all late-event behaviors.
 
 ## Subsequent development: bounded replay and identity-conflict coverage
@@ -158,7 +158,7 @@ A subprocess timeout is a test failure, not an accepted conflict result.
 
 ### Optional fail-fast execution
 
-The play-count job now accepts `--no-restart`.
+The play-count job accepts `--no-restart`.
 
 The conflict test uses this option to disable automatic job restarts for
 its diagnostic execution. Invocations without the option preserve the
@@ -166,9 +166,9 @@ existing restart configuration.
 
 This option does not change feature computation or Redis write policies.
 
-### CI integration
+### CI integration at this stage
 
-The Flink integration CI job explicitly selects both:
+The Flink integration CI job was extended to select both:
 
 - `tests/integration/test_user_play_count_kafka_to_redis.py`;
 - `tests/integration/test_user_play_count_replay_idempotency.py`.
@@ -176,9 +176,264 @@ The Flink integration CI job explicitly selects both:
 The Redis store and concurrency integration tests run in the separate
 Redis and Feast serving integration CI job.
 
+## Subsequent development: unified online feature access
+
+PR #7 introduced a common online read interface for existing Feast batch
+features and the Redis-backed `user_play_count_1h` streaming feature.
+
+The work was integrated into `main` at commit `c8df9a8`:
+
+`feat: add unified batch and streaming online access (#7)`
+
+The implementation adds:
+
+- `src/featureforge/online.py`;
+- `tests/unit/test_online.py`;
+- `tests/unit/test_online_cli.py`;
+- `tests/integration/test_unified_online.py`.
+
+The change also updates CI selection and this provenance document.
+
+### Common Python API
+
+`OnlineFeatureClient` reads:
+
+- user engagement batch features through Feast;
+- content popularity batch features through Feast;
+- `user_play_count_1h` through the existing streaming Redis store.
+
+The existing serving functions, deterministic ranking, and Redis write
+policies remain unchanged.
+
+Each returned feature includes:
+
+- feature name and entity ID;
+- backend;
+- value;
+- availability;
+- observation time when available;
+- age relative to the request's reference time;
+- freshness classification;
+- schema version when available;
+- error type when applicable.
+
+Availability and freshness are separate dimensions.
+
+A valid zero remains present. A missing value is not replaced with zero.
+A backend error is not reported as a missing feature.
+
+Combined reads explicitly report `atomic: false`.
+
+### Batch observation timestamps
+
+The Feast adapter requests event timestamps from the online response
+using `to_dict(include_event_timestamps=True)`.
+
+Compatibility was checked locally with Feast 0.66.0. The observed
+feature timestamp fields contain epoch seconds.
+
+The adapter reads these timestamps from the online response. It does not
+infer online timestamps from the latest offline partition.
+
+Entity-key timestamp fields are not used as feature observation times.
+
+A feature event timestamp is not evidence of its publication time or of
+its availability to an earlier prediction.
+
+### Freshness policy
+
+The caller supplies:
+
+- a reference time;
+- a maximum batch-feature age;
+- a maximum streaming-feature age.
+
+The interface distinguishes:
+
+- `fresh`;
+- `stale`;
+- `unknown`;
+- `future`.
+
+A feature with no usable timestamp is not automatically classified as
+fresh.
+
+Freshness evaluated against a historical demo reference time is not a
+claim that the feature is fresh relative to the current wall clock.
+
+### JSON CLI
+
+The common read interface is available through:
+
+`python -m featureforge.online`
+
+The CLI accepts entity IDs, backend configuration, an optional reference
+time, and explicit maximum-age parameters.
+
+It emits JSON and uses the following exit behavior:
+
+- successful reads, including explicit missing values: exit code 0;
+- responses containing feature errors: exit code 1;
+- invalid CLI requests: exit code 2.
+
+This module entry point supplements the existing `featureforge`
+commands; it does not replace them.
+
+### Unified integration-test boundary
+
+The unified integration test reads prepared Feast values and a streaming
+value written under an isolated test prefix.
+
+It verifies:
+
+- combined batch and streaming access;
+- preservation of a valid streaming zero;
+- returned observation timestamps;
+- freshness against the explicit test reference;
+- missing results for an unknown user;
+- non-atomic response metadata.
+
+The test derives its reference from the prepared offline snapshots and
+checks that the online batch timestamps match those snapshots.
+
+The directly prepared streaming value tests the read interface.
+Kafka/Flink production of streaming features remains covered by the
+separate pipeline integration tests.
+
+### CI integration
+
+The unified integration test runs in the Redis and Feast serving job
+after source generation, backfill, Feast application, and materialization.
+
+The JUnit validation checks that the selected Redis and unified test
+modules are represented without skips, failures, or errors.
+
+The CI materialization end time was extended to March 13, 2026, so that
+the March 12 snapshot lies within the declared exclusive end boundary.
+
+## Subsequent development: routing and continuous late-event verification
+
+The branch `test/streaming-routing-and-late-events` adds two dedicated
+integration tests:
+
+- `tests/integration/test_streaming_validation_routing.py`;
+- `tests/integration/test_user_play_count_late_events.py`.
+
+Both tests have passed individually and as part of the complete local
+test suite.
+
+At the time of this update, the expanded GitHub CI result and merge for
+this branch have not yet been recorded.
+
+No application-job change was required for these local results.
+
+### Rejected-event routing
+
+The routing test publishes, in order:
+
+1. Invalid JSON.
+2. A valid play event.
+3. A contract-invalid event with an unsupported event type.
+4. Another valid play event.
+
+It runs the real validation job in bounded mode and reads the completed
+Kafka output ranges.
+
+The assertions require:
+
+- exactly two validated records;
+- exactly two rejected records;
+- the expected valid event identities;
+- rejection output matching the executable routing contract;
+- both `INVALID_JSON` and `EVENT_CONTRACT_VIOLATION` reasons.
+
+This verifies that invalid records are routed through the real Flink and
+Kafka path without preventing valid follow-up records from being
+processed.
+
+The test uses isolated topics and requests their deletion during cleanup.
+
+Exact record counts describe this failure-free bounded test execution.
+They do not establish exactly-once delivery across recovery.
+
+### Continuous late correction
+
+The late-event test submits the existing play-count job to the Flink
+cluster in detached continuous mode with automatic restart disabled.
+
+It then:
+
+1. Publishes a play event at 11:30.
+2. Publishes a progress event at 12:11.
+3. Waits for the tested user's window ending at 12:00 to be emitted with
+   a count of one.
+4. Publishes a distinct event ID for another play at 11:30.
+5. Waits for the same 12:00 window to be emitted with a count of two.
+
+Waiting for the initial output before publishing the correction
+distinguishes this scenario from loading all events before a bounded job
+finishes.
+
+The correction is a new logical event, not a duplicate delivery of the
+original event.
+
+### Too-late routing
+
+After verifying the correction, the same test:
+
+1. Publishes a further progress event at 14:00.
+2. Waits for the earlier progress user's window ending at 13:10 to be
+   emitted.
+3. Publishes another distinct event at 11:30.
+4. Waits for that event's identity in the late Kafka topic.
+
+The progress-window output demonstrates sufficient watermark
+advancement to exceed all windows assigned to the tested 11:30 event and
+their configured allowed-lateness retention.
+
+The late record must contain:
+
+- error schema version `v1`;
+- reason `TOO_LATE_FOR_ALL_ASSIGNED_WINDOWS`;
+- feature name `user_play_count_1h`;
+- the original event payload.
+
+The test waits for observable outputs rather than assuming watermark
+progress after a fixed sleep.
+
+### Cleanup and scope
+
+The continuous test resolves its submitted Flink job ID and cancels that
+specific job during cleanup.
+
+It closes its consumers and requests deletion of its isolated topics.
+
+This test verifies Flink's feature and late-event Kafka outputs. It does
+not run those corrections through the Redis materializer.
+
+The Redis correction policy remains separately covered by real Redis
+integration tests.
+
+### CI selection in this branch
+
+The workflow change adds both new test modules to the existing Flink
+integration step alongside the joined pipeline and replay tests.
+
+The selected modules are:
+
+- `tests/integration/test_user_play_count_kafka_to_redis.py`;
+- `tests/integration/test_user_play_count_replay_idempotency.py`;
+- `tests/integration/test_streaming_validation_routing.py`;
+- `tests/integration/test_user_play_count_late_events.py`.
+
+The expanded CI selection must pass in GitHub Actions before this branch
+is treated as CI-verified.
+
 ## Current streaming implementation
 
-The current repository contains the following streaming components.
+The current implementation consists of the following components.
+The routing and late-event test additions described above remain
+branch-local until merged.
 
 ### Validation and routing
 
@@ -204,9 +459,10 @@ rejected Kafka outputs.
 - checkpointing at ten-second intervals;
 - continuous execution and bounded replay.
 
-The logical event identity excludes `ingested_at`. Identical duplicate
-deliveries do not emit another event or refresh the deduplication
-retention period.
+The logical event identity excludes `ingested_at`.
+
+Identical duplicate deliveries do not emit another event or refresh the
+deduplication retention period.
 
 ### Kafka-to-Redis materialization
 
@@ -237,11 +493,27 @@ The verified write policy:
 These same-window correction rules apply to the append-only play-count
 contract. They are not a general policy for arbitrary mutable features.
 
+The write result `stale` describes rejection under this ordering policy.
+It is distinct from the read interface's freshness classification.
+
+### Consumer access
+
+`src/featureforge/online.py` provides common online access to the
+supported batch feature groups and the streaming play count.
+
+It preserves backend-specific storage and publication mechanisms.
+It does not write into Feast's internal Redis encoding.
+
 ## Verification recorded on November 11, 2026
 
-The local audit was performed on `main` at commit `fdbbfe8`.
+The results below record separate executions and repository states.
+Later results do not retroactively change earlier audit records.
 
-### Static and environment checks
+### Initial audit at `fdbbfe8`
+
+The initial local audit was performed on `main` at commit `fdbbfe8`.
+
+#### Static and environment checks
 
 The audit confirmed:
 
@@ -253,7 +525,7 @@ The audit confirmed:
 - Ruff lint checks passing;
 - no whitespace errors reported by `git diff --check`.
 
-### Serving-environment preparation
+#### Serving-environment preparation
 
 The first baseline run found four online-serving failures because the
 tested known entities returned no online feature values.
@@ -270,10 +542,12 @@ The latest offline snapshots were dated March 25, 2026, and contained
 500 user rows and 250 content rows.
 
 No application-code change was required to obtain the passing serving
-result. This demonstrates that the prepared serving environment works;
-it does not establish why the earlier online values were missing.
+result.
 
-### Streaming integration results
+This demonstrates that the prepared serving environment works. It does
+not establish why the earlier online values were missing.
+
+#### Streaming integration results
 
 All 13 selected Redis and Flink streaming integration test cases passed
 in a dedicated local run.
@@ -286,7 +560,7 @@ The cases cover:
 - bounded replay idempotency;
 - explicit event-identity conflict failure.
 
-### Complete test-suite result
+#### Complete test-suite result
 
 After serving preparation, the complete test suite passed in one
 combined execution:
@@ -301,8 +575,65 @@ After the run:
 - the Git working tree was clean;
 - local `main` was synchronized with `origin/main`.
 
-These results describe the tested local state and the assertions in the
-current suite. They are not a blanket production-readiness claim.
+### Unified online access verification
+
+Before PR #7 was merged, the expanded complete local suite passed:
+
+`297 passed in 41.01s`
+
+This included:
+
+- the previous 272 test cases;
+- 19 unified online API unit-test cases;
+- five CLI test cases;
+- one unified Feast/Redis integration test.
+
+A manual module-CLI call also returned the prepared batch values and
+their online observation timestamps.
+
+The streaming value under the standard prefix was explicitly reported
+as missing. The isolated integration-test value did not populate that
+standard prefix.
+
+After the merge, local `main` was synchronized at `c8df9a8` with a clean
+working tree.
+
+### Routing and late-event branch verification
+
+The routing test passed individually:
+
+`1 passed in 3.93s`
+
+The continuous late-event test passed individually:
+
+`1 passed in 15.33s`
+
+After the targeted continuous test, Flink reported no running jobs.
+
+The complete local suite, including both new integration tests, then
+passed:
+
+`299 passed in 61.08s`
+
+There were no reported failures, skips, or deselected tests in that run.
+
+The same complete verification block also confirmed:
+
+- Ruff formatting: 88 files already formatted;
+- Ruff lint: all checks passed;
+- no whitespace errors reported by `git diff --check`.
+
+The 299 test cases comprise the previous 297 cases plus:
+
+- one real Kafka/Flink validation-routing test;
+- one continuous Flink test covering both late correction and too-late
+  routing.
+
+The expanded GitHub CI result and merge commit for this branch have not
+yet been recorded.
+
+These results describe the tested states and assertions. They are not a
+blanket production-readiness claim.
 
 ## Verification boundaries
 
@@ -313,26 +644,31 @@ The following distinctions remain important.
 Watermarks, allowed lateness, too-late routing, state TTL, and
 checkpointing are present in the job code.
 
-The current three Flink integration test cases do not independently
-establish:
+The branch-local integration tests now provide successful local evidence
+for:
 
 - rejected-record delivery through the real Kafka validation path;
-- a late event causing a correction after controlled watermark
-  advancement;
-- delivery to the too-late Kafka topic;
+- continued processing of valid follow-up events;
+- correction of an already emitted window in a continuous job;
+- delivery to the too-late Kafka topic after observed watermark-driven
+  progress.
+
+They do not establish:
+
 - restoration from a completed checkpoint or savepoint;
 - deduplication behavior after state TTL expiry;
-- sustained continuous-operation behavior.
+- sustained continuous-operation behavior or performance targets;
+- behavior across multiple Kafka partitions.
 
-Reference and Redis tests provide narrower proofs for their respective
-components. They do not replace these distributed runtime scenarios.
+Reference and Redis tests provide additional, narrower proofs for their
+respective components.
 
 ### Delivery guarantees
 
 The Flink Kafka sinks are configured with `AT_LEAST_ONCE`.
 
-Passing replay and guarded-write tests must not be described as an
-end-to-end exactly-once guarantee.
+Passing replay, routing, correction, and guarded-write tests must not be
+described as an end-to-end exactly-once guarantee.
 
 ### Recovery and replay
 
@@ -341,12 +677,24 @@ Fresh bounded reprocessing is not checkpoint or savepoint recovery.
 Enabling checkpointing does not by itself demonstrate successful state
 restoration or durable recovery across container replacement.
 
-### Zero values
+Cancelling the continuous test job during cleanup is not a recovery
+test.
+
+### Deduplication horizon
+
+Deduplication uses a finite twenty-four-hour state TTL.
+
+The existing tests do not establish behavior after that state expires.
+They must not be presented as proof of unlimited replay protection.
+
+### Zero values and inactivity
 
 The Redis integration suite verifies that a newer feature window can
 replace a previous count with zero.
 
-It does not establish that the Flink window job emits a zero for an
+The unified read tests verify that a stored zero remains a present value.
+
+Neither establishes that the Flink window job emits a zero for an
 otherwise inactive user merely because time advances.
 
 ### Feature scope
@@ -358,17 +706,48 @@ Support for other interaction event types in the event contract does not
 mean that separate streaming features for those event types have been
 implemented.
 
+`user_skip_rate_24h` remains a separate integration item in the platform
+blueprint.
+
+### Historical publication
+
+The verified Kafka-to-Redis and unified online paths do not establish a
+versioned streaming-history publication or historical retrieval contract.
+
+An online event timestamp is not proof that a value was published before
+a historical prediction.
+
+The interface does not fabricate `published_at` values or claim
+published-as-of retrieval.
+
 ### Test-environment boundaries
 
 The full local suite requires prepared infrastructure and, for the
 serving tests, applied Feast definitions and materialized offline data.
 
-At the audited commit, `test_online_serving.py` is not marked with
+At the audited baseline, `test_online_serving.py` is not marked with
 `integration`. It can therefore run under `-m "not integration"` when its
 local availability check passes.
 
-That check verifies offline-file availability and Redis connectivity;
-it does not establish that the expected online values are materialized.
+That check verifies offline-file availability and Redis connectivity.
+It does not establish that the expected online values are materialized.
+
+The unified and newly added routing and late-event integration tests are
+marked with `integration`.
+
+### Read-interface boundaries
+
+Combined online reads are not atomic cross-store snapshots.
+
+Per-feature observation times and freshness are returned where supported.
+Publication time and a universal definition version are not invented
+when unavailable.
+
+A missing numeric value is not silently replaced with zero in the
+unified interface.
+
+Existing legacy serving and ranking functions retain their previous
+behavior.
 
 ## Known test-maintenance follow-ups
 
@@ -376,14 +755,20 @@ The audit identified the following maintenance items:
 
 - add subprocess timeouts to the original joined Kafka-to-Redis test;
 - clean up the Redis key created by that original test;
-- define cleanup for dynamically created integration-test Kafka topics;
+- add topic cleanup to the older joined and replay integration tests;
 - use separate rejected and too-late topics in the original joined test
   when expanding its error-path coverage;
-- align the online-serving tests with the intended integration-test
-  marker boundary.
+- align the existing online-serving tests with the intended
+  integration-test marker boundary.
 
-These are distinct from missing feature implementations and should not
-be presented as failures of the passing test cases.
+The new routing and continuous late-event tests already request cleanup
+of their isolated topics.
+
+The continuous late-event test also cancels its own resolved job ID.
+
+These maintenance items are distinct from missing feature
+implementations and should not be presented as failures of the passing
+test cases.
 
 ## Current milestone statement
 
@@ -392,8 +777,22 @@ path with event validation, event-time window computation, bounded replay
 idempotency, explicit identity-conflict detection, and guarded Redis
 materialization.
 
-The complete existing test suite passed after preparing the local
-serving environment.
+Unified batch and streaming online access is integrated on `main`
+through PR #7.
 
-Broader continuous-operation, late-event runtime, TTL-expiry, and
-checkpoint-recovery guarantees require their own explicit verification.
+Additional branch-local tests have successfully verified rejected-event
+routing, valid follow-up processing, continuous late-window correction,
+and too-late Kafka routing.
+
+The complete local suite, including the routing and continuous
+late-event tests, passed with 299 tests in 61.08 seconds.
+
+The expanded GitHub CI result and merge for this branch remain to be
+recorded.
+
+The remaining platform work includes skip-rate integration, versioned
+streaming history, recovery evidence, explicit TTL boundaries, and a
+reproducible completion demonstration.
+
+These remaining items must be completed or explicitly scoped before
+declaring the broader blueprint-defined streaming phase finished.
