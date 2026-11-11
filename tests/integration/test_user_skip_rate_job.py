@@ -8,9 +8,7 @@ from datetime import UTC, datetime, timedelta
 from urllib.request import urlopen
 from uuid import uuid4
 
-
 import pytest
-
 
 from featureforge.streaming.contracts.events import InteractionEventV1
 from featureforge.streaming.reference.user_skip_rate import calculate_user_skip_rate_24h
