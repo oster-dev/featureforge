@@ -1,345 +1,285 @@
 # FeatureForge Platform Blueprint
 
-Status: Proposed implementation baseline
-Date: 2026-11-10
-Existing release baseline: v0.1.0
+**Status:** target design, updated 2026-11-12.
+**Baseline:** v0.1.0 released. Streaming core delivered.
+
+This document describes the **target** system. Implemented behavior is in
+[ARCHITECTURE.md](../ARCHITECTURE.md). Delivery status is in [STATUS.md](../STATUS.md).
+Nothing marked *planned* here is claimed as complete.
+
+---
 
 ## 1. Product
 
-FeatureForge is evolving into a production-shaped ML feature platform:
+FeatureForge is a production-shaped ML feature platform: batch and streaming
+feature computation, versioned historical storage, low-latency online serving,
+and an end-to-end ML workflow.
 
-Batch and streaming feature computation, versioned historical storage,
-low-latency online serving, and an end-to-end ML workflow.
-
-The primary user is an ML practitioner who needs to discover, select,
-validate, and retrieve features for training and inference without
-implementing infrastructure-specific access logic.
-
-This document describes the target system. It does not declare its
-unimplemented capabilities complete.
-
-## 2. Repository decision
-
-FeatureForge is the active platform repository.
-
-FeatureForge Stream v0.1.0 is a frozen reference implementation.
-Selected capabilities will be integrated incrementally, preserving
-their implementation provenance, tests, and guarantee boundaries.
-
-The existing FeatureForge v0.1.0 release remains unchanged.
-
-The planned ML-workflow phase extends the training and serving foundation
-already present in FeatureForge. It does not create a separate platform.
-
-One repository does not imply one process, container, Python environment,
-or deployment lifecycle.
-
-## 3. Existing foundation
-
-FeatureForge v0.1.0 documents:
-
-- Deterministic synthetic source data and observation labels.
-- Event-time and ingestion-time modeling.
-- Pandas and PySpark feature computation with parity tests.
-- User engagement and content popularity batch features.
-- Canonical partitioned offline feature storage.
-- Backfills, validation gates, freshness checks, and run manifests.
-- Feast historical retrieval and Redis materialization.
-- Time-based ML evaluation and persisted model artifacts.
-- Online lookup and deterministic ranking.
-- Baseline and Redis/Feast serving CI.
-- A local demo and documented AWS operating profile.
-
-These capabilities are retained unless a tested replacement is introduced.
-
-Existing event-time correctness must not be presented as proof that
-every historical feature value was available to the online system at
-the corresponding prediction time.
-
-## 4. Initial use case
-
-Extend the existing user-content prediction workflow with recent
-streaming activity.
-
-The initial integrated feature set combines:
-
-- Existing seven-day user engagement features.
-- Existing seven-day content popularity features.
-- user_play_count_1h.
-- user_skip_rate_24h.
-
-Do not add more features before this vertical slice works.
-
-Before dataset integration, audit and document the existing label:
-
-- What prediction is made.
-- The prediction timestamp.
-- The outcome horizon.
-- When the label becomes observable.
-- How incomplete outcomes are excluded.
-- Which source event types are actually generated.
-
-Do not fabricate skip or complete events from unsupported source fields.
-The current streaming replay adapter supports play and impression.
-Meaningful skip-rate training requires an explicitly versioned source
-extension or a compatible declared dataset.
+The primary user is an ML practitioner who needs to discover, validate and
+retrieve features for training and inference without writing
+infrastructure-specific access code.
 
 Synthetic-data results demonstrate engineering behavior, not real-world
 recommendation quality.
 
+## 2. Repository decision
+
+FeatureForge is the single platform repository. FeatureForge Stream v0.1.0 is a
+frozen reference implementation whose capabilities were integrated
+incrementally with their provenance and tests (see
+[streaming-migration.md](streaming-migration.md)). The ML-workflow phase extends
+this repository and does not create a separate platform.
+
+One repository does not imply one process, container, Python environment or
+deployment lifecycle.
+
+---
+
+## 3. Target architecture
+
+```mermaid
+flowchart LR
+    SPEC[Feature specs<br/>planned]:::plan
+
+    subgraph Compute
+        BATCH[Pandas reference<br/>PySpark backfill]:::done
+        STREAM[Flink feature jobs]:::done
+    end
+
+    subgraph Storage
+        OFF[(Offline store<br/>Parquet)]:::done
+        HIST[(Versioned history<br/>Iceberg)]:::plan
+        ON[(Online store<br/>Redis)]:::done
+        ON2[(Online store<br/>Cassandra)]:::plan
+    end
+
+    subgraph Access
+        CLIENT[Unified online client]:::done
+        DATASET[Training dataset API<br/>point-in-time]:::plan
+        SERVICE[Serving service]:::plan
+    end
+
+    ML[Metaflow, MLflow,<br/>registry, rollback]:::plan
+    OBS[Metrics, alerts,<br/>recovery drills]:::plan
+
+    SPEC -.-> BATCH & STREAM
+    BATCH --> OFF --> ON
+    STREAM --> ON
+    STREAM -.-> HIST
+    OFF -.-> HIST
+    ON --> CLIENT
+    ON -.-> ON2
+    HIST -.-> DATASET --> ML
+    CLIENT -.-> SERVICE --> ML
+    OBS -.-> STREAM & SERVICE
+
+    classDef done fill:#d4edda,stroke:#28a745,color:#000
+    classDef plan fill:#e2e3e5,stroke:#6c757d,color:#000,stroke-dasharray: 4 3
+```
+
+Green is implemented and tested. Gray dashed is planned.
+
+---
+
+## 4. Foundation and first use case
+
+Retained from v0.1.0 unless a tested replacement exists: deterministic data,
+Pandas/PySpark parity, canonical partitioned offline store, backfills,
+correctness and freshness gates, Feast retrieval and Redis materialization,
+time-based evaluation, online lookup and CI.
+
+Delivered since: Kafka/Flink validation and routing, `user_play_count_1h`,
+`user_skip_rate_24h`, late-event handling, replay idempotency, guarded Redis
+stores, unified online client.
+
+**First integrated feature set:** seven-day user engagement, seven-day content
+popularity, `user_play_count_1h`, `user_skip_rate_24h`. Prove this slice before
+adding more features.
+
+Before building the mixed dataset, audit and document the existing label:
+the prediction made, prediction timestamp, outcome horizon, when the label
+becomes observable, how incomplete outcomes are excluded, and which event types
+the source actually generates.
+
+> Never fabricate `skip` or `complete` events from unsupported source fields.
+> The current replay adapter supports `play` and `impression`. Meaningful
+> skip-rate training needs a versioned source extension or a compatible
+> declared dataset.
+
+---
+
 ## 5. Component ownership
 
-### Contracts and catalog
+| Component | Owns | Rule |
+|---|---|---|
+| Contracts and catalog | Feature identity, entity, schema, version, window semantics, quality and freshness rules | Small typed spec with a **bounded operator set**. No universal SQL-to-Flink compiler |
+| Batch computation | Pandas references, PySpark, backfills, offline publication | A later backfill must not rewrite the recorded availability of an earlier online value |
+| Streaming computation | Validation, Flink jobs, late routing, finite-horizon dedupe, output contracts | Keep feature-specific correction policies. Append-only ordering is not general revision support |
+| Storage | Offline tables, versioned streaming history | Online stores hold current accepted values. History retains the versions needed for declared retrieval. Neither is assumed to update atomically with the other |
+| Access | Discovery, training retrieval, online retrieval, freshness status | Python API and CLI first, serving service later. Use Feast for supported batch operations. Never write into Feast's internal Redis encoding |
+| ML workflow | Dataset identity, feature versions, label, splits, code revision, model, metrics | Inference loads the trained model with the same declared input schema. The deterministic ranking stays a separate baseline |
 
-Own feature identity, entities, schema, definition versions, window
-semantics, quality rules, freshness rules, and feature-set membership.
+A shared definition does not mean Spark and Flink run one implementation.
+Matching semantics require independent tests.
 
-Start with a small typed catalog and explicit implementation references.
-Do not build a universal feature compiler.
-
-A shared definition does not mean Spark and Flink automatically execute
-one implementation. Matching semantics require independent tests.
-
-### Batch computation
-
-Retain existing Pandas references, PySpark implementations, backfills,
-and canonical offline publication.
-
-Backfills produce explicitly identified runs. A later backfill must not
-rewrite the recorded availability of an earlier online value.
-
-### Streaming computation
-
-Integrate event validation, Flink jobs, late routing, finite-horizon
-deduplication, and feature output contracts.
-
-Preserve existing feature-specific correction policies initially.
-Do not present append-only count ordering as general revision support.
-
-### Storage and publication
-
-Keep existing batch tables and introduce separately versioned streaming
-history under a documented platform storage contract.
-
-Current bounded play-count snapshots are reference artifacts, not an
-already implemented continuous historical sink.
-
-Online stores hold current accepted values.
-Historical storage retains the versions needed for declared retrieval.
-
-Both are projections of published feature updates; they are not assumed
-to become visible atomically.
-
-### Access
-
-Provide one consumer-facing interface for:
-
-- Feature discovery and metadata.
-- Historical training retrieval.
-- Online feature retrieval.
-- Explicit freshness and missing-value status.
-
-Use Feast for supported batch operations.
-Use an adapter for streaming reads where its semantics require one.
-
-Do not write directly into Feast's internal Redis encoding.
-
-### ML workflow
-
-Extend the existing training foundation to consume a declared mixed
-batch/stream feature set.
-
-Record dataset identity, feature versions, label definition, split
-boundaries, code revision, model artifact, and evaluation metrics.
-
-The inference example must load the trained model and use the same
-declared input schema. Existing deterministic ranking remains a separate
-baseline, not proof of model-backed inference.
+---
 
 ## 6. Time and availability contract
 
-Keep these concepts distinct:
+```mermaid
+flowchart LR
+    E[event_time<br/>interaction happened] --> O[observation_time<br/>window endpoint]
+    O --> C[computed_at<br/>update produced]
+    C --> P[published_at<br/>sink accepted]
+    P --> V[Visible to consumers]
+```
 
-- event_time: when an interaction occurred.
-- observation_time: the feature window endpoint.
-- computed_at: when a computation produced an update.
-- published_at: when a particular sink accepted an update.
-- definition_version: the meaning and schema of the feature.
-- run_id or generation_id: the computation that owns the update.
-- update identity: identifies delivery or replay of a specific update.
+| Concept | Meaning |
+|---|---|
+| `event_time` | When an interaction occurred |
+| `observation_time` | The feature window endpoint |
+| `computed_at` | When a computation produced an update |
+| `published_at` | When a particular sink accepted an update |
+| `definition_version` | Meaning and schema of the feature |
+| `run_id` / `generation_id` | The computation that owns the update |
+| Update identity | Identifies delivery or replay of one update |
 
-A revision number is added only if a producer can assign it consistently.
-Kafka offsets are scoped to a topic partition, not universal revisions.
+Rules:
 
-An ingestion timestamp is not an online availability timestamp.
-A historical export timestamp is not proof of earlier online visibility.
+- An ingestion timestamp is not an availability timestamp. A historical export
+  timestamp is not proof of earlier online visibility.
+- A revision number exists only if a producer can assign it consistently. Kafka
+  offsets are scoped to a topic partition.
+- Exact reconstruction of what a prediction consumed comes from **logged
+  feature vectors**, not from eventual agreement between stores.
 
-Historical retrieval modes must be explicit:
+Historical retrieval has two explicit modes that are never silently interchanged:
 
-1. Event-time reconstruction:
-   Reconstruct values from a declared source dataset.
+1. **Event-time reconstruction** from a declared source dataset.
+2. **Published-as-of retrieval** using only versions with recorded publication
+   evidence before the prediction timestamp.
 
-2. Published-as-of retrieval:
-   Select only feature versions with recorded publication evidence
-   before the prediction timestamp.
-
-These modes must never be silently interchanged.
-
-Exact reconstruction of what a prediction consumed is proved through
-logged feature vectors and their metadata, not inferred from eventual
-agreement between stores.
+---
 
 ## 7. Online correction contract
 
-Preserve the tested policies:
+Preserved and tested:
 
-- Older observation windows do not replace newer ones.
-- Same-window play counts can advance under append-only assumptions.
-- Same-window skip-rate updates compare underlying counts.
-- A decreasing rate can be a valid correction.
+- Older observation windows never replace newer ones.
+- Same-window play counts advance under append-only assumptions.
+- Same-window skip-rate updates compare the underlying counts. A decreasing
+  rate can be a valid correction.
 - Incomparable count vectors fail explicitly.
 - Independent computations use separate generations or namespaces.
 
-The observed Feast 0.66.0 default Redis path skips equal-timestamp writes.
-Therefore, unchanged Feast push is not assumed to support provisional
-same-window corrections.
+Feast 0.66.0's default Redis path was observed to skip equal-timestamp writes,
+so an unchanged Feast push is not assumed to support provisional same-window
+corrections. Do not disable deduplication globally and do not alter observation
+timestamps to force updates through. Any replacement store must pass the
+existing correction, concurrency and replay tests first.
 
-Do not disable deduplication globally or modify observation timestamps
-to force updates through.
-
-Any future replacement must pass the existing correction, concurrency,
-and replay tests before adoption.
+---
 
 ## 8. Historical publication and recovery
 
-The first historical streaming integration must declare:
+The first streaming-history integration must declare: update identity and
+ordering scope, durable source retention, snapshot or commit boundaries,
+publication failure behavior, replay and dedupe behavior, and which timestamp
+publication evidence supports.
 
-- Update identity and ordering scope.
-- Durable source retention requirements.
-- Snapshot or commit boundaries.
-- Publication failure behavior.
-- Replay and deduplication behavior.
-- Which timestamp is supported by publication evidence.
+- Do not claim atomic Kafka, Redis and history publication.
+- If a sink succeeds but recording its publication fails, the discrepancy must
+  be observable and reconciled. Earlier availability is never invented
+  retroactively.
+- A completed historical dataset is immutable and referenced by a manifest. An
+  incomplete output directory is not an accepted dataset.
 
-Do not claim atomic Kafka/Redis/historical publication.
-
-If a sink succeeds but recording its publication fails, the discrepancy
-must be observable and reconciled. Its earlier availability must not be
-invented retrospectively.
-
-Prediction logs capture the feature values actually consumed.
-
-A completed historical dataset is immutable and referenced by a manifest.
-An incomplete output directory is not an accepted dataset.
+---
 
 ## 9. Consumer experience
 
-Initial interfaces are a Python API and CLI, not a new network service.
+- Training requests provide entity keys and prediction timestamps. Results
+  include selected feature versions and dataset provenance.
+- Online responses include value, observation time, freshness status and
+  diagnostic identifiers. Missing, stale and backend-error stay distinct. Never
+  substitute zero for missing.
+- Mixed batch and stream reads are **not** atomic cross-store snapshots. The
+  consumer gets per-feature timestamps and an explicit staleness policy.
+- Training output is partitioned and batch-readable, never one giant Pandas frame.
+- One notebook demonstrates discovery, dataset construction, evaluation and
+  online lookup.
 
-Training requests provide entity keys and prediction timestamps.
-Results include selected feature versions and dataset provenance.
-
-Online responses include values, observation times, freshness status,
-and the identifiers needed for diagnosis.
-
-Missing, stale, and backend-error states remain distinct.
-Do not silently substitute zero for missing features.
-
-Mixed batch/stream reads are not atomic cross-store snapshots.
-The consumer receives per-feature timestamps and an explicit policy for
-allowed staleness and time differences.
-
-Training output is partitioned and batch-readable.
-Do not require loading the entire dataset into one Pandas frame.
-
-One notebook demonstrates feature discovery, dataset construction,
-evaluation, and online lookup.
+---
 
 ## 10. Runtime compatibility
 
-The existing batch CI uses Python 3.13.
-The demonstrated Flink runtime uses Python 3.11 and Flink 1.20.3.
+Batch CI runs Python 3.13. The demonstrated Flink runtime uses Python 3.11 and
+Flink 1.20.3. Keep separate runtime environments until compatibility is tested,
+do not install the full dependency set into every container, and pin tested
+combinations. A broad version range is not compatibility evidence.
 
-Preserve separate runtime environments until compatibility is tested.
-Do not install the full platform dependency set into every container.
-
-Pin tested runtime combinations during integration.
-A broad package version range is not compatibility evidence.
+---
 
 ## 11. Operational evidence
 
-Measure rather than assume:
+Measure rather than assume: input rate and consumer lag, invalid, duplicate
+and too-late events, update latency and observation age, Redis write outcomes
+and conflicts, publication failures, checkpoint and recovery behavior, online
+lookup p50/p95/p99, and dataset read throughput.
 
-- Input rate and consumer lag.
-- Invalid, duplicate, and too-late events.
-- Feature update latency and observation age.
-- Redis write outcomes and conflicts.
-- Historical publication failures.
-- Checkpoint and recovery behavior.
-- Online lookup p50, p95, and p99 latency.
-- Historical dataset read throughput.
+Observation age, pipeline lag and publication latency are different metrics.
+Watermark-dependent output does not guarantee wall-clock refresh after input
+goes idle, so stale values must become visibly stale or expire under an explicit
+serving policy. Benchmarks record hardware, versions, workload, concurrency,
+errors and resource usage. Initial measurements set targets. They do not
+retroactively prove an SLO.
 
-Observation age, pipeline lag, and publication latency are different
-metrics and must be reported separately.
+---
 
-Watermark-dependent output does not guarantee wall-clock refresh after
-input becomes idle. Stale values must become visibly stale or expire
-under an explicit serving policy.
+## 12. Delivery stages
 
-Benchmarks record hardware, versions, workload, concurrency, errors,
-and resource usage. Initial measurements establish targets; they do
-not retroactively prove an SLO.
+```mermaid
+flowchart LR
+    A[A: Baseline and<br/>compatibility]:::done --> B[B: First streaming<br/>vertical slice]:::done
+    B --> C[C: Corrections and<br/>historical publication]:::wip
+    C --> D[D: Mixed-feature<br/>ML workflow]:::plan
+    D --> E[E: Operations and<br/>application release]:::plan
 
-## 12. Acceptance demonstration
+    classDef done fill:#d4edda,stroke:#28a745,color:#000
+    classDef wip fill:#fff3cd,stroke:#e0a800,color:#000
+    classDef plan fill:#e2e3e5,stroke:#6c757d,color:#000
+```
 
-The integrated demonstration must:
+| Stage | Content | Status |
+|---|---|---|
+| A | Preserve released batch behavior, inventory dependencies, record import provenance | Done |
+| B | Integrate play-count slice, validation-to-online behavior, common read interface | Done |
+| C | Skip-rate and late corrections done. Streaming history, published-as-of retrieval, availability boundaries open | In progress |
+| D | Label audit, mixed datasets, batch-only vs batch-plus-stream comparison, model-backed inference | Planned |
+| E | Metrics, recovery drills, benchmarks, clean-clone demo, notebook, reproducible release | Planned |
 
-1. Start from a documented clean environment.
-2. Generate a versioned, compatible event dataset.
-3. Build and validate the existing batch feature store.
-4. Run validation and a selected streaming feature job.
-5. Publish and retrieve streaming online values.
-6. Demonstrate a valid late correction and duplicate handling.
-7. Persist accepted streaming history with explicit time semantics.
-8. Build an immutable mixed-feature training dataset.
-9. Train and evaluate a baseline with time-based splits.
-10. Load the model and predict using online platform features.
-11. Log the consumed feature vector and metadata.
-12. Produce a machine-readable evidence report.
+Bounded later extensions: cloud staging deployment, Metaflow orchestration,
+MLflow tracking, embedding retrieval. Metaflow and MLflow form Phase 3 of the
+platform. They do not block the first integrated vertical slice.
 
-A failure demonstration separately verifies a declared recovery boundary
-and reconciles the resulting state.
+---
 
-The happy-path demo is not an end-to-end exactly-once proof.
+## 13. Acceptance demonstration
 
-## 13. Migration sequence
+```mermaid
+flowchart LR
+    G[Versioned<br/>event dataset] --> BF[Batch store<br/>built and validated]
+    BF --> ST[Validation and<br/>stream job]
+    ST --> ON[Online values<br/>published]
+    ON --> LC[Late correction<br/>and duplicates]
+    LC --> HI[Accepted history<br/>persisted]
+    HI --> DS[Immutable mixed<br/>training dataset]
+    DS --> TR[Train and evaluate<br/>time-based split]
+    TR --> IN[Model-backed<br/>online prediction]
+    IN --> LOG[Consumed feature<br/>vector logged]
+    LOG --> REP[Machine-readable<br/>evidence report]
+```
 
-Stage A: Baseline and compatibility
-- Preserve the released batch behavior.
-- Inventory implementations and dependency constraints.
-- Record source commits for imported streaming components.
-
-Stage B: First streaming vertical slice
-- Integrate play-count contracts, reference, job, store, and tests.
-- Verify validation-to-online behavior inside FeatureForge.
-- Add a common online read interface.
-
-Stage C: Corrections and historical publication
-- Integrate skip-rate contracts and tests.
-- Define and test streaming history publication and retrieval.
-- Verify late corrections, replay, and availability boundaries.
-
-Stage D: Existing ML workflow extension
-- Audit labels and source coverage.
-- Build mixed-feature datasets.
-- Compare batch-only and batch-plus-stream models.
-- Add model-backed online inference.
-
-Stage E: Operational and application release
-- Add metrics, recovery evidence, and benchmarks.
-- Provide a clean-clone demo and practitioner notebook.
-- Publish architecture, limitations, and a reproducible release.
-
-Later bounded extensions may include a cloud staging deployment,
-Metaflow orchestration, MLflow tracking, or embedding retrieval.
-They do not block the first integrated vertical slice.
+Start from a documented clean environment. A separate failure demonstration
+verifies a declared recovery boundary and reconciles the resulting state. The
+happy-path demo is not an end-to-end exactly-once proof.
