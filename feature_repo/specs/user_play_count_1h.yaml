@@ -1,0 +1,14 @@
+name: user_play_count_1h
+version: 1
+owner: personalization-team
+description: Number of plays in the last hour
+entity: user_id
+source: interaction-events.validated.v1
+aggregations:
+  - {name: play_count, op: count, filter: "event_type == 'play'"}
+window: {size: 1h, slide: 1m, boundary: right_closed}
+lateness: {watermark_delay: 10m, allowed: 30m}
+dedupe: {key: event_id, ttl: 24h}
+online: {store: redis, ttl: 2h, update_policy: append_only}
+offline: {store: iceberg, table: features.user_play_count_1h}
+freshness_slo: 5m
