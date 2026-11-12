@@ -73,3 +73,23 @@ def test_append_only_requires_exactly_one_aggregation():
     data["online"]["update_policy"] = "append_only"
     with pytest.raises(ValidationError, match="exactly one"):
         FeatureSpec.model_validate(data)
+
+
+def test_window_replace_allows_non_count_operators():
+    data = _skip_rate()
+    data["aggregations"] = [{"name": "mean", "op": "avg", "column": "play_seconds"}]
+    data["derived"] = {}
+    data["online"]["update_policy"] = "window_replace"
+    assert FeatureSpec.model_validate(data).aggregations[0].op.value == "avg"
+
+
+def test_last_k_requires_k_and_k_requires_last_k():
+    data = _skip_rate()
+    data["online"]["update_policy"] = "window_replace"
+    data["derived"] = {}
+    data["aggregations"] = [{"name": "recent", "op": "last_k", "column": "play_seconds"}]
+    with pytest.raises(ValidationError, match="needs 'k'"):
+        FeatureSpec.model_validate(data)
+    data["aggregations"] = [{"name": "n", "op": "count", "k": 2}]
+    with pytest.raises(ValidationError, match="only valid for last_k"):
+        FeatureSpec.model_validate(data)

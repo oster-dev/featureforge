@@ -98,6 +98,7 @@ class Op(StrEnum):
 class UpdatePolicy(StrEnum):
     APPEND_ONLY = "append_only"
     COMPONENTWISE_MONOTONIC = "componentwise_monotonic"
+    WINDOW_REPLACE = "window_replace"
 
 
 class _Strict(BaseModel):
@@ -205,11 +206,13 @@ class FeatureSpec(_Strict):
         if self.online.ttl < self.window.size:
             raise ValueError("online.ttl must be >= window.size")
 
-        if any(a.op is not Op.COUNT for a in self.aggregations):
+        policy = self.online.update_policy
+        monotone = policy in (UpdatePolicy.APPEND_ONLY, UpdatePolicy.COMPONENTWISE_MONOTONIC)
+        if monotone and any(a.op is not Op.COUNT for a in self.aggregations):
             raise ValueError(
-                f"update_policy {self.online.update_policy.value} requires count-only "
-                "aggregations; other operators need an explicit policy (see ADR-008)"
+                f"update_policy {policy.value} requires count-only aggregations; "
+                "use window_replace for other operators (see ADR-008)"
             )
-        if self.online.update_policy is UpdatePolicy.APPEND_ONLY and len(self.aggregations) != 1:
+        if policy is UpdatePolicy.APPEND_ONLY and len(self.aggregations) != 1:
             raise ValueError("append_only requires exactly one aggregation")
         return self
