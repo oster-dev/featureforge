@@ -54,7 +54,9 @@ def job_root_cause(job_id: str) -> str:
     root = exceptions.get("root-exception")
     if not root and entries:
         root = entries[0].get("stacktrace")
-    return (root or "<no exception recorded>")[:4000]
+    lines = (root or "<no exception recorded>").splitlines()
+    relevant = [line for line in lines if not line.lstrip().startswith(("at ", "..."))]
+    return "\n".join(relevant)[:6000]
 
 
 def cancel_job(job_id: str) -> None:
@@ -79,15 +81,37 @@ def cancel_job(job_id: str) -> None:
         print(f"Job {job_id} root cause:\n{job_root_cause(job_id)}")
 
 
-def wait_for_free_slot(timeout: float = 180.0) -> None:
+def fresh_taskmanager(timeout: float = 180.0) -> None:
+    """Recreate the TaskManager so every Flink job starts on a clean worker.
+
+    Repeated PyFlink job submissions degrade a long-lived TaskManager until new
+    jobs fail inside the Kafka source chain; a clean container per test avoids
+    that cross-test coupling.
+    """
+    previous = {manager["id"] for manager in flink_api("taskmanagers")["taskmanagers"]}
+    run_command(
+        "docker",
+        "compose",
+        "up",
+        "-d",
+        "--force-recreate",
+        "--no-deps",
+        "taskmanager",
+    )
     deadline = time.monotonic() + timeout
-    last = None
+    managers = None
     while time.monotonic() < deadline:
-        last = flink_api("overview")
-        if last["slots-available"] >= 1:
+        try:
+            managers = flink_api("taskmanagers")["taskmanagers"]
+        except OSError:
+            time.sleep(2)
+            continue
+        ids = {manager["id"] for manager in managers}
+        free = sum(manager["freeSlots"] for manager in managers)
+        if ids and not ids & previous and free >= 1:
             return
         time.sleep(2)
-    raise AssertionError(f"No free Flink task slot became available; overview={last}")
+    raise AssertionError(f"No fresh TaskManager registered; taskmanagers={managers}")
 
 
 @pytest.mark.integration
@@ -136,7 +160,7 @@ def test_skip_rate_stream_contract(
 ) -> None:
     from confluent_kafka import Consumer, Producer, TopicPartition
 
-    wait_for_free_slot()
+    fresh_taskmanager()
 
     namespace = uuid4().hex
     prefix = f"test.skip-rate.{namespace}"
