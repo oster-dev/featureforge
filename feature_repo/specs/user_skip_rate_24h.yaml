@@ -1,0 +1,17 @@
+name: user_skip_rate_24h
+version: 1
+owner: personalization-team
+description: Share of skips among plays and skips in the last 24h
+entity: user_id
+source: interaction-events.validated.v1
+aggregations:
+  - {name: play_count, op: count, filter: "event_type == 'play'"}
+  - {name: skip_count, op: count, filter: "event_type == 'skip'"}
+derived:
+  skip_rate: "skip_count / (play_count + skip_count) if (play_count + skip_count) > 0 else 0.0"
+window: {size: 24h, slide: 1m, boundary: right_closed}
+lateness: {watermark_delay: 10m, allowed: 30m}
+dedupe: {key: event_id, ttl: 48h}
+online: {store: redis, ttl: 25h, update_policy: componentwise_monotonic}
+offline: {store: iceberg, table: features.user_skip_rate_24h}
+freshness_slo: 5m
