@@ -35,7 +35,7 @@ Related: [README](README.md) · [Architecture](ARCHITECTURE.md) ·
 
 | Item | State |
 |---|---|
-| WP1: declarative spec and generic engine | Stages 1 and 2 delivered. Stage 3 started: golden fixture and spec-reference parity done, generic job next. Stages 4 to 6 below. |
+| WP1: declarative spec and generic engine | Stages 1 and 2 delivered. Stage 3 started: golden fixture, spec-reference parity and a Flink job plan derived from the spec are done, the generic job itself is next. Stages 4 to 6 below. |
 | Streaming history and published-as-of retrieval (WP2) | Not started. Needs the time-model decision (`event_time` vs. `published_at`). |
 
 ### WP1 stages
@@ -44,7 +44,7 @@ Related: [README](README.md) · [Architecture](ARCHITECTURE.md) ·
 |---|---|---|
 | 1 | ADR-008, spec model, validation, two specs | **Done** |
 | 2 | Generic reference from a spec, parity with the hand-written references and the play-count golden fixture | **Done** |
-| 3 | Generic Flink job (`count`, `ratio`) matching the hand-written jobs. Skip-rate golden fixture and spec-reference parity against it are done. The generic job is open. | In progress |
+| 3 | Generic Flink job (`count`, `ratio`) matching the hand-written jobs. Done: skip-rate golden fixture, spec-reference parity, job plan from a spec (count only, rejects other operators). Open: the Flink job and its integration test. | In progress |
 | 4 | Migrate both features, delete the hand-written jobs when parity is green, spec-driven store policies | Planned |
 | 5 | Further operators in Flink, composite keys, Spark backfill | Planned |
 | 6 | Two new features by YAML only | Planned |
@@ -71,7 +71,7 @@ workflow (Metaflow, MLflow, registry, rollback).
 | Single-partition Kafka topics only | Partition scaling is not demonstrated. |
 | Flink Kafka sinks are `AT_LEAST_ONCE` | No exactly-once claim. |
 | TaskManager failure in long CI runs is isolated, not explained | A fresh TaskManager per module isolates it. The metaspace is logged per module to test a class-loading-leak hypothesis. Root cause open. |
-| Specs are validated and evaluated by the reference, but no job or store is spec-driven yet | Jobs, stores and Spark features are still hand-written. |
+| Specs are validated and evaluated by the reference, but no job or store is spec-driven yet | Jobs, stores and Spark features are still hand-written. The job plan derived from a spec is not yet used by a running job. |
 | `online.ttl` in the specs is declarative only | The current Redis stores write keys without expiry. Enforcement arrives when stores become spec-driven. |
 | `window_replace` update policy has no store | Non-count operators cannot be served online yet. |
 | `approx_distinct` is exact in the reference | The accepted error bound of an engine implementation is not defined yet. |
