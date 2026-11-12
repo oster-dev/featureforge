@@ -1,6 +1,6 @@
 # ADR-008: Declarative feature specification
 
-Status: Proposed · Date: 2026-11-12
+Status: Accepted · Date: 2026-11-12
 
 ## Context
 
