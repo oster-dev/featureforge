@@ -25,8 +25,9 @@ Related: [README](README.md) · [Architecture](ARCHITECTURE.md) ·
 | Late data | Late correction of an emitted window, too-late routing, both skip-rate correction directions | `test_user_play_count_late_events.py`, `test_user_skip_rate_job.py` |
 | Replay and conflicts | Replay idempotency, event-identity conflict detection | `test_user_play_count_replay_idempotency.py` |
 | Unified read access | Batch and streaming play count through one client, explicit missing, freshness and non-atomic metadata | `src/featureforge/online.py`, `test_unified_online.py` |
+| Skip-rate golden fixture | Deterministic event file with hand-calculated expected values: both window edges, a duplicate delivery, ignored event types, a second user, expiry to a zero denominator. Checked against the hand-written reference only. | `fixtures/streaming/user_skip_rate_24h_v1.jsonl`, `tests/unit/test_streaming_user_skip_rate_golden.py` |
 | Feature spec model (WP1, stage 1) | Validated declarative spec: windows, lateness, dedupe, update policies, safe expressions. The loader rejects fields that are not in the event contract. Both existing features expressed as specs. | `src/featureforge/spec/`, `feature_repo/specs/`, `tests/unit/test_spec_model.py` |
-| Spec reference (WP1, stage 2) | Exact event-time reference evaluated directly from a spec: all operators, composite keys, missing-value rules, event-field check. Matches both hand-written references on randomized inputs at window boundaries and on the golden fixture. | `src/featureforge/spec/reference.py`, `tests/unit/test_spec_reference.py` |
+| Spec reference (WP1, stage 2) | Exact event-time reference evaluated directly from a spec: all operators, composite keys, missing-value rules, event-field check. Matches both hand-written references on randomized inputs at window boundaries and the play-count golden fixture. | `src/featureforge/spec/reference.py`, `tests/unit/test_spec_reference.py` |
 | CI | Baseline, Python 3.11/3.12 compatibility job, serving integration, streaming Flink integration with a fresh TaskManager per module, nightly run, concurrency and timeouts, Dependabot for Actions | `.github/workflows/ci.yml`, `scripts/ci/run_flink_integration.sh` |
 | Documentation | Architecture, blueprint, demo guide with batch, streaming and feature-spec walkthroughs, ADRs, AWS production profile (design only) | `docs/` |
 
@@ -34,7 +35,7 @@ Related: [README](README.md) · [Architecture](ARCHITECTURE.md) ·
 
 | Item | State |
 |---|---|
-| WP1: declarative spec and generic engine | Stages 1 and 2 delivered. Stages 3 to 6 below. |
+| WP1: declarative spec and generic engine | Stages 1 and 2 delivered. Stage 3 started: skip-rate golden fixture done, generic job next. Stages 4 to 6 below. |
 | Streaming history and published-as-of retrieval (WP2) | Not started. Needs the time-model decision (`event_time` vs. `published_at`). |
 
 ### WP1 stages
@@ -42,8 +43,8 @@ Related: [README](README.md) · [Architecture](ARCHITECTURE.md) ·
 | Stage | Content | State |
 |---|---|---|
 | 1 | ADR-008, spec model, validation, two specs | **Done** |
-| 2 | Generic reference from a spec, parity with the hand-written references and the golden fixture | **Done** |
-| 3 | Generic Flink job (`count`, `ratio`) matching the hand-written jobs, with a skip-rate golden fixture | Next |
+| 2 | Generic reference from a spec, parity with the hand-written references and the play-count golden fixture | **Done** |
+| 3 | Generic Flink job (`count`, `ratio`) matching the hand-written jobs. Skip-rate golden fixture is done. Spec-reference check against it and the generic job are open. | In progress |
 | 4 | Migrate both features, delete the hand-written jobs when parity is green, spec-driven store policies | Planned |
 | 5 | Further operators in Flink, composite keys, Spark backfill | Planned |
 | 6 | Two new features by YAML only | Planned |
@@ -74,7 +75,7 @@ workflow (Metaflow, MLflow, registry, rollback).
 | `online.ttl` in the specs is declarative only | The current Redis stores write keys without expiry. Enforcement arrives when stores become spec-driven. |
 | `window_replace` update policy has no store | Non-count operators cannot be served online yet. |
 | `approx_distinct` is exact in the reference | The accepted error bound of an engine implementation is not defined yet. |
-| No skip-rate golden fixture | Skip-rate parity runs against the hand-written reference, not against stored values. |
+| Skip-rate golden fixture is not yet used by the spec reference or a Flink job | Only the hand-written reference is checked against its stored values. |
 | Unified client does not read `user_skip_rate_24h` | Skip rate is verified through its own pipeline tests. |
 | No latency or throughput numbers | No benchmark exists yet. |
 | Older joined and replay tests lack topic cleanup and subprocess timeouts | Tracked in [streaming provenance](docs/streaming-migration.md#open-test-maintenance-items). |
