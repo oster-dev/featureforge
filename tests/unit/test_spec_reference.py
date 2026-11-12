@@ -1,3 +1,4 @@
+import random
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from uuid import UUID
@@ -9,13 +10,22 @@ from featureforge.spec.loader import load_spec
 from featureforge.spec.model import FeatureSpec
 from featureforge.spec.reference import evaluate_spec, validate_event_fields
 from featureforge.streaming.contracts.events import InteractionEventV1
-from featureforge.streaming.reference.user_play_count import EventIdentityConflictError
+from featureforge.streaming.reference.user_play_count import (
+    EventIdentityConflictError,
+    count_user_plays_1h,
+)
+from featureforge.streaming.reference.user_skip_rate import calculate_user_skip_rate_24h
 
 SPECS = Path(__file__).resolve().parents[2] / "feature_repo" / "specs"
 SKIP = load_spec(SPECS / "user_skip_rate_24h.yaml")
 PLAY = load_spec(SPECS / "user_play_count_1h.yaml")
 OBSERVATION = datetime(2026, 1, 2, 12, tzinfo=UTC)
 USER = "user_000001"
+USERS = ["user_000001", "user_000002", "user_000003"]
+GOLDEN_FIXTURE = (
+    Path(__file__).resolve().parents[2] / "fixtures" / "streaming" / "user_play_count_1h_v1.jsonl"
+)
+GOLDEN_OBSERVATION = datetime(2026, 1, 1, 12, tzinfo=UTC)
 
 
 def make_event(event_id: int = 1, event_type: str = "skip", **changes: object):
@@ -265,3 +275,97 @@ def test_unknown_column_is_rejected():
     data["aggregations"] = [{"name": "total", "op": "sum", "column": "watch_seconds"}]
     with pytest.raises(ValueError, match="unknown event fields"):
         validate_event_fields(FeatureSpec.model_validate(data))
+
+
+def _random_events(seed: int, count: int = 400):
+    rng = random.Random(seed)
+    types = ["play", "skip", "impression", "complete"]
+    events = []
+    for index in range(1, count + 1):
+        stamp = OBSERVATION + timedelta(seconds=rng.randint(-30 * 3600, 600))
+        events.append(
+            make_event(
+                index,
+                rng.choice(types),
+                event_time=stamp,
+                ingested_at=stamp + timedelta(seconds=rng.randint(0, 7200)),
+                user_id=rng.choice(USERS),
+            )
+        )
+    for original in rng.sample(events, 40):
+        events.append(
+            original.model_copy(update={"ingested_at": original.ingested_at + timedelta(minutes=5)})
+        )
+    rng.shuffle(events)
+    return events
+
+
+def _observation_times(events, seed: int):
+    rng = random.Random(seed + 100)
+    times = [OBSERVATION, OBSERVATION + timedelta(hours=1)]
+    for event in rng.sample(events, 8):
+        times += [
+            event.event_time,
+            event.event_time + timedelta(hours=1),
+            event.event_time + timedelta(hours=24),
+        ]
+    return times
+
+
+@pytest.mark.parametrize("seed", [1, 2, 3, 4, 5])
+def test_skip_rate_matches_the_hand_written_reference(seed):
+    events = _random_events(seed)
+    for observation in _observation_times(events, seed):
+        for user in USERS:
+            expected = calculate_user_skip_rate_24h(
+                events, user_id=user, observation_time=observation
+            )
+            assert skip_rate(events, observation, user) == expected
+
+
+@pytest.mark.parametrize("seed", [1, 2, 3, 4, 5])
+def test_play_count_matches_the_hand_written_reference(seed):
+    events = _random_events(seed)
+    for observation in _observation_times(events, seed):
+        for user in USERS:
+            expected = count_user_plays_1h(events, user_id=user, observation_time=observation)
+            actual = evaluate_spec(
+                PLAY, events, entity={"user_id": user}, observation_time=observation
+            )
+            assert actual.values["play_count"] == expected
+
+
+def test_conflicts_raise_in_both_implementations():
+    events = [make_event(1, "skip"), make_event(1, "play")]
+    with pytest.raises(EventIdentityConflictError):
+        calculate_user_skip_rate_24h(events, user_id=USER, observation_time=OBSERVATION)
+    with pytest.raises(EventIdentityConflictError):
+        skip_rate(events)
+
+
+@pytest.fixture
+def golden_events():
+    lines = GOLDEN_FIXTURE.read_text(encoding="utf-8").splitlines()
+    return [InteractionEventV1.model_validate_json(line) for line in lines if line.strip()]
+
+
+@pytest.mark.parametrize(
+    ("user_id", "expected"),
+    [("user_000001", 3), ("user_000002", 1), ("user_unknown", 0)],
+)
+def test_golden_play_counts_match_the_fixture(golden_events, user_id, expected):
+    result = evaluate_spec(
+        PLAY,
+        golden_events,
+        entity={"user_id": user_id},
+        observation_time=GOLDEN_OBSERVATION,
+    )
+    assert result.values["play_count"] == expected
+
+
+@pytest.mark.parametrize("user_id", ["user_000001", "user_000002", "user_unknown"])
+def test_skip_rate_on_the_golden_fixture_matches_the_hand_written_reference(golden_events, user_id):
+    expected = calculate_user_skip_rate_24h(
+        golden_events, user_id=user_id, observation_time=GOLDEN_OBSERVATION
+    )
+    assert skip_rate(golden_events, GOLDEN_OBSERVATION, user_id) == expected
