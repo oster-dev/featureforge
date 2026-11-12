@@ -3,8 +3,7 @@
 FeatureForge computes features once and serves them consistently for offline
 training and low-latency online inference, from batch and streaming sources.
 
-This document describes what is **implemented and tested today**. Planned work
-is isolated in [Roadmap](#roadmap) and in [STATUS.md](STATUS.md).
+This document describes what is **implemented and tested today**. 
 
 ---
 
