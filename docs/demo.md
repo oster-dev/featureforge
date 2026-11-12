@@ -4,11 +4,11 @@ Three reviewer walkthroughs, each runnable from a clean checkout:
 
 1. **Batch path:** synthetic data to Feast-materialized online features.
 2. **Streaming path:** Kafka to Flink to Redis, verified end to end.
-3. **Feature spec:** a declarative spec validated and evaluated against the golden fixture.
+3. **Feature spec:** a declarative spec validated, evaluated against golden fixtures and run as a generic Flink job.
 
-Expected local runtime: batch about 2 minutes, the spec demo a few seconds,
-streaming several minutes. In CI each Flink test module starts from a fresh
-TaskManager, and the skip-rate suite recreates it per test.
+Expected local runtime: batch about 2 minutes, the spec evaluation a few seconds,
+the generic job about a minute, streaming several minutes. In CI each Flink test
+module starts from a fresh TaskManager, and the skip-rate suites recreate it per test.
 
 ```mermaid
 flowchart LR
@@ -19,7 +19,8 @@ flowchart LR
         B1[Kafka events] --> B2[Flink validate<br/>and route] --> B3[Flink features<br/>play count, skip rate] --> B4[Materializer] --> B5[Redis] --> B6[Unified online<br/>client]
     end
     subgraph C["Demo C: feature spec"]
-        C1[YAML spec] --> C2[Validate<br/>and field check] --> C3[Exact reference<br/>evaluation] --> C4[Golden fixture<br/>and hand-written<br/>references]
+        C1[YAML spec] --> C2[Validate<br/>and field check] --> C3[Exact reference<br/>evaluation] --> C4[Golden fixtures<br/>and hand-written<br/>references]
+        C2 --> C5[Generic Flink job<br/>for skip rate] --> C4
     end
 ```
 
@@ -86,7 +87,7 @@ generation contracts evolve.
 ### Verify the layers
 
 ```bash
-docker exec featureforge-redis redis-cli ping          # PONG
+docker compose exec -T redis redis-cli ping            # PONG
 find output/offline_store -name features.parquet       # six partitions per view
 pytest -v tests/integration/test_online_serving.py     # 5 passed
 ```
@@ -155,7 +156,10 @@ See [Known limits](../ARCHITECTURE.md#known-limits).
 ## Demo C: feature spec
 
 Features can be described declaratively (see
-[ADR-008](adr/ADR-008-feature-spec-design.md)). No infrastructure is needed.
+[ADR-008](adr/ADR-008-feature-spec-design.md)). Parts 1 to 3 need no
+infrastructure. Part 4 needs the streaming stack from Demo B.
+
+### 1. Validate the specs
 
 Validate the shipped specs, including a check that every referenced event field
 exists in the event contract:
@@ -170,6 +174,8 @@ Expected output:
 ✓ feature_repo/specs/user_play_count_1h.yaml: user_play_count_1h v1
 ✓ feature_repo/specs/user_skip_rate_24h.yaml: user_skip_rate_24h v1
 ```
+
+### 2. Evaluate the play-count spec on its golden fixture
 
 Evaluate the play-count spec on the golden fixture at `2026-01-01T12:00Z`:
 
@@ -207,10 +213,84 @@ that agreement on randomized inputs placed exactly on window boundaries:
 pytest -v tests/unit/test_spec_reference.py
 ```
 
+### 3. Evaluate the skip-rate spec on its golden fixture
+
+The skip-rate fixture holds ten events with hand-calculated expected values:
+events exactly on both window edges, a duplicate delivery, `impression` and
+`complete` events that count toward nothing, a second user, and expiry down to
+an empty window.
+
+```bash
+python - <<'PY'
+from datetime import UTC, datetime
+from pathlib import Path
+
+from featureforge.spec.loader import load_spec
+from featureforge.spec.reference import evaluate_spec
+from featureforge.streaming.contracts.events import InteractionEventV1
+
+spec = load_spec("feature_repo/specs/user_skip_rate_24h.yaml")
+lines = Path("fixtures/streaming/user_skip_rate_24h_v1.jsonl").read_text().splitlines()
+events = [InteractionEventV1.model_validate_json(line) for line in lines if line.strip()]
+cases = [
+    ("user000001", datetime(2026, 1, 2, 12, 0, 0, tzinfo=UTC)),
+    ("user000001", datetime(2026, 1, 2, 12, 0, 1, tzinfo=UTC)),
+    ("user000001", datetime(2026, 1, 2, 18, 0, 0, tzinfo=UTC)),
+    ("user000001", datetime(2026, 1, 3, 12, 0, 1, tzinfo=UTC)),
+    ("user000002", datetime(2026, 1, 2, 12, 0, 0, tzinfo=UTC)),
+]
+for user, at in cases:
+    result = evaluate_spec(spec, events, entity={"user_id": user}, observation_time=at)
+    print(user, at.isoformat(), result.values)
+PY
+```
+
+Expected output:
+
+```text
+user000001 2026-01-02T12:00:00+00:00 {'play_count': 2, 'skip_count': 2, 'skip_rate': 0.5}
+user000001 2026-01-02T12:00:01+00:00 {'play_count': 1, 'skip_count': 3, 'skip_rate': 0.75}
+user000001 2026-01-02T18:00:00+00:00 {'play_count': 1, 'skip_count': 2, 'skip_rate': 0.6666666666666666}
+user000001 2026-01-03T12:00:01+00:00 {'play_count': 0, 'skip_count': 0, 'skip_rate': 0.0}
+user000002 2026-01-02T12:00:00+00:00 {'play_count': 0, 'skip_count': 1, 'skip_rate': 1.0}
+```
+
+Between the first and second line, one event leaves the window on its lower
+edge and one enters on its upper edge, and the rate moves from `0.5` to `0.75`.
+The tests that hold these values, including a sweep over every event boundary
+against the hand-written reference:
+
+```bash
+pytest -v tests/unit/test_streaming_user_skip_rate_golden.py tests/unit/test_spec_golden_parity.py   # 14 passed
+```
+
+### 4. Run the generic Flink job on the fixture
+
+The generic job reads the skip-rate spec and builds the windowed computation
+from it. The test sends the fixture through the job and compares **every**
+emitted window with the spec reference and the hand-written reference:
+
+```bash
+docker compose up -d --build
+pytest -v -m integration tests/integration/test_feature_from_spec_job.py   # 1 passed
+```
+
+The test also requires five hand-calculated windows, no window emitted twice,
+and an empty late topic. A spec outside what the job supports, such as an
+`avg` aggregation or a composite key, is rejected with a clear error before the
+job starts:
+
+```bash
+pytest -v tests/unit/test_spec_flink_plan.py   # 13 passed
+```
+
 ### What this demo does not prove
 
-- No Flink job, Spark feature or Redis store is driven by a spec yet. The
-  hand-written implementations are still the executed ones.
+- The generic job is verified for `user_skip_rate_24h` on time-ordered input.
+  Late corrections, too-late routing, replay, the Redis path, recovery and a
+  single-counter spec (play count) are not re-proven for it.
+- The production Flink jobs and the Redis stores are still the hand-written
+  ones. No Spark feature or store is driven by a spec.
 - `online.ttl` in a spec is declarative. The current stores write without expiry.
 
 ---
@@ -225,7 +305,7 @@ scheduled nightly run on `main` repeats them.
 | Baseline lint and test | Clean install, Ruff, all infrastructure-free tests |
 | Python compatibility | The infrastructure-free suite on Python 3.11 and 3.12 |
 | Serving integration | Redis, Feast, materialization, online parity and ranking |
-| Streaming integration | Full Compose stack, joined Kafka, Flink and Redis tests, each Flink test module on a fresh TaskManager |
+| Streaming integration | Full Compose stack, joined Kafka, Flink and Redis tests including the generic spec-driven job, each Flink test module on a fresh TaskManager |
 
 Current status: see the badge in the [README](../README.md) and the
 [Actions page](https://github.com/oster-dev/featureforge/actions).
@@ -244,11 +324,13 @@ runs them with zero skips.
 
 | Symptom | Fix |
 |---|---|
-| Redis unavailable | `docker compose down && docker compose up -d`, then `docker exec featureforge-redis redis-cli ping` |
+| Redis unavailable | `docker compose down && docker compose up -d`, then `docker compose exec -T redis redis-cli ping` |
 | Serving tests skipped | Redis reachable, `feast apply` run, canonical partitions present, features materialized (see below) |
 | Materialization blocked | Inspect `find output -path "*materialization_manifests*" -name "*.json"`, then the [runbook](runbooks/failed-materialization.md) |
 | Streaming tests cannot connect | `docker compose ps`, Redis published on `127.0.0.1:6379`, nothing else on port 6379 |
 | Flink job fails or hangs | `docker compose logs jobmanager --tail 100` and `docker compose logs taskmanager --tail 100` |
+| Generic job fails with `ModuleNotFoundError` | A dependency is missing in `docker/flink/Dockerfile`. Rebuild with `docker compose up -d --build` |
+| Changed code under `src/` not picked up by Flink | `jobs/` and `feature_repo/specs/` are mounted, `src/` is copied into the image. Rebuild with `docker compose up -d --build` |
 | Spec validation fails | Read the printed field path and message. An unknown event field is reported with the available fields |
 
 Prepare serving explicitly if tests skip:

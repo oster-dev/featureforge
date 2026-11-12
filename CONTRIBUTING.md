@@ -43,9 +43,19 @@ flowchart LR
     D -->|no| E[Open PR]
     D -->|yes| F[Run matching<br/>integration tests]
     F --> E
-    E --> G[All 3 CI jobs green]
+    E --> G[All CI checks green]
     G --> H[Squash merge]
 ```
+
+Create the branch before the first commit and check where you are:
+
+```bash
+git switch -c <type>/<short-name>
+git branch --show-current
+```
+
+Never commit on `main`. A commit made there never reaches GitHub by itself and
+has to be moved to a branch afterwards.
 
 ### Before every commit
 
@@ -57,7 +67,8 @@ git diff --check
 ```
 
 Fix formatting with `ruff format .` and imports with `ruff check --fix .`.
-CI fails on both, and it is the cheapest failure to avoid.
+Run `ruff format .` before `git add`, otherwise the staged version stays
+unformatted. CI fails on both checks, and it is the cheapest failure to avoid.
 
 ### Which integration tests to run
 
@@ -66,6 +77,8 @@ CI fails on both, and it is the cheapest failure to avoid.
 | Batch features, backfill, Spark | `pytest tests/unit/test_spark_features.py tests/unit/test_spark_parquet_features.py` |
 | Feast, materialization, online serving | `docker compose up -d`, `feast apply`, then `pytest tests/integration/test_online_serving.py tests/integration/test_unified_online.py` |
 | Redis store policies | `pytest -m integration tests/integration/test_streaming_redis_online_store*.py tests/integration/test_redis_skip_rate_store.py` |
+| A feature spec, the spec model, reference or job plan | `python -m featureforge.spec.loader feature_repo/specs/*.yaml`, then `pytest tests/unit/test_spec_model.py tests/unit/test_spec_reference.py tests/unit/test_spec_golden_parity.py tests/unit/test_spec_flink_plan.py` |
+| The generic Flink job, `src/`, or `docker/flink/Dockerfile` | `docker compose up -d --build`, then `pytest -v -m integration tests/integration/test_feature_from_spec_job.py` |
 | Flink jobs, contracts, routing, materializers | The full streaming selection below |
 
 Full streaming selection (identical to CI):
@@ -77,6 +90,7 @@ pytest -v -ra -m integration \
   tests/integration/test_streaming_validation_routing.py \
   tests/integration/test_user_play_count_late_events.py \
   tests/integration/test_user_skip_rate_job.py \
+  tests/integration/test_feature_from_spec_job.py \
   tests/integration/test_skip_rate_flink_to_redis.py \
   tests/integration/test_skip_rate_materialization.py \
   tests/integration/test_redis_skip_rate_store.py
@@ -111,6 +125,11 @@ flowchart TD
         S3[Store policy is feature-specific]
         S4[Offset committed after Redis write]
     end
+    subgraph Specs
+        P1[A spec is validated before it runs]
+        P2[One reference is the oracle]
+        P3[Golden values are hand-calculated]
+    end
 ```
 
 **Data**
@@ -126,8 +145,8 @@ flowchart TD
 **Time**
 
 - Feature window: `(t - window, t]`. Label window: `t < event_time <= label_end`.
-- Changing a boundary means updating the reference, Spark, Flink, the
-  feature-time mapper, unit and integration tests, and docs.
+- Changing a boundary means updating the reference, the spec reference, Spark,
+  Flink, the feature-time mapper, unit and integration tests, and docs.
 - Spark: convert timestamps to UTC epoch microseconds before Spark and back
   after collection. Never rely on session timezone alone.
 
@@ -142,6 +161,25 @@ flowchart TD
   late-event behavior and materialization boundary, documented in an ADR.
 - Kafka topic names must not contain colons. Redis key prefixes may.
 
+**Feature specs**
+
+- Define a new feature as a spec in `feature_repo/specs/` first. Further
+  hand-written single features without the spec engine are out of scope, see
+  [STATUS.md](STATUS.md). Store policies are not spec-driven yet, so a new
+  feature still needs its policy tested and documented.
+- A spec must pass `python -m featureforge.spec.loader` before anything runs it.
+  Do not weaken the model validation or the event-field check to make a spec
+  pass. Fix the spec.
+- The spec reference is the oracle. An engine must match it, never the other
+  way round. Changing reference semantics means updating the golden fixtures,
+  the hand-written references and the ADR.
+- An operator outside the set in ADR-008 needs a new ADR. The generic Flink job
+  supports count aggregations and one entity key. Unsupported specs must be
+  rejected with a clear error, not computed approximately.
+- Any new runtime dependency of the Flink job path must be added to
+  `docker/flink/Dockerfile`. The image installs its dependencies explicitly and
+  checks the project imports at build time.
+
 **Failure visibility**
 
 Failures must not look like success: raise a clear exception, return a
@@ -155,16 +193,20 @@ runbook under `docs/runbooks/` for new operational incidents.
 
 | Layer | Location | Purpose |
 |---|---|---|
-| Unit | `tests/unit/` | Contracts, feature math, boundaries, parity, policies |
+| Unit | `tests/unit/` | Contracts, feature math, boundaries, parity, policies, specs |
 | Integration | `tests/integration/` | Multi-component paths on real Redis, Feast, Kafka, Flink |
 | Failure simulation | `tests/failure_simulations/` | Controlled reliability scenarios |
+| Fixtures | `fixtures/` | Deterministic inputs with hand-calculated expected values |
 
 Rules:
 
 - Every behavior change ships with a test at the right layer.
 - Never delete or weaken a temporal, correctness, freshness, idempotency,
   parity or failure test to make a suite pass.
+- Golden values are calculated by hand and written down. Never generate the
+  expected values from the code under test.
 - Integration tests use isolated topics and key prefixes, never shared names.
+  New integration tests clean up the topics they create.
 - Wait for observable outputs, not fixed sleeps.
 - Cleanup code must not mask the original failure.
 
@@ -177,7 +219,9 @@ and wait for a terminal job state after cancelling. The underlying cause is
 still open, so treat this as isolation, not a fix.
 
 When a Flink test fails, read the root cause from the Flink REST API
-(`/jobs/<id>/exceptions`) before changing timeouts or retries.
+(`/jobs/<id>/exceptions`) before changing timeouts or retries. Submit
+diagnostic runs with `--no-restart` so a failing job stops at once instead of
+restarting up to 30 times.
 
 ---
 
@@ -185,13 +229,16 @@ When a Flink test fails, read the root cause from the Flink REST API
 
 ```mermaid
 flowchart LR
-    PR[Push or PR] --> B[Baseline<br/>lint, format,<br/>no infrastructure]
+    PR[Push, PR or nightly] --> B[Baseline<br/>lint, format,<br/>no infrastructure]
+    PR --> C[Python 3.11 and 3.12<br/>compatibility]
     PR --> S[Serving integration<br/>Redis, Feast, parity]
     PR --> F[Streaming integration<br/>Kafka, Flink, Redis]
 ```
 
 - **Keep the jobs independent.** Never add Redis, Kafka, Flink or Docker
   Compose setup to the baseline job.
+- A new Flink integration module must be added to `MODULES` in
+  `scripts/ci/run_flink_integration.sh`, otherwise CI never runs it.
 - Never remove skip guards from baseline tests to manufacture a green run.
   Skipped must never look like proven.
 - Failed streaming runs upload a diagnostics artifact. Download it before
@@ -210,7 +257,9 @@ Background: [ADR-004](docs/adr/ADR-004-github-actions-ci.md).
 | Backfill fails | Positive `--window-days`, start date not after end date, all four source Parquet files present. See [runbook](docs/runbooks/failed-backfill.md) |
 | Streaming tests fail to connect | `docker compose ps`, Redis published on `127.0.0.1:6379`, no other container on port 6379 |
 | Flink job fails or hangs | `docker compose logs jobmanager --tail 100`, `docker compose logs taskmanager --tail 100`, REST root cause |
-| Rebuilt job code not picked up | `docker compose build jobmanager && docker compose up -d` |
+| Rebuilt job code not picked up | `jobs/` and `feature_repo/specs/` are mounted. Changes under `src/` or `docker/flink/Dockerfile` need `docker compose up -d --build` |
+| `ModuleNotFoundError` inside a Flink job | A dependency is missing in `docker/flink/Dockerfile`. Check with `docker compose exec -T jobmanager /opt/pyflink/bin/python -c "import featureforge.spec.loader"` |
+| A spec is rejected | `python -m featureforge.spec.loader <spec.yaml>` prints each violated rule and the available names |
 | `SkipRateUpdateConflictError` | Compare stored and incoming count vectors, find the upstream producer, fix or replay upstream. Never edit Redis by hand or weaken the policy |
 
 Useful commands:
@@ -226,7 +275,7 @@ curl -s http://127.0.0.1:8081/overview
 ## Documentation and ADRs
 
 Update documentation when a change affects contracts, semantics, canonical
-paths, gates, manifests, topics, store policies, CI behavior, or setup commands.
+paths, gates, manifests, topics, store policies, specs, CI behavior, or setup commands.
 
 - Write an **ADR** for a durable architecture, ownership, reliability or
   security decision.
@@ -247,7 +296,9 @@ Small, focused commits that describe the behavior or contract changed:
 
 ```text
 feat: add user skip rate 24h streaming feature
+feat: add generic spec-driven Flink job for count and ratio features
 test: verify streaming routing and late-event behavior
+test: add skip-rate golden fixture with hand-calculated values
 ci: expand Flink integration selection
 fix: preserve UTC timestamp semantics in Spark features
 docs: rewrite ARCHITECTURE with current streaming state
@@ -269,5 +320,5 @@ A pull request should cover:
 ```
 
 Run the checks from [Before every commit](#before-every-commit) plus the
-integration tests that match your change. Wait for all three CI jobs to pass
+integration tests that match your change. Wait for all CI checks to pass
 on the newest commit before merging.

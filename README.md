@@ -64,9 +64,10 @@ flowchart LR
 | Stream processing | Apache Kafka 3.9, Apache Flink 1.20 (PyFlink) |
 | Offline store | Partitioned Parquet (local); S3 profile documented |
 | Feature definitions and retrieval | Feast |
+| Declarative feature specs | YAML, validated by a Pydantic model |
 | Online store | Redis 7.4 (local); DynamoDB profile documented |
 | Contracts | Pydantic |
-| Quality | pytest, Ruff, GitHub Actions (3 independent CI layers) |
+| Quality | pytest, Ruff, GitHub Actions (baseline, Python 3.11/3.12, serving integration, Flink integration) |
 
 Full design: [ARCHITECTURE.md](ARCHITECTURE.md) ·
 [Platform Blueprint](docs/PLATFORM_BLUEPRINT.md) ·
@@ -100,17 +101,34 @@ Full design: [ARCHITECTURE.md](ARCHITECTURE.md) ·
 | Concurrent writers are safe (Redis `WATCH`/`MULTI` with bounded retries) | [`test_streaming_redis_online_store_concurrency.py`](tests/integration/test_streaming_redis_online_store_concurrency.py) |
 | Full Kafka → Flink → Kafka → Redis path produces the reference result | [`test_user_play_count_kafka_to_redis.py`](tests/integration/test_user_play_count_kafka_to_redis.py), [`test_skip_rate_flink_to_redis.py`](tests/integration/test_skip_rate_flink_to_redis.py) |
 
+### Declarative feature specs
+
+A feature can be defined as a YAML spec instead of new platform code. The spec
+language is bounded on purpose, see [ADR-008](docs/adr/ADR-008-feature-spec-design.md).
+
+| Guarantee | Evidence |
+|---|---|
+| Specs are validated before anything runs: bad windows, unsafe expressions, inconsistent dedupe or update policies and unknown event fields are rejected | [`test_spec_model.py`](tests/unit/test_spec_model.py) |
+| One exact reference evaluates a spec and matches the hand-written references on randomized inputs at window boundaries | [`test_spec_reference.py`](tests/unit/test_spec_reference.py) |
+| The skip-rate golden fixture has hand-calculated values that the hand-written and the spec reference both reproduce | [`test_streaming_user_skip_rate_golden.py`](tests/unit/test_streaming_user_skip_rate_golden.py), [`test_spec_golden_parity.py`](tests/unit/test_spec_golden_parity.py) |
+| A generic Flink job built from the skip-rate spec reproduces the fixture: every emitted window matches both references | [`test_feature_from_spec_job.py`](tests/integration/test_feature_from_spec_job.py), [`test_spec_flink_plan.py`](tests/unit/test_spec_flink_plan.py) |
+
+The generic job is verified for `user_skip_rate_24h` on time-ordered input.
+The production streaming jobs are still the hand-written ones. See
+[STATUS.md](STATUS.md) for what is not yet proven.
+
 ### Online access
 
 | Guarantee | Evidence |
 |---|---|
 | Batch and streaming features are read through one client with explicit availability and freshness, and missing values are never silently turned into `0` | [`test_unified_online.py`](tests/integration/test_unified_online.py), [`test_online.py`](tests/unit/test_online.py) |
 
-All of the above run in CI on every push to `main`:
+All of the above run in CI on every pull request and push to `main`, plus a nightly run:
 
 | CI layer | What it proves |
 |---|---|
 | Baseline lint and test | Fresh install, Ruff, all infrastructure-free tests |
+| Python 3.11 and 3.12 compatibility | The infrastructure-free tests on the oldest and a middle supported version |
 | Redis and Feast serving integration | Generation → backfill → Feast apply → materialization → online parity |
 | Flink Kafka-to-Redis integration | Full Docker Compose streaming stack, joined end-to-end tests |
 
@@ -121,7 +139,7 @@ All of the above run in CI on every push to `main`:
 Prerequisites: Python 3.11–3.13, Docker, GNU Make.
 
 ```bash
-git clone https://github.com/oster-dev/featureforge.git
+git clone [https://github.com/oster-dev/featureforge.git](https://github.com/oster-dev/featureforge.git)
 cd featureforge
 python3 -m venv .venv && source .venv/bin/activate
 python -m pip install -e ".[dev,feature-store,spark,streaming]"
@@ -134,6 +152,9 @@ make demo
 # Streaming path: Kafka → Flink → Redis, verified end to end
 docker compose up -d --build
 pytest -v -m integration tests/integration/test_skip_rate_flink_to_redis.py
+
+# Feature specs: validate both shipped specs
+python -m featureforge.spec.loader feature_repo/specs/*.yaml
 ```
 
 Read a feature through the unified online client:
@@ -159,6 +180,9 @@ Expected output, troubleshooting, and cleanup: [Demo Guide](docs/demo.md).
 | `user_play_count_1h` | Streaming | `user_id` | Play events in `(t − 1h, t]`, sliding |
 | `user_skip_rate_24h` | Streaming | `user_id` | `skips / (plays + skips)` in `(t − 24h, t]`, 1-minute slide, explicit zero-denominator behavior |
 
+Both streaming features are also expressed as specs in
+[`feature_repo/specs/`](feature_repo/specs/).
+
 ---
 
 ## Status
@@ -166,7 +190,7 @@ Expected output, troubleshooting, and cleanup: [Demo Guide](docs/demo.md).
 | Phase | Status |
 |---|---|
 | 1 · Feature store foundation | **Released** as [v0.1.0](https://github.com/oster-dev/featureforge/releases/tag/v0.1.0) |
-| 2 · Streaming feature platform | **Core delivered.** Recovery evidence, streaming history, and final demo in progress |
+| 2 · Streaming feature platform | **Core delivered.** Declarative feature specs: spec model, reference and a generic Flink job for the skip-rate feature are done. Recovery evidence, streaming history, and the final demo are open |
 | 3 · End-to-end ML workflow | **Planned** |
 
 Details, open items, and known limitations: **[STATUS.md](STATUS.md)**.
@@ -181,7 +205,8 @@ Details, open items, and known limitations: **[STATUS.md](STATUS.md)**.
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Component design and data flow |
 | [docs/REFERENCE.md](docs/REFERENCE.md) | Full technical reference: contracts, semantics, CLI, CI details |
 | [docs/PLATFORM_BLUEPRINT.md](docs/PLATFORM_BLUEPRINT.md) | Target platform design |
-| [docs/adr/](docs/adr/) | Architecture decision records (ADR-001 to ADR-007) |
+| [docs/adr/](docs/adr/) | Architecture decision records (ADR-001 to ADR-008) |
+| [docs/streaming-migration.md](docs/streaming-migration.md) | Streaming provenance and verification boundaries |
 | [docs/demo.md](docs/demo.md) | Reviewer walkthrough |
 | [docs/runbooks/](docs/runbooks/) | Stale features, failed backfill, failed materialization |
 | [docs/aws-production-profile.md](docs/aws-production-profile.md) | Documented AWS mapping (S3, DynamoDB) |

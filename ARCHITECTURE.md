@@ -3,7 +3,7 @@
 FeatureForge computes features once and serves them consistently for offline
 training and low-latency online inference, from batch and streaming sources.
 
-This document describes what is **implemented and tested today**. 
+This document describes what is **implemented and tested today**.
 
 ---
 
@@ -38,8 +38,9 @@ flowchart LR
 | Offline store | One canonical Parquet root, Hive-style `observation_date` partitions |
 | Retrieval and materialization | Feast, point-in-time joins |
 | Streaming | Kafka, Flink (PyFlink), Pydantic contracts |
+| Feature definitions as data | YAML specs, Pydantic validation, exact reference, generic Flink job (skip rate) |
 | Online store | Redis, feature-specific write policies |
-| Quality | pytest, Ruff, three independent CI jobs |
+| Quality | pytest, Ruff, four CI layers |
 
 ---
 
@@ -161,7 +162,54 @@ empty Kafka range instead of silently completing without work.
 
 ---
 
-## 4. Serving
+## 4. Declarative feature specs
+
+A feature can be described as a YAML spec instead of new platform code. The
+spec language is bounded on purpose (ADR-008): it is not a general SQL or
+streaming compiler.
+
+```mermaid
+flowchart LR
+    Y[Feature spec<br/>YAML] --> L[Loader<br/>validate, check event fields]
+    L --> R[Spec reference<br/>exact oracle]
+    L --> P[Job plan<br/>count and ratio only]
+    P --> G[Generic Flink job]
+    FX[(Golden fixture<br/>hand-calculated)] --> R
+    FX --> G
+    R -.->|compared with| G
+```
+
+- **A spec is data.** It declares entity keys, source, aggregations, derived
+  values, window, lateness, deduplication, online policy, offline target and
+  freshness SLO. Expressions use a small side-effect-free subset and are
+  evaluated without `eval()`.
+- **Validation before execution.** The spec model rejects a slide that does not
+  divide the window, a dedupe TTL shorter than window plus allowed lateness,
+  an online TTL shorter than the window, monotone update policies with
+  non-count aggregations, and expressions outside the safe subset. The loader
+  also rejects fields that are not in the event contract.
+- **One exact reference.** The spec reference evaluates every operator over
+  `(t - size, t]`, validates event identities across the whole input before any
+  filtering, and returns `None`, never zero, for an empty `avg`, `min` or `max`.
+  It is the oracle the engines are compared with.
+- **Golden fixture.** The skip-rate fixture holds hand-calculated values for
+  both window edges, a duplicate delivery, ignored event types, a second user
+  and expiry to a zero denominator. The hand-written reference and the spec
+  reference both reproduce it.
+- **Generic Flink job.** `jobs/feature_from_spec.py` builds the windowed
+  computation from a plan derived from the spec. The plan supports count
+  aggregations and one entity key. Other operators and composite keys raise
+  `UnsupportedSpecError` instead of being computed wrongly. For
+  `user_skip_rate_24h` on time-ordered input, every emitted window matches both
+  references.
+- **Still hand-written.** The production streaming jobs and the Redis store
+  policies are the hand-written ones. `online.ttl` and `offline.store` in the
+  specs are declarative only: the Redis stores write keys without expiry and no
+  Iceberg store exists.
+
+---
+
+## 5. Serving
 
 `OnlineFeatureClient` reads batch features (via Feast) and streaming features
 (via the Redis streaming store) through one interface. Every value carries its
@@ -178,11 +226,12 @@ partition.
 
 ---
 
-## 5. Testing and CI
+## 6. Testing and CI
 
 ```mermaid
 flowchart LR
-    PUSH[Push to main<br/>or pull request] --> B[Baseline<br/>lint, format, tests<br/>without infrastructure]
+    PUSH[Pull request, push to main<br/>or nightly run] --> B[Baseline<br/>lint, format, tests<br/>without infrastructure]
+    PUSH --> C[Python 3.11 and 3.12<br/>compatibility]
     PUSH --> S[Serving integration<br/>Redis + Feast + parity]
     PUSH --> F[Streaming integration<br/>Kafka + Flink + Redis]
     F -.->|on failure| ART[Diagnostics artifact]
@@ -191,13 +240,18 @@ flowchart LR
 | CI job | Proves |
 |---|---|
 | Baseline | Clean install, Ruff, all tests marked not `integration` |
+| Python 3.11 and 3.12 | The tests marked not `integration` on two more supported versions |
 | Serving integration | Generate, backfill, apply, materialize, online parity, Redis store tests |
-| Streaming integration | Full Compose stack, joined Kafka, Flink and Redis tests |
+| Streaming integration | Full Compose stack, joined Kafka, Flink and Redis tests, including the generic spec-driven job |
 
 Streaming integration tests that start Flink jobs each recreate the TaskManager
 first. Reusing one long-lived worker across many PyFlink jobs became unstable
 in CI. The root cause is not yet identified, so this isolates the tests but
 does not explain the failure. See [Known limits](#known-limits).
+
+The Flink image installs its Python dependencies explicitly and checks the
+project imports at build time. A new runtime dependency of the job path must
+be added to `docker/flink/Dockerfile`.
 
 Failure simulations (stale partitions, invalid windows, missing Feast
 repository) live in `tests/failure_simulations/`, with runbooks in
@@ -205,12 +259,12 @@ repository) live in `tests/failure_simulations/`, with runbooks in
 
 ---
 
-## 6. Roadmap
+## 7. Roadmap
 
 ```mermaid
 flowchart LR
     P1[Phase 1<br/>Feature store<br/>Released v0.1.0]:::done
-    P2[Phase 2<br/>Streaming platform<br/>Core delivered]:::wip
+    P2[Phase 2<br/>Streaming platform<br/>Core delivered, specs in progress]:::wip
     P3[Phase 3<br/>End-to-end ML<br/>Planned]:::plan
     P1 --> P2 --> P3
 
@@ -219,7 +273,8 @@ flowchart LR
     classDef plan fill:#e2e3e5,stroke:#6c757d,color:#000
 ```
 
-Planned and **not implemented**: declarative feature specs, Iceberg history,
+Planned and **not implemented**: migration of both features to the generic job
+and spec-driven store policies, further operators in Flink, Iceberg history,
 Cassandra backend, serving service with load tests, observability and recovery
 drills, ML workflow with registry and rollback. Scope and order:
 [STATUS.md](STATUS.md) and [docs/PLATFORM_BLUEPRINT.md](docs/PLATFORM_BLUEPRINT.md).
@@ -237,6 +292,9 @@ drills, ML workflow with registry and rollback. Scope and order:
   guarded Redis writes, not from end-to-end exactly-once.
 - Streaming history and point-in-time retrieval of streaming features are not
   implemented.
+- The generic spec-driven job is verified only for `user_skip_rate_24h` on
+  time-ordered input. Late corrections, too-late routing, replay, the Redis
+  path and a single-counter spec are not yet re-proven for it.
 - The TaskManager instability seen in CI is isolated, not explained.
 
 ## Decisions
@@ -250,6 +308,7 @@ drills, ML workflow with registry and rollback. Scope and order:
 | 005 | AWS S3 production profile |
 | 006 | Streaming platform integration |
 | 007 | User skip rate 24h integration |
+| 008 | Declarative feature specification |
 
 ## Principles
 
