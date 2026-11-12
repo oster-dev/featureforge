@@ -1,6 +1,5 @@
 name: CI
 
-
 on:
   push:
     branches:
@@ -8,22 +7,26 @@ on:
   pull_request:
     branches:
       - main
-
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
     name: Baseline lint and test
     runs-on: ubuntu-latest
-
+    timeout-minutes: 20
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-
 
       - name: Set up Java 17
         uses: actions/setup-java@v6
@@ -31,12 +34,10 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-
       - name: Verify Java runtime
         run: |
           echo "JAVA_HOME=$JAVA_HOME"
           java -version
-
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -44,36 +45,62 @@ jobs:
           python-version: "3.13"
           cache: pip
 
-
       - name: Upgrade pip
         run: python -m pip install --upgrade pip
-
 
       - name: Install project and CI dependencies
         run: python -m pip install -e ".[dev,feature-store,spark,streaming]"
 
-
       - name: Verify package import
         run: python -c "import featureforge; print(featureforge.__file__)"
-
 
       - name: Check Ruff formatting
         run: ruff format --check .
 
-
       - name: Run Ruff lint
         run: ruff check .
 
+      - name: Run baseline test suite
+        run: pytest -v -m "not integration" --durations=10
+
+  python-compat:
+    name: Python ${{ matrix.python-version }} compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install project and CI dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,feature-store,spark,streaming]"
 
       - name: Run baseline test suite
         run: pytest -v -m "not integration"
-
 
   serving-integration:
     name: Redis and Feast serving integration
     runs-on: ubuntu-latest
     needs: test
-
+    timeout-minutes: 25
 
     env:
       BACKFILL_START_DATE: "2026-03-10"
@@ -81,7 +108,6 @@ jobs:
       WINDOW_DAYS: "7"
       MATERIALIZE_START_TIME: "2026-03-10T00:00:00+00:00"
       MATERIALIZE_END_TIME: "2026-03-13T00:00:00+00:00"
-
 
     services:
       redis:
@@ -94,11 +120,9 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
-
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-
 
       - name: Set up Java 17
         uses: actions/setup-java@v6
@@ -106,12 +130,10 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-
       - name: Verify Java runtime
         run: |
           echo "JAVA_HOME=$JAVA_HOME"
           java -version
-
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -119,25 +141,20 @@ jobs:
           python-version: "3.13"
           cache: pip
 
-
       - name: Upgrade pip
         run: python -m pip install --upgrade pip
-
 
       - name: Install project and CI dependencies
         run: python -m pip install -e ".[dev,feature-store,spark,streaming]"
 
-
       - name: Verify package import
         run: python -c "import featureforge; print(featureforge.__file__)"
-
 
       - name: Verify Redis connection
         run: |
           python - <<'PY'
           import socket
           import time
-
 
           for attempt in range(20):
               try:
@@ -151,13 +168,11 @@ jobs:
                   time.sleep(2)
           PY
 
-
       - name: Generate deterministic source data
         run: |
           featureforge generate \
             --config configs/synthetic_data.yaml \
             --output output/source_data
-
 
       - name: Run canonical backfill
         run: |
@@ -168,12 +183,10 @@ jobs:
             --end-date "$BACKFILL_END_DATE" \
             --window-days "$WINDOW_DAYS"
 
-
       - name: Verify offline feature partitions exist
         run: |
           find output/offline_store -name features.parquet
           test -n "$(find output/offline_store -name 'features.parquet')"
-
 
       - name: Show Feast online-store configuration
         working-directory: feature_repo
@@ -181,11 +194,9 @@ jobs:
           echo "Feature repository configuration:"
           cat feature_store.yaml
 
-
       - name: Apply Feast feature repository
         working-directory: feature_repo
         run: feast apply
-
 
       - name: Materialize validated feature values into Redis
         run: |
@@ -195,12 +206,10 @@ jobs:
             --end-time "$MATERIALIZE_END_TIME" \
             --manifest-output output
 
-
       - name: Verify materialization manifest exists
         run: |
           find output/materialization_manifests -name "*.json"
           test -n "$(find output/materialization_manifests -name '*.json')"
-
 
       - name: Run Redis and unified online integration tests
         env:
@@ -212,16 +221,13 @@ jobs:
             tests/integration/test_unified_online.py \
             --junitxml=/tmp/featureforge-streaming-redis.xml
 
-
           python - <<'PYTEST_REPORT'
           import xml.etree.ElementTree as ET
-
 
           report = ET.parse("/tmp/featureforge-streaming-redis.xml")
           cases = report.findall(".//testcase")
           if not cases:
               raise SystemExit("No Redis or unified online tests recorded.")
-
 
           required_suites = (
               "test_streaming_redis_online_store",
@@ -235,19 +241,15 @@ jobs:
               ):
                   raise SystemExit(f"Missing integration test module: {suite}")
 
-
           for outcome in ("skipped", "failure", "error"):
               if report.findall(f".//{outcome}"):
                   raise SystemExit(f"Integration report contains: {outcome}")
 
-
           print(f"Verified {len(cases)} integration tests without skips.")
           PYTEST_REPORT
 
-
       - name: Run online-serving integration tests
         run: pytest -v tests/integration/test_online_serving.py
-
 
       - name: Upload materialization manifests on failure
         if: failure()
@@ -257,7 +259,6 @@ jobs:
           path: output/materialization_manifests/
           retention-days: 7
 
-
       - name: Upload offline-store diagnostics on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -266,17 +267,19 @@ jobs:
           path: output/offline_store/
           retention-days: 7
 
-
   streaming-flink-integration:
     name: Flink Kafka-to-Redis integration
     runs-on: ubuntu-latest
     needs: test
+    timeout-minutes: 45
 
+    env:
+      FEATUREFORGE_REDIS_URL: redis://127.0.0.1:6379/0
+      FLINK_REST_URL: http://127.0.0.1:8081
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
-
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -284,18 +287,14 @@ jobs:
           python-version: "3.13"
           cache: pip
 
-
       - name: Upgrade pip
         run: python -m pip install --upgrade pip
-
 
       - name: Install project and streaming dependencies
         run: python -m pip install -e ".[dev,streaming]"
 
-
       - name: Start streaming stack
         run: docker compose up -d --build
-
 
       - name: Wait for streaming services
         run: |
@@ -306,7 +305,6 @@ jobs:
               exit 1
             }
 
-
             for attempt in $(seq 1 30); do
               status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$container")"
               if [ "$status" = "healthy" ]; then
@@ -314,63 +312,43 @@ jobs:
                 break
               fi
 
-
               if [ "$attempt" = "30" ]; then
                 echo "$service did not become healthy"
                 docker compose logs "$service" --no-color
                 exit 1
               fi
 
-
               sleep 2
             done
           done
 
-
-      - name: Run streaming routing, replay, late-event, and skip-rate integration tests
-        env:
-          FEATUREFORGE_REDIS_URL: redis://127.0.0.1:6379/0
-        run: |
-          python -m pytest -v -ra -m integration \
-            tests/integration/test_user_play_count_kafka_to_redis.py \
-            tests/integration/test_user_play_count_replay_idempotency.py \
-            tests/integration/test_streaming_validation_routing.py \
-            tests/integration/test_user_play_count_late_events.py
-
-          # Fresh TaskManager for the skip-rate suite: repeated PyFlink job
-          # submissions accumulate state (metaspace, Python workers) on one TM.
-          docker compose restart taskmanager
-          for attempt in $(seq 1 60); do
-            slots="$(curl -s http://127.0.0.1:8081/overview \
-              | python -c 'import sys, json; print(json.load(sys.stdin)["slots-available"])' \
-              2>/dev/null || echo 0)"
-            if [ "$slots" -ge 1 ]; then
-              echo "TaskManager ready with $slots free slot(s)"
-              break
-            fi
-            if [ "$attempt" = "60" ]; then
-              echo "TaskManager did not register after restart"
-              exit 1
-            fi
-            sleep 2
-          done
-
-          python -m pytest -v -ra -m integration \
-            tests/integration/test_user_skip_rate_job.py \
-            tests/integration/test_skip_rate_flink_to_redis.py \
-            tests/integration/test_skip_rate_materialization.py \
-            tests/integration/test_redis_skip_rate_store.py
-
+      - name: Run Flink integration tests with a fresh TaskManager per module
+        run: bash scripts/ci/run_flink_integration.sh
 
       - name: Collect streaming diagnostics on failure
         if: failure()
-        run: docker compose logs --no-color > streaming-diagnostics.log
-
+        run: |
+          docker compose ps > streaming-ps.log
+          docker compose logs --no-color > streaming-diagnostics.log
 
       - name: Upload streaming diagnostics artifact
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: streaming-diagnostics
-          path: streaming-diagnostics.log
+          path: |
+            streaming-diagnostics.log
+            streaming-ps.log
           retention-days: 7
+
+      - name: Upload streaming test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: streaming-junit
+          path: reports/
+          retention-days: 7
+
+      - name: Stop streaming stack
+        if: always()
+        run: docker compose down -v
