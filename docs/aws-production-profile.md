@@ -1,55 +1,51 @@
 # FeatureForge AWS Production Profile
 
-This document describes the AWS production architecture profile for
-FeatureForge. It is an architecture and planning artifact, not a deployment
-record.
+An architecture and planning artifact, **not a deployment record**. No AWS
+resources are provisioned as a result of this document. It lets a reviewer judge
+the credibility, cost awareness and security posture of the intended production
+system without requiring a cloud deployment.
 
-No AWS resources are provisioned as a result of this document. It exists so a
-reviewer can evaluate the credibility, cost-awareness, and security posture of
-the intended production system without requiring an actual cloud deployment.
+Related: [ARCHITECTURE.md](../ARCHITECTURE.md) ·
+[ADR-002](adr/ADR-002-canonical-offline-store-contract.md) ·
+[ADR-005](adr/ADR-005-aws-s3-offline-store-profile.md)
 
-## Scope
+---
 
-This document covers:
+## 1. Relationship to the local platform
 
-- the S3-backed offline feature store;
-- Parquet partitioning strategy;
-- encryption and key management;
-- least-privilege IAM roles;
-- lifecycle and cost trade-offs;
-- resilience characteristics;
-- the DynamoDB online-store profile;
-- how this profile relates to the current local reference platform;
-- what is explicitly out of scope for this stage.
+The local platform is implemented and tested. The AWS profile **generalizes the
+same contracts** instead of replacing them.
 
-## Relationship to the Local Platform
-
-FeatureForge's local V1 platform is fully implemented and tested. It uses:
-
-```text
-output/offline_store/   (local Parquet, Hive-partitioned)
-Redis via Docker Compose (local online store)
-Feast FileSource         (local file-based feature source)
+```mermaid
+flowchart LR
+    subgraph Local["Local reference (implemented)"]
+        L1[Parquet<br/>output/offline_store]
+        L2[Redis<br/>Docker Compose]
+        L3[Kafka + Flink<br/>Docker Compose]
+    end
+    subgraph AWS["AWS profile (documented only)"]
+        A1[S3 offline store<br/>SSE-KMS, versioned]
+        A2[DynamoDB<br/>on-demand]
+        A3[MSK + Managed Service<br/>for Apache Flink]
+    end
+    L1 -.same layout.-> A1
+    L2 -.same contract.-> A2
+    L3 -.same jobs.-> A3
 ```
 
-The AWS profile described here generalizes the same contracts rather than
-replacing them:
-
-| Concern | Local V1 | AWS production profile |
+| Concern | Local | AWS profile |
 |---|---|---|
-| Offline feature storage | `output/offline_store/` | `s3://featureforge-<environment>/offline-store/` |
-| Partitioning | `observation_date=YYYY-MM-DD` | Same partitioning scheme |
+| Offline store | `output/offline_store/` | `s3://featureforge-<environment>/offline-store/` |
+| Partitioning | `observation_date=YYYY-MM-DD` | Same |
 | Format | Parquet | Parquet |
-| Online store | Redis via Docker Compose | DynamoDB |
-| Feature definitions | Feast `FileSource` | Feast `FileSource` pointed at S3 |
-| Correctness gate | Local validation before materialization | Same validation logic against the S3 source |
-| Freshness check | Latest local `observation_date` partition vs. UTC reference | Same logic against the S3 source |
-| Manifests | Local JSON files | Versioned S3 manifest objects |
+| Feature source | Feast `FileSource` | Feast `FileSource` pointed at S3 |
+| Gates | Correctness and freshness vs. local source | Same logic vs. S3 source |
+| Manifests | Local JSON | Versioned S3 objects |
+| Online store | Redis | DynamoDB |
+| Streaming transport | Kafka (Compose) | Managed Kafka (MSK) |
+| Streaming compute | Flink (Compose) | Managed Flink |
 
-The canonical-source invariant from
-[ADR-002](adr/ADR-002-canonical-offline-store-contract.md) is preserved and
-generalized in
-[ADR-005](adr/ADR-005-aws-s3-offline-store-profile.md):
+The canonical-source invariant is preserved:
 
 ```text
 Backfill writer
@@ -60,269 +56,155 @@ Backfill writer
     = Serving parity-test source
 ```
 
-No component may read a different resolved offline-store URI than the one
-written by the backfill process for that environment.
+No component may read a different resolved offline-store URI than the one the
+backfill wrote for that environment.
 
-## Environments
+---
 
-FeatureForge production planning assumes three isolated environments:
+## 2. Environments
 
-```text
-dev
-staging
-prod
-```
+Three isolated environments: `dev`, `staging`, `prod`. Each has its own bucket,
+KMS key, IAM roles and DynamoDB tables. Nothing is shared across environments.
+A role in `dev` therefore structurally cannot reach `prod` resources.
 
-Each environment has:
-
-- its own S3 bucket;
-- its own KMS key;
-- its own IAM roles;
-- its own DynamoDB tables.
-
-Environments are never allowed to share a bucket, key, or table. This keeps
-blast radius contained and makes IAM policy scoping straightforward: a role
-in `dev` structurally cannot reach `prod` resources.
-
-## S3 Bucket and Prefix Layout
+## 3. S3 layout
 
 ```text
 s3://featureforge-<environment>/
-├── raw/
-│   └── events/
-│       └── ingestion_date=YYYY-MM-DD/
-├── source/
-│   ├── users/
-│   ├── content/
-│   ├── events/
-│   └── labels/
+├── raw/events/ingestion_date=YYYY-MM-DD/
+├── source/{users,content,events,labels}/
 ├── offline-store/
-│   ├── user_engagement_features/
-│   │   └── observation_date=YYYY-MM-DD/
-│   │       └── features.parquet
-│   ├── content_popularity_features/
-│   │   └── observation_date=YYYY-MM-DD/
-│   │       └── features.parquet
-│   └── manifests/
-│       ├── backfill/
-│       ├── correctness/
-│       ├── freshness/
-│       └── materialization/
-├── training/
-│   └── historical-features/
-└── models/
-    └── baseline/
+│   ├── user_engagement_features/observation_date=YYYY-MM-DD/features.parquet
+│   ├── content_popularity_features/observation_date=YYYY-MM-DD/features.parquet
+│   └── manifests/{backfill,correctness,freshness,materialization}/
+├── training/historical-features/
+└── models/baseline/
 ```
 
-### Design Rationale
+- `raw/` keeps the original ingestion-time record, independent of reprocessing.
+- `source/` holds validated, typed tables equal to the local Parquet outputs.
+- `offline-store/` is structurally identical to the local canonical store.
+- Manifests are split by type to keep lineage queries and lifecycle rules specific.
+- `training/` and `models/` are separate because retention and access differ:
+  training data is regenerable, models are versioned artifacts.
+- Raw events partition by `ingestion_date`. Features partition by
+  `observation_date`, which enables partition pruning and reuses the existing
+  point-in-time logic and freshness checks (ADR-003).
 
-- `raw/` holds unprocessed ingested events, partitioned by ingestion date.
-  This preserves the original ingestion-time record independent of any later
-  reprocessing.
-- `source/` holds validated, typed source tables equivalent to the local
-  `users.parquet`, `content.parquet`, `events.parquet`, and `labels.parquet`
-  outputs.
-- `offline-store/` is the canonical feature store, structurally identical to
-  the local `output/offline_store/` layout.
-- `manifests/` is split into subdirectories by manifest type (backfill,
-  correctness, freshness, materialization) rather than one flat directory, to
-  keep lineage queries and lifecycle rules type-specific.
-- `training/` and `models/` are separated from the feature store because they
-  have different retention and access patterns: training datasets are
-  regenerated from feature data, and models are versioned artifacts consumed
-  by serving or evaluation, not by Feast.
+## 4. Encryption
 
-## Partitioning Strategy
+All S3 objects use **SSE-KMS** with one customer-managed key per environment
+(`alias/featureforge-<environment>-key`).
 
-Feature partitions use the same Hive-style partitioning as the local platform:
+- Per-environment rotation and revocation without affecting other environments.
+- Bucket policies deny `PutObject` requests that do not name the environment's key.
+- CloudTrail records every KMS `Encrypt` and `Decrypt` call, giving an audit trail.
+- SSE-S3 was rejected because it offers no per-environment key isolation.
 
-```text
-<feature_view>/observation_date=YYYY-MM-DD/features.parquet
-```
+DynamoDB uses AWS-managed encryption at rest. IAM already scopes table access per
+environment and role.
 
-This enables:
+## 5. IAM roles
 
-- partition pruning for Spark and Athena-style scans, so a query for one
-  observation date does not scan the entire feature history;
-- direct reuse of the existing point-in-time feature-window logic without
-  modification;
-- straightforward correctness and freshness checks based on the newest
-  `observation_date` partition per feature view, consistent with
-  [ADR-003](adr/ADR-003-freshness-slos-and-fail-safe-serving.md).
+| Role | Can | Cannot |
+|---|---|---|
+| `featureforge-backfill-writer` | Write `raw/`, `source/`, `offline-store/`, backfill and correctness manifests | Write DynamoDB, change IAM or KMS policies |
+| `featureforge-materialization-writer` | Read `offline-store/`, write materialization manifests, write the DynamoDB table | Modify `raw/` or `source/`, change Feast definitions |
+| `featureforge-serving-reader` | Read the DynamoDB table | Write S3 or DynamoDB, trigger materialization, change Feast definitions |
 
-Raw events are partitioned by `ingestion_date` rather than `observation_date`,
-since raw data represents unprocessed ingestion history, not a validated
-feature snapshot.
+The component that validates and promotes data is distinct from the one that
+consumes it. A compromised serving credential cannot corrupt feature data.
 
-## Encryption
-
-All S3 objects are encrypted using **SSE-KMS** with a customer-managed key,
-one key per environment:
-
-```text
-alias/featureforge-dev-key
-alias/featureforge-staging-key
-alias/featureforge-prod-key
-```
-
-Rationale:
-
-- Customer-managed keys allow key rotation and per-environment revocation
-  without affecting other environments.
-- Bucket policies deny any `PutObject` request that does not specify the
-  environment's KMS key, preventing accidental unencrypted or
-  wrong-key writes.
-- CloudTrail logs all KMS `Encrypt`/`Decrypt` API calls, giving an audit
-  trail of exactly which role accessed which data and when.
-- SSE-S3 (AWS-managed keys) was considered and rejected because it does not
-  support per-environment key isolation or fine-grained IAM-based key access
-  control.
-
-DynamoDB tables use AWS-managed encryption at rest by default, which is
-sufficient given that IAM already scopes table access per environment and per
-role.
-
-## IAM Roles
-
-Access follows least privilege through three distinct roles:
-
-### `featureforge-backfill-writer`
-
-- Can write to `raw/`, `source/`, and `offline-store/` in its environment's
-  bucket.
-- Can write backfill and correctness manifests.
-- Cannot write to the DynamoDB online store.
-- Cannot modify IAM policies or KMS key policies.
-
-### `featureforge-materialization-writer`
-
-- Can read `offline-store/` in its environment's bucket.
-- Can write materialization manifests.
-- Can write to the environment's DynamoDB online-store table.
-- Cannot modify `raw/` or `source/`.
-- Cannot modify Feast feature definitions.
-
-### `featureforge-serving-reader`
-
-- Can read from the environment's DynamoDB online-store table.
-- Cannot write to S3.
-- Cannot write to DynamoDB.
-- Cannot trigger materialization.
-- Cannot modify Feast feature definitions.
-
-### Rationale
-
-This split mirrors the platform's existing correctness principle: the
-component that validates and promotes data is distinct from the component
-that consumes it. A compromised or buggy serving-reader credential cannot
-corrupt offline or online feature data, because it structurally has no write
-permission anywhere in the pipeline.
-
-Example policy shape for `featureforge-serving-reader` (illustrative, not a
-deployed policy):
+Illustrative policy for the serving reader (not deployed):
 
 ```json
 {
   "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": [
-        "dynamodb:GetItem",
-        "dynamodb:BatchGetItem",
-        "dynamodb:Query"
-      ],
-      "Resource": "arn:aws:dynamodb:*:*:table/featureforge-<environment>-online-store"
-    }
-  ]
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": ["dynamodb:GetItem", "dynamodb:BatchGetItem", "dynamodb:Query"],
+    "Resource": "arn:aws:dynamodb:*:*:table/featureforge-<environment>-online-store"
+  }]
 }
 ```
 
-## Lifecycle and Cost Trade-offs
+## 6. Lifecycle and cost
 
-| Prefix | Storage class transition | Rationale |
+| Prefix | Transition | Rationale |
 |---|---|---|
-| `raw/` | Standard → IA at 90 days → Glacier Instant Retrieval at 365 days | Raw events are rarely re-read after processing; retained for reprocessing and audit |
-| `source/` | Standard → IA at 90 days → Glacier Instant Retrieval at 365 days | Same access pattern as raw data |
-| `offline-store/` | Standard → IA at 180 days | Feature partitions remain in Standard through the freshness SLO window, then move to IA once they are primarily used for historical retrieval rather than current serving |
-| `manifests/` | Standard-IA immediately | Small, append-heavy, rarely re-read individually, but must be retained indefinitely for lineage |
-| `training/` | Standard → IA at 90 days | Regenerable from feature data; retained for reproducibility, not primary access |
-| `models/` | Standard, versioned | Small artifacts; versioning is more important than storage-class optimization |
+| `raw/`, `source/` | Standard, then IA at 90 days, then Glacier Instant Retrieval at 365 days | Rarely re-read after processing, kept for reprocessing and audit |
+| `offline-store/` | Standard, then IA at 180 days | Stays in Standard through the freshness window, then serves historical retrieval |
+| `manifests/` | Stay in Standard | Small objects. Lifecycle transitions skip objects under 128 KB by default and per-object transition costs can exceed the savings |
+| `training/` | Standard, then IA at 90 days | Regenerable, kept for reproducibility |
+| `models/` | Standard, versioned | Small artifacts, versioning matters more than class |
 
-All buckets have **versioning enabled**. This protects against accidental
-overwrite from a faulty backfill, consistent with the idempotent-overwrite
-contract in ADR-002: if a backfill writes corrupted data to a partition path,
-the previous good version remains recoverable.
+- Buckets have **versioning** enabled. A faulty backfill that overwrites a
+  partition leaves the previous good version recoverable, consistent with the
+  idempotent-overwrite contract in ADR-002.
+- Cost is controlled by transitions, not deletion, because point-in-time
+  retrieval needs old partitions to stay queryable.
+- Objects under 128 KB do not transition by default. At demo scale most feature
+  files are small, so lifecycle savings only matter at real data volumes.
+  Validate with actual object sizes before relying on a rule.
 
-Cost is controlled primarily through lifecycle transitions rather than
-deletion, since point-in-time historical retrieval requires that old feature
-partitions remain queryable, even if infrequently accessed.
+## 7. Online store: DynamoDB
 
-## Resilience
+DynamoDB with on-demand capacity replaces Redis for production serving. It is
+multi-AZ by default and avoids capacity planning at this scale. Redis stays the
+local and CI online store.
 
-- S3 provides built-in multi-AZ durability and availability within a region;
-  no additional configuration is required for this property.
-- Versioning provides protection against accidental overwrite or deletion.
-- Cross-region replication is explicitly **not** included in this stage. It
-  is a documented future consideration if FeatureForge needs multi-region
-  disaster recovery, not a V1 requirement.
-- DynamoDB is configured with on-demand capacity mode for the online-store
-  profile, avoiding the operational overhead of provisioned-capacity
-  planning at this project's scale, while still providing multi-AZ
-  durability by default.
+> **Contract caveat.** The local streaming stores enforce their write policies
+> with Redis `WATCH`/`MULTI`. That mechanism does not carry over. A DynamoDB
+> implementation needs its own guarded writes, for example conditional writes,
+> and **must pass the same contract tests** (older windows rejected, identical
+> deliveries unchanged, same-window corrections, incomparable vectors raising an
+> error, concurrent writers). Until then the Redis guarantees do not apply to
+> DynamoDB.
 
-## Observability and Lineage
+## 8. Streaming profile
 
-Every backfill, correctness check, freshness check, and materialization run
-writes a manifest object under `offline-store/manifests/<type>/`, mirroring
-the local JSON manifest contract. Each manifest records:
+Managed Kafka (Amazon MSK) and Managed Service for Apache Flink are the
+documented execution profile for the streaming path. MSK integrates with IAM and
+AWS Glue Schema Registry, and Flink applications can read from MSK through the
+standard `KafkaSource`
+([MSK docs](https://docs.aws.amazon.com/msk/),
+[Managed Flink sources](https://docs.aws.amazon.com/managed-flink/latest/java/how-sources.html)).
 
-- run type and status;
-- Git SHA of the code that produced the run;
-- resolved input and output S3 URIs;
-- start and completion timestamps;
-- row or partition counts;
-- duration;
-- correctness-report payload, when applicable.
+What stays unverified:
 
-This preserves the same auditability guarantee as the local platform:
-any feature value in the online store can be traced back to the backfill run,
-correctness check, and materialization run that produced it.
+- Supported Flink and Python versions on the managed service versus the local
+  runtime (Flink 1.20.3, Python 3.11). Pin and test before committing to it.
+- Checkpoint and recovery behavior of the managed runtime. The local suite does
+  not yet verify checkpoint recovery at all (see
+  [ARCHITECTURE.md](../ARCHITECTURE.md#known-limits)).
+- Whether to adopt Glue Schema Registry. The current contracts are Pydantic
+  models, not registry-backed schemas.
 
-## Feast and Online-Store Profile
+## 9. Resilience
 
-Feast `FileSource` definitions point at the environment's S3 offline-store
-prefix instead of a local path. Historical retrieval and materialization use
-the same Feast APIs already implemented locally; only the resolved source URI
-changes.
+- S3 provides multi-AZ durability within a region. Versioning protects against
+  overwrite and deletion.
+- Cross-region replication is **not** included at this stage.
+- DynamoDB on-demand capacity provides multi-AZ durability by default.
+- Local failure simulations do not cover Redis, Kafka, object-store or network
+  faults. Cloud resilience claims are therefore design intent, not tested behavior.
 
-DynamoDB is the documented AWS online-store profile, replacing Redis for
-production serving:
+## 10. Lineage
 
-| Local | AWS |
-|---|---|
-| Redis via Docker Compose | DynamoDB, on-demand capacity |
-| Manual local start/stop | Managed, always-available service |
-| Single-node, no built-in HA | Multi-AZ durability by default |
+Every backfill, correctness check, freshness check and materialization run writes
+a manifest under `offline-store/manifests/<type>/` recording run type and status,
+Git SHA, resolved input and output URIs, timestamps, row and partition counts,
+duration and the correctness report where applicable. Any online value can be
+traced to the backfill, check and materialization that produced it.
 
-Redis remains the local development and CI-adjacent online store. It is not
-replaced or removed; it continues to provide fast, reproducible local
-iteration, consistent with the project's local-first development philosophy.
+## 11. Non-goals for this stage
 
-## Non-Goals for This Stage
-
-The following are explicitly out of scope for Day 15 and this document:
-
-- Provisioning any real AWS resources (buckets, keys, roles, tables).
-- Terraform or other infrastructure-as-code implementation.
-- An actual AWS deployment or migration of the running platform.
+- Provisioning any AWS resources (buckets, keys, roles, tables, MSK, Flink).
+- Terraform or other infrastructure as code.
+- An AWS deployment or migration of the running platform.
 - Cross-region replication or multi-region disaster recovery.
-- Autoscaling policy tuning for DynamoDB beyond on-demand capacity mode.
+- DynamoDB autoscaling beyond on-demand mode.
 - A CI/CD pipeline that deploys to AWS.
 
-These remain future roadmap items once the local platform's correctness,
-reliability, and documentation are complete and stable, consistent with the
-project's principle of not adding cloud complexity before the local vertical
-slice is correct, testable, and documented.
-
-
+These remain future work. FeatureForge deliberately completes local
+correctness, reliability and documentation before adding cloud complexity.
