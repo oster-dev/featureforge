@@ -1,14 +1,16 @@
-SHELL := /bin/zsh
+SHELL := /bin/bash
 
 PYTHON ?= python
 PIP ?= $(PYTHON) -m pip
 PYTEST ?= $(PYTHON) -m pytest
 RUFF ?= $(PYTHON) -m ruff
 
+EXTRAS ?= dev,feature-store,spark,streaming
 OUTPUT_DIR ?= output_e2e
 OFFLINE_STORE_DIR ?= output/offline_store
 CONFIG ?= configs/synthetic_data.yaml
 REPO ?= feature_repo
+SPECS ?= feature_repo/specs
 BACKFILL_START ?= 2026-03-20
 BACKFILL_END ?= 2026-03-25
 WINDOW_DAYS ?= 7
@@ -18,21 +20,25 @@ FRESHNESS_REFERENCE_TIME ?= $(BACKFILL_END)T00:00:00+00:00
 FRESHNESS_MAX_LAG_HOURS ?= 24
 
 .PHONY: help setup install lint format check test test-unit test-integration \
-        validate clean docker-config docker-up docker-down \
+        validate validate-specs test-spec test-streaming clean \
+        docker-config docker-up docker-down \
         check-freshness e2e e2e-no-skip e2e-clean e2e-clean-all \
         materialize-incremental demo
 
 help:
 	@echo "FeatureForge development commands:"
-	@echo "  make setup                    Install project and development dependencies"
-	@echo "  make install                  Install the project in editable mode"
-	@echo "  make lint                     Run Ruff lint checks across the repository"
+	@echo "  make setup                    Install project and all development dependencies"
+	@echo "  make install                  Install the project in editable mode (same extras)"
+	@echo "  make lint                     Run Ruff format check and lint (same as CI)"
 	@echo "  make format                   Format and apply safe Ruff fixes repository-wide"
-	@echo "  make check                    Run lint and the complete test suite"
-	@echo "  make test                     Run the complete test suite"
+	@echo "  make check                    Run lint and the tests without infrastructure (same as CI)"
+	@echo "  make test                     Run the tests without infrastructure"
 	@echo "  make test-unit                Run unit tests"
-	@echo "  make test-integration         Run integration tests"
+	@echo "  make test-integration         Run all tests in tests/integration (needs Docker services)"
+	@echo "  make test-streaming           Rebuild the stack and run the Flink integration modules as CI does"
 	@echo "  make validate                 Validate project dependencies and package import"
+	@echo "  make validate-specs           Validate every feature spec in $(SPECS)"
+	@echo "  make test-spec                Validate specs, then run the spec and golden-fixture unit tests"
 	@echo "  make docker-config            Validate Docker Compose configuration"
 	@echo "  make docker-up                Start local infrastructure"
 	@echo "  make docker-down              Stop local infrastructure"
@@ -62,12 +68,13 @@ help:
 
 setup:
 	$(PIP) install --upgrade pip
-	$(PIP) install -e ".[dev]"
+	$(PIP) install -e ".[$(EXTRAS)]"
 
 install:
-	$(PIP) install -e ".[dev]"
+	$(PIP) install -e ".[$(EXTRAS)]"
 
 lint:
+	$(RUFF) format --check .
 	$(RUFF) check .
 
 format:
@@ -77,7 +84,7 @@ format:
 check: lint test
 
 test:
-	$(PYTEST)
+	$(PYTEST) -m "not integration"
 
 test-unit:
 	$(PYTEST) tests/unit
@@ -85,9 +92,24 @@ test-unit:
 test-integration:
 	$(PYTEST) tests/integration
 
+test-streaming:
+	docker compose up -d --build
+	bash scripts/ci/run_flink_integration.sh
+
 validate:
 	$(PYTHON) -m pip check
 	$(PYTHON) -c "import featureforge; print('featureforge import OK')"
+
+validate-specs:
+	$(PYTHON) -m featureforge.spec.loader $(SPECS)/*.yaml
+
+test-spec: validate-specs
+	$(PYTEST) \
+		tests/unit/test_spec_model.py \
+		tests/unit/test_spec_reference.py \
+		tests/unit/test_spec_golden_parity.py \
+		tests/unit/test_spec_flink_plan.py \
+		tests/unit/test_streaming_user_skip_rate_golden.py
 
 docker-config:
 	docker compose config
