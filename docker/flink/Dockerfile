@@ -70,9 +70,11 @@ COPY pyproject.toml ./
 COPY src/ ./src/
 
 RUN /opt/pyflink/bin/python -m pip install --no-deps --no-cache-dir . \
-    && /opt/pyflink/bin/python -m pip install --no-cache-dir "pydantic>=2.8,<3" \
+    && /opt/pyflink/bin/python -m pip install --no-cache-dir \
+        "pydantic>=2.8,<3" \
+        "PyYAML>=6.0,<7.0" \
     && /opt/pyflink/bin/python -c \
-        "from featureforge.streaming.contracts.events import validate_event_json; print('Project import: OK')"
+        "from featureforge.streaming.contracts.events import validate_event_json; from featureforge.spec.loader import load_spec; from featureforge.spec.flink_plan import build_flink_plan; print('Project import: OK')"
 
 WORKDIR /opt/flink
 

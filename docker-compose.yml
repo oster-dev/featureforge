@@ -52,6 +52,7 @@ services:
         python.executable: /opt/pyflink/bin/python
     volumes:
       - ./jobs:/opt/flink/jobs:ro
+      - ./feature_repo/specs:/opt/flink/specs:ro
     healthcheck:
       test:
         - CMD-SHELL
