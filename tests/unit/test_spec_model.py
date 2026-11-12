@@ -38,11 +38,19 @@ def _mutate(**changes):
         (_mutate(window={"size": "24h", "slide": "7m", "boundary": "right_closed"}), "divide"),
         (_mutate(window={"size": "24h", "slide": "1m", "boundary": "left_closed"}), "right_closed"),
         (_mutate(dedupe={"key": "event_id", "ttl": "24h"}), "dedupe.ttl"),
-        (_mutate(online={"store": "redis", "ttl": "1h", "update_policy": "componentwise_monotonic"}), "online.ttl"),
+        (
+            _mutate(
+                online={"store": "redis", "ttl": "1h", "update_policy": "componentwise_monotonic"}
+            ),
+            "online.ttl",
+        ),
         (_mutate(derived={"skip_rate": "skip_count / total"}), "unknown names"),
         (_mutate(derived={"x": "__import__('os').system('id')"}), "not allowed"),
         (_mutate(derived={"play_count": "1"}), "clash"),
-        (_mutate(window={"size": "24 hours", "slide": "1m", "boundary": "right_closed"}), "invalid duration"),
+        (
+            _mutate(window={"size": "24 hours", "slide": "1m", "boundary": "right_closed"}),
+            "invalid duration",
+        ),
         (_mutate(unexpected=True), "unexpected"),
     ],
 )
