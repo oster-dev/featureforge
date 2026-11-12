@@ -1,12 +1,14 @@
 # FeatureForge Demo Guide
 
-Two reviewer walkthroughs, each runnable from a clean checkout:
+Three reviewer walkthroughs, each runnable from a clean checkout:
 
 1. **Batch path:** synthetic data to Feast-materialized online features.
 2. **Streaming path:** Kafka to Flink to Redis, verified end to end.
+3. **Feature spec:** a declarative spec validated and evaluated against the golden fixture.
 
-Expected local runtime: batch about 2 minutes, streaming several minutes
-(each Flink test starts from a fresh TaskManager).
+Expected local runtime: batch about 2 minutes, the spec demo a few seconds,
+streaming several minutes. In CI each Flink test module starts from a fresh
+TaskManager, and the skip-rate suite recreates it per test.
 
 ```mermaid
 flowchart LR
@@ -15,6 +17,9 @@ flowchart LR
     end
     subgraph B["Demo B: streaming"]
         B1[Kafka events] --> B2[Flink validate<br/>and route] --> B3[Flink features<br/>play count, skip rate] --> B4[Materializer] --> B5[Redis] --> B6[Unified online<br/>client]
+    end
+    subgraph C["Demo C: feature spec"]
+        C1[YAML spec] --> C2[Validate<br/>and field check] --> C3[Exact reference<br/>evaluation] --> C4[Golden fixture<br/>and hand-written<br/>references]
     end
 ```
 
@@ -147,15 +152,80 @@ See [Known limits](../ARCHITECTURE.md#known-limits).
 
 ---
 
+## Demo C: feature spec
+
+Features can be described declaratively (see
+[ADR-008](adr/ADR-008-feature-spec-design.md)). No infrastructure is needed.
+
+Validate the shipped specs, including a check that every referenced event field
+exists in the event contract:
+
+```bash
+python -m featureforge.spec.loader feature_repo/specs/*.yaml
+```
+
+Expected output:
+
+```text
+✓ feature_repo/specs/user_play_count_1h.yaml: user_play_count_1h v1
+✓ feature_repo/specs/user_skip_rate_24h.yaml: user_skip_rate_24h v1
+```
+
+Evaluate the play-count spec on the golden fixture at `2026-01-01T12:00Z`:
+
+```bash
+python - <<'PY'
+from datetime import UTC, datetime
+from pathlib import Path
+
+from featureforge.spec.loader import load_spec
+from featureforge.spec.reference import evaluate_spec
+from featureforge.streaming.contracts.events import InteractionEventV1
+
+spec = load_spec("feature_repo/specs/user_play_count_1h.yaml")
+lines = Path("fixtures/streaming/user_play_count_1h_v1.jsonl").read_text().splitlines()
+events = [InteractionEventV1.model_validate_json(line) for line in lines if line.strip()]
+at = datetime(2026, 1, 1, 12, tzinfo=UTC)
+for user in ("user_000001", "user_000002", "user_unknown"):
+    result = evaluate_spec(spec, events, entity={"user_id": user}, observation_time=at)
+    print(user, result.values)
+PY
+```
+
+Expected output:
+
+```text
+user_000001 {'play_count': 3}
+user_000002 {'play_count': 1}
+user_unknown {'play_count': 0}
+```
+
+The same values come from the hand-written reference. The test suite checks
+that agreement on randomized inputs placed exactly on window boundaries:
+
+```bash
+pytest -v tests/unit/test_spec_reference.py
+```
+
+### What this demo does not prove
+
+- No Flink job, Spark feature or Redis store is driven by a spec yet. The
+  hand-written implementations are still the executed ones.
+- `online.ttl` in a spec is declarative. The current stores write without expiry.
+
+---
+
 ## CI evidence
 
-Three independent GitHub Actions jobs run on every push to `main`:
+Four GitHub Actions jobs run on every push and pull request to `main`. A
+scheduled nightly run on `main` repeats them.
 
 | Job | Proves |
 |---|---|
 | Baseline lint and test | Clean install, Ruff, all infrastructure-free tests |
+| Python compatibility | The infrastructure-free suite on Python 3.11 and 3.12 |
 | Serving integration | Redis, Feast, materialization, online parity and ranking |
-| Streaming integration | Full Compose stack, joined Kafka, Flink and Redis tests |
+| Streaming integration | Full Compose stack, joined Kafka, Flink and Redis tests, each Flink test module on a fresh TaskManager |
 
 Current status: see the badge in the [README](../README.md) and the
 [Actions page](https://github.com/oster-dev/featureforge/actions).
@@ -179,6 +249,7 @@ runs them with zero skips.
 | Materialization blocked | Inspect `find output -path "*materialization_manifests*" -name "*.json"`, then the [runbook](runbooks/failed-materialization.md) |
 | Streaming tests cannot connect | `docker compose ps`, Redis published on `127.0.0.1:6379`, nothing else on port 6379 |
 | Flink job fails or hangs | `docker compose logs jobmanager --tail 100` and `docker compose logs taskmanager --tail 100` |
+| Spec validation fails | Read the printed field path and message. An unknown event field is reported with the available fields |
 
 Prepare serving explicitly if tests skip:
 

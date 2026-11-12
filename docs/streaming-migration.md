@@ -26,7 +26,9 @@ flowchart LR
     D1 --> D2[PR 7<br/>unified online<br/>access]:::dev
     D2 --> D3[PR 8<br/>routing and<br/>late events]:::dev
     D3 --> D4[PR 9<br/>skip-rate<br/>feature]:::dev
-    D4 --> D5[CI stabilization<br/>fresh TaskManager<br/>per test]:::dev
+    D4 --> D5[CI stabilization<br/>fresh TaskManager<br/>per skip-rate test]:::dev
+    D5 --> D6[PR 11<br/>feature spec<br/>model]:::dev
+    D6 --> D7[PR 12<br/>CI hardening,<br/>TaskManager per module]:::dev
 
     classDef imp fill:#cfe2ff,stroke:#0d6efd,color:#000
     classDef dev fill:#d4edda,stroke:#28a745,color:#000
@@ -45,7 +47,9 @@ inside FeatureForge.
 | PR #7 | `c8df9a8` | Unified batch and streaming online access |
 | PR #8 | `7a9851f` | Rejected-event routing, continuous late correction, too-late routing |
 | PR #9 | `94cad8a` | `user_skip_rate_24h` feature |
-| CI fixes | `bc86953` to `1ba2b93` | Test isolation for Flink suites. Last recorded state of `1ba2b93`: all three CI jobs green |
+| CI fixes | up to `1ba2b93` | Fresh TaskManager per skip-rate test. Last recorded state of `1ba2b93`: all three CI jobs green |
+| PR #11 | `1c1a8ac` | Declarative feature spec model and validation (ADR-008) |
+| PR #12 | `1281d2c` | CI hardening, fresh TaskManager per Flink test module, TaskManager metaspace logging |
 
 ---
 
@@ -175,10 +179,23 @@ GitHub Actions after roughly 7 to 8 jobs: jobs delivered no output, then failed
 with exhausted restart attempts. Raising timeouts and metaspace only delayed the
 failure.
 
-The Flink test suites now recreate the TaskManager before every test, start jobs
-with `--parallelism 1`, wait for a terminal job state after cancelling, and
-report the root cause from the Flink REST API. This **isolates** the tests. The
-underlying TaskManager failure is not yet explained.
+The skip-rate suite recreates the TaskManager before every test, starts jobs with
+`--parallelism 1`, waits for a terminal job state after cancelling, and reports
+the root cause from the Flink REST API. Since PR #12 the CI job additionally
+recreates the TaskManager before every Flink test module through
+`scripts/ci/run_flink_integration.sh`, runs all modules even if one fails, and
+logs the TaskManager metaspace after each module to test a class-loading-leak
+hypothesis. This **isolates** the tests. The underlying TaskManager failure is
+not yet explained.
+
+### Declarative feature spec (PR #11)
+
+`src/featureforge/spec/` defines a validated YAML specification for streaming
+features (ADR-008). `feature_repo/specs/` contains specs for `user_play_count_1h`
+and `user_skip_rate_24h`. The specs are validated and can be evaluated by an
+exact reference, but **no Flink job, store or Spark feature is spec-driven yet**.
+The hand-written jobs remain the executed implementation. `online.ttl` in a spec
+is declarative; the current Redis stores write without expiry.
 
 ---
 
@@ -192,6 +209,7 @@ underlying TaskManager failure is not yet explained.
 | Materializers | `src/featureforge/streaming/materialize.py`, `materialize_skip_rate.py` | Single-partition topics, reject empty ranges and tombstones, commit offsets only after Redis succeeds |
 | Online stores | `online_store.py`, `skip_rate_store.py` | Feature-specific guarded Redis writes |
 | Unified access | `src/featureforge/online.py` | Batch features and streaming play count |
+| Feature specs | `src/featureforge/spec/`, `feature_repo/specs/` | Validation only at runtime; not executed by any job |
 
 Both feature jobs share watermark delay (10 min), allowed lateness (30 min),
 checkpointing (10 s), too-late side outputs, event-ID dedupe and explicit failure
@@ -222,6 +240,7 @@ Skip-rate access through the unified interface is not yet implemented.
 | Zero emission for inactive users | **Not established.** A newer window can replace a value with zero, but no window job emits zero merely because time advances |
 | Historical streaming publication and published-as-of retrieval | **Not implemented.** No `published_at` is fabricated |
 | Atomic mixed batch and stream reads | **Not provided** (`atomic: false`) |
+| Spec-driven execution in Flink or Spark | **Not implemented.** Only the Python reference evaluates specs |
 
 Fresh bounded reprocessing is not recovery. Cancelling a test job during cleanup
 is not a recovery test. Passing replay, routing and correction tests must not be
@@ -255,7 +274,8 @@ FeatureForge has an integrated, tested streaming path with event validation,
 event-time windows, bounded replay idempotency, identity-conflict detection,
 guarded Redis materialization, rejected-event routing, continuous late
 correction and two streaming features. Unified batch and stream online access
-covers the play count.
+covers the play count. A validated declarative spec exists for both features but
+is not yet executed by a job.
 
 Remaining before the streaming phase can be called complete: recovery
 verification, TTL-boundary verification, versioned streaming history, skip-rate

@@ -1,7 +1,8 @@
 # FeatureForge Platform Blueprint
 
 **Status:** target design, updated 2026-11-12.
-**Baseline:** v0.1.0 released. Streaming core delivered.
+**Baseline:** v0.1.0 released. Streaming core delivered. Feature spec model and
+reference delivered, not yet executed by any job.
 
 This document describes the **target** system. Implemented behavior is in
 [ARCHITECTURE.md](../ARCHITECTURE.md). Delivery status is in [STATUS.md](../STATUS.md).
@@ -39,7 +40,7 @@ deployment lifecycle.
 
 ```mermaid
 flowchart LR
-    SPEC[Feature specs<br/>planned]:::plan
+    SPEC[Feature specs<br/>model and reference done,<br/>not executed yet]:::wip
 
     subgraph Compute
         BATCH[Pandas reference<br/>PySpark backfill]:::done
@@ -74,10 +75,12 @@ flowchart LR
     OBS -.-> STREAM & SERVICE
 
     classDef done fill:#d4edda,stroke:#28a745,color:#000
+    classDef wip fill:#fff3cd,stroke:#e0a800,color:#000
     classDef plan fill:#e2e3e5,stroke:#6c757d,color:#000,stroke-dasharray: 4 3
 ```
 
-Green is implemented and tested. Gray dashed is planned.
+Green is implemented and tested. Yellow is partly delivered. Gray dashed is
+planned.
 
 ---
 
@@ -90,7 +93,8 @@ time-based evaluation, online lookup and CI.
 
 Delivered since: Kafka/Flink validation and routing, `user_play_count_1h`,
 `user_skip_rate_24h`, late-event handling, replay idempotency, guarded Redis
-stores, unified online client.
+stores, unified online client, a validated declarative feature spec with an exact
+Python reference (ADR-008).
 
 **First integrated feature set:** seven-day user engagement, seven-day content
 popularity, `user_play_count_1h`, `user_skip_rate_24h`. Prove this slice before
@@ -112,7 +116,7 @@ the source actually generates.
 
 | Component | Owns | Rule |
 |---|---|---|
-| Contracts and catalog | Feature identity, entity, schema, version, window semantics, quality and freshness rules | Small typed spec with a **bounded operator set**. No universal SQL-to-Flink compiler |
+| Contracts and catalog | Feature identity, entity, schema, version, window semantics, quality and freshness rules | Small typed spec with a **bounded operator set**. No universal SQL-to-Flink compiler. Today: spec model, validation and an exact reference exist. No catalog and no spec-driven job yet |
 | Batch computation | Pandas references, PySpark, backfills, offline publication | A later backfill must not rewrite the recorded availability of an earlier online value |
 | Streaming computation | Validation, Flink jobs, late routing, finite-horizon dedupe, output contracts | Keep feature-specific correction policies. Append-only ordering is not general revision support |
 | Storage | Offline tables, versioned streaming history | Online stores hold current accepted values. History retains the versions needed for declared retrieval. Neither is assumed to update atomically with the other |
@@ -213,10 +217,12 @@ publication evidence supports.
 
 ## 10. Runtime compatibility
 
-Batch CI runs Python 3.13. The demonstrated Flink runtime uses Python 3.11 and
-Flink 1.20.3. Keep separate runtime environments until compatibility is tested,
-do not install the full dependency set into every container, and pin tested
-combinations. A broad version range is not compatibility evidence.
+The main CI jobs run Python 3.13. A separate compatibility job runs the
+infrastructure-free suite on Python 3.11 and 3.12. The demonstrated Flink runtime
+uses Python 3.11 and Flink 1.20.3. Keep separate runtime environments until
+compatibility is tested, do not install the full dependency set into every
+container, and pin tested combinations. A broad version range is not
+compatibility evidence.
 
 ---
 
@@ -254,7 +260,7 @@ flowchart LR
 |---|---|---|
 | A | Preserve released batch behavior, inventory dependencies, record import provenance | Done |
 | B | Integrate play-count slice, validation-to-online behavior, common read interface | Done |
-| C | Skip-rate and late corrections done. Streaming history, published-as-of retrieval, availability boundaries open | In progress |
+| C | Skip-rate and late corrections done. Feature spec model and exact reference done, spec-driven jobs open. Streaming history, published-as-of retrieval, availability boundaries open | In progress |
 | D | Label audit, mixed datasets, batch-only vs batch-plus-stream comparison, model-backed inference | Planned |
 | E | Metrics, recovery drills, benchmarks, clean-clone demo, notebook, reproducible release | Planned |
 

@@ -1,6 +1,6 @@
 # FeatureForge Status
 
-Last updated: 2026-11-12 · Baseline: `1281d2c` on `main` · CI: see the
+Last updated: 2026-11-12 · CI: see the
 [Actions page](https://github.com/oster-dev/featureforge/actions)
 
 This file is the single place for what is **delivered**, **in progress**, and
@@ -25,15 +25,16 @@ Related: [README](README.md) · [Architecture](ARCHITECTURE.md) ·
 | Late data | Late correction of an emitted window, too-late routing, both skip-rate correction directions | `test_user_play_count_late_events.py`, `test_user_skip_rate_job.py` |
 | Replay and conflicts | Replay idempotency, event-identity conflict detection | `test_user_play_count_replay_idempotency.py` |
 | Unified read access | Batch and streaming play count through one client, explicit missing, freshness and non-atomic metadata | `src/featureforge/online.py`, `test_unified_online.py` |
-| Feature spec model (WP1, stage 1) | Validated declarative spec: windows, lateness, dedupe, update policy, safe expressions. Both existing features expressed as specs. | `src/featureforge/spec/`, `feature_repo/specs/`, `tests/unit/test_spec_model.py` |
-| CI | Baseline, Python 3.11/3.12 compatibility, serving integration, streaming Flink integration with a fresh TaskManager per module, nightly run, concurrency and timeouts, Dependabot for Actions | `.github/workflows/ci.yml`, `scripts/ci/run_flink_integration.sh` |
-| Documentation | Architecture, blueprint, demo guide, ADRs, AWS production profile (design only) | `docs/` |
+| Feature spec model (WP1, stage 1) | Validated declarative spec: windows, lateness, dedupe, update policies, safe expressions. The loader rejects fields that are not in the event contract. Both existing features expressed as specs. | `src/featureforge/spec/`, `feature_repo/specs/`, `tests/unit/test_spec_model.py` |
+| Spec reference (WP1, stage 2) | Exact event-time reference evaluated directly from a spec: all operators, composite keys, missing-value rules, event-field check. Matches both hand-written references on randomized inputs at window boundaries and on the golden fixture. | `src/featureforge/spec/reference.py`, `tests/unit/test_spec_reference.py` |
+| CI | Baseline, Python 3.11/3.12 compatibility job, serving integration, streaming Flink integration with a fresh TaskManager per module, nightly run, concurrency and timeouts, Dependabot for Actions | `.github/workflows/ci.yml`, `scripts/ci/run_flink_integration.sh` |
+| Documentation | Architecture, blueprint, demo guide with batch, streaming and feature-spec walkthroughs, ADRs, AWS production profile (design only) | `docs/` |
 
 ## In progress
 
 | Item | State |
 |---|---|
-| WP1: declarative spec and generic engine | Stage 1 delivered (spec model and validation). Next stages below. |
+| WP1: declarative spec and generic engine | Stages 1 and 2 delivered. Stages 3 to 6 below. |
 | Streaming history and published-as-of retrieval (WP2) | Not started. Needs the time-model decision (`event_time` vs. `published_at`). |
 
 ### WP1 stages
@@ -41,17 +42,17 @@ Related: [README](README.md) · [Architecture](ARCHITECTURE.md) ·
 | Stage | Content | State |
 |---|---|---|
 | 1 | ADR-008, spec model, validation, two specs | **Done** |
-| 2 | Generic Pandas reference from a spec, parity with the hand-written skip-rate reference on the golden fixtures | Next |
-| 3 | Generic Flink job (`count`, `ratio`) matching the hand-written jobs | Planned |
-| 4 | Migrate both features, delete the hand-written jobs when parity is green | Planned |
-| 5 | Further operators, composite keys, Spark backfill | Planned |
+| 2 | Generic reference from a spec, parity with the hand-written references and the golden fixture | **Done** |
+| 3 | Generic Flink job (`count`, `ratio`) matching the hand-written jobs, with a skip-rate golden fixture | Next |
+| 4 | Migrate both features, delete the hand-written jobs when parity is green, spec-driven store policies | Planned |
+| 5 | Further operators in Flink, composite keys, Spark backfill | Planned |
 | 6 | Two new features by YAML only | Planned |
 
 ## Next
 
 Order follows the [readiness plan](docs/PLATFORM_BLUEPRINT.md):
 
-1. **WP1:** stages 2 to 6 above.
+1. **WP1:** stages 3 to 6 above.
 2. **WP2:** Iceberg offline store, stream history, point-in-time training datasets, parity test.
 3. **WP3:** second online backend (Cassandra) behind one contract suite.
 4. **WP4:** feature-serving service and load test.
@@ -69,9 +70,11 @@ workflow (Metaflow, MLflow, registry, rollback).
 | Single-partition Kafka topics only | Partition scaling is not demonstrated. |
 | Flink Kafka sinks are `AT_LEAST_ONCE` | No exactly-once claim. |
 | TaskManager failure in long CI runs is isolated, not explained | A fresh TaskManager per module isolates it. The metaspace is logged per module to test a class-loading-leak hypothesis. Root cause open. |
-| Specs are not used by any runtime component yet | Jobs, stores and references are still hand-written. The spec is validated, not executed. |
-| Spec filters are not checked against the event contract's field names | A misspelled field passes validation. |
-| `online.ttl` of `user_play_count_1h` in its spec is a placeholder | Not read from the existing store. |
+| Specs are validated and evaluated by the reference, but no job or store is spec-driven yet | Jobs, stores and Spark features are still hand-written. |
+| `online.ttl` in the specs is declarative only | The current Redis stores write keys without expiry. Enforcement arrives when stores become spec-driven. |
+| `window_replace` update policy has no store | Non-count operators cannot be served online yet. |
+| `approx_distinct` is exact in the reference | The accepted error bound of an engine implementation is not defined yet. |
+| No skip-rate golden fixture | Skip-rate parity runs against the hand-written reference, not against stored values. |
 | Unified client does not read `user_skip_rate_24h` | Skip rate is verified through its own pipeline tests. |
 | No latency or throughput numbers | No benchmark exists yet. |
 | Older joined and replay tests lack topic cleanup and subprocess timeouts | Tracked in [streaming provenance](docs/streaming-migration.md#open-test-maintenance-items). |

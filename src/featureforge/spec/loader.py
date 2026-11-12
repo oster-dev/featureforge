@@ -7,12 +7,16 @@ import yaml
 from pydantic import ValidationError
 
 from featureforge.spec.model import FeatureSpec
+from featureforge.spec.reference import validate_event_fields
 
 
 def load_spec(path: str | Path) -> FeatureSpec:
+    """Load a spec and check its event fields against the event contract."""
     with open(path, encoding="utf-8") as handle:
         data = yaml.safe_load(handle)
-    return FeatureSpec.model_validate(data)
+    spec = FeatureSpec.model_validate(data)
+    validate_event_fields(spec)
+    return spec
 
 
 def format_errors(exc: ValidationError) -> list[str]:
@@ -39,6 +43,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"✗ {path}")
             for line in format_errors(exc):
                 print(f"    {line}")
+            status = max(status, 1)
+        except ValueError as exc:
+            print(f"✗ {path}")
+            print(f"    {exc}")
             status = max(status, 1)
         else:
             print(f"✓ {path}: {spec.name} v{spec.version}")
