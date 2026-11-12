@@ -1,60 +1,47 @@
 # FeatureForge Demo Guide
 
-This guide demonstrates the local FeatureForge path from deterministic source
-data to materialized online features and a deterministic content-ranking result.
+Two reviewer walkthroughs, each runnable from a clean checkout:
 
-It is intended for a reviewer who wants to validate the platform without
-reading the full implementation first.
+1. **Batch path:** synthetic data to Feast-materialized online features.
+2. **Streaming path:** Kafka to Flink to Redis, verified end to end.
 
-## What This Demonstrates
+Expected local runtime: batch about 2 minutes, streaming several minutes
+(each Flink test starts from a fresh TaskManager).
 
-```text
-synthetic source data
-    → canonical offline backfill
-    → persisted-feature correctness validation
-    → Feast materialization
-    → feature freshness check
-    → Redis online serving
-    → online feature lookup
-    → deterministic content ranking
+```mermaid
+flowchart LR
+    subgraph A["Demo A: batch"]
+        A1[Generate] --> A2[Backfill] --> A3{Correctness<br/>gate} --> A4[Feast<br/>materialize] --> A5[Freshness<br/>check] --> A6[Online lookup<br/>and ranking]
+    end
+    subgraph B["Demo B: streaming"]
+        B1[Kafka events] --> B2[Flink validate<br/>and route] --> B3[Flink features<br/>play count, skip rate] --> B4[Materializer] --> B5[Redis] --> B6[Unified online<br/>client]
+    end
 ```
-
-The local profile uses:
-
-- Parquet under `output/offline_store/` as the canonical offline feature store.
-- Redis through Docker Compose as the online store.
-- Feast for feature definitions, materialization, and online lookup.
-
-For the AWS production profile, see
-[AWS Production Profile](aws-production-profile.md).
 
 ## Prerequisites
 
-- Python 3.11, 3.12, or 3.13
+- Python 3.11, 3.12 or 3.13
 - Docker Desktop running
 - GNU Make
-- FeatureForge installed with development, feature-store, and Spark dependencies
-
-Install from a clean checkout:
 
 ```bash
 git clone [https://github.com/oster-dev/featureforge.git](https://github.com/oster-dev/featureforge.git)
 cd featureforge
-
-python3 -m venv .venv
-source .venv/bin/activate
-
+python3 -m venv .venv && source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[dev,feature-store,spark]"
+python -m pip install -e ".[dev,feature-store,spark,streaming]"
 ```
 
-## Run the Demo
+---
 
-Start Redis and apply the Feast feature repository before the first local
-materialization:
+## Demo A: batch path
+
+Local profile: Parquet under `output/offline_store/` as the canonical offline
+store, Redis via Docker Compose as the online store, Feast for definitions,
+materialization and lookup.
 
 ```bash
-docker compose up -d
+docker compose up -d redis
 
 cd feature_repo
 feast apply
@@ -63,25 +50,13 @@ cd ..
 make demo
 ```
 
-`make demo` runs the reproducible local workflow:
+`make demo` generates deterministic data, backfills canonical partitions,
+validates them **before** materialization, materializes into Redis, checks
+freshness, retrieves online features and produces a deterministic ranking. Run
+artifacts go to `output_e2e/`, canonical features to `output/offline_store/`.
+Nothing generated is committed.
 
-```text
-generate deterministic source data
-    → backfill canonical offline feature partitions
-    → validate persisted features before materialization
-    → materialize validated values into Redis
-    → verify feature freshness
-    → retrieve online user features
-    → produce deterministic content ranking
-```
-
-The demo writes run-scoped artifacts to `output_e2e/` and writes canonical
-serving features to `output/offline_store/`. Generated artifacts are
-reproducible and are not committed to Git.
-
-## Expected Signals
-
-A successful run should include output equivalent to:
+### Expected signals
 
 ```text
 FeatureForge dataset generated
@@ -94,199 +69,143 @@ FeatureForge dataset generated
 === Ranked Content ===
 ```
 
-The default demonstration data produces:
-
-```text
-500 users
-250 content items
-10,200 events
-1,000 observation labels
-6 canonical observation-date partitions
-```
-
-Exact scores are deterministic for the current data configuration, but may
-change intentionally when feature definitions or generation contracts evolve.
-
-## Local Demo Evidence
-
-### Pipeline and materialization
-
-The local demo generates deterministic data, creates six canonical feature
-partitions, and materializes both feature views into Redis.
+Default data: 500 users, 250 content items, 10,200 events, 1,000 observation
+labels, 6 canonical partitions. Scores are deterministic for the current
+configuration and may change intentionally when feature definitions or
+generation contracts evolve.
 
 ![Local pipeline and materialization succeeded](images/local-demo-pipeline-and-materialization.png)
 
-### Freshness and ranking
-
-The local demo validates the freshness SLO with zero lag, retrieves online user
-features, calculates an engagement decision, and returns a deterministic
-top-five content ranking.
-
 ![Local freshness and ranking succeeded](images/local-demo-freshness-and-ranking.png)
 
-## Verify Individual Layers
-
-Use these commands to inspect individual parts of the platform after the demo.
-
-### Check Redis
+### Verify the layers
 
 ```bash
-docker exec featureforge-redis redis-cli ping
+docker exec featureforge-redis redis-cli ping          # PONG
+find output/offline_store -name features.parquet       # six partitions per view
+pytest -v tests/integration/test_online_serving.py     # 5 passed
 ```
 
-Expected output:
+The serving suite checks user and content parity against the latest offline
+partition, unknown entities, batch candidates and deterministic ranking.
 
-```text
-PONG
-```
+---
 
-### Verify the Canonical Offline Store
+## Demo B: streaming path
 
 ```bash
-find output/offline_store -name features.parquet
+docker compose up -d --build
+docker compose ps            # kafka, jobmanager, taskmanager, redis healthy
 ```
 
-Expected layout:
-
-```text
-output/offline_store/
-├── user_engagement_features/
-│   └── observation_date=YYYY-MM-DD/
-│       └── features.parquet
-└── content_popularity_features/
-    └── observation_date=YYYY-MM-DD/
-        └── features.parquet
-```
-
-### Run Serving Tests Directly
-
-After feature values have been materialized:
+Run the joined end-to-end tests:
 
 ```bash
-pytest -v tests/integration/test_online_serving.py
+pytest -v -m integration \
+  tests/integration/test_user_play_count_kafka_to_redis.py \
+  tests/integration/test_skip_rate_flink_to_redis.py
 ```
 
-Expected result:
+Each test creates isolated Kafka topics, produces events, runs the Flink jobs,
+materializes the feature topic into Redis and reads the final online value
+against the reference result.
 
-```text
-5 passed
+### What the streaming tests show
+
+| Behavior | Test |
+|---|---|
+| Invalid events go to a rejected topic without blocking valid ones | `test_streaming_validation_routing.py` |
+| Late events correct an already emitted window | `test_user_play_count_late_events.py` |
+| Events too late for all windows are routed out | `test_user_play_count_late_events.py`, `test_user_skip_rate_job.py` |
+| Replay and duplicates do not change results | `test_user_play_count_replay_idempotency.py` |
+| Exact window boundaries are respected | `test_user_skip_rate_job.py` |
+| Stale and conflicting online writes are rejected | `test_redis_skip_rate_store.py` |
+
+Run any of them with `pytest -v -m integration tests/integration/<file>`.
+
+### Read a feature through the unified client
+
+```bash
+python -m featureforge.online \
+  --user-id user_000290 \
+  --reference-time 2026-03-25T00:00:00+00:00 \
+  --batch-max-age-seconds 172800 \
+  --stream-max-age-seconds 7200
 ```
 
-The serving suite verifies user and content feature parity, unknown-entity
-behavior, batch candidate handling, and deterministic ranking against
-materialized online values.
+Every value reports its backend, availability, observation time and freshness.
+A missing value is shown as missing, never as `0`. Exit codes: `0` success,
+`1` feature errors, `2` invalid request.
 
-## CI Evidence
+### What this demo does not prove
 
-FeatureForge validates the platform through two GitHub Actions jobs.
+- Checkpoint or savepoint recovery and dedupe after TTL expiry are not covered.
+- The Flink Kafka sinks are at-least-once. The path is idempotent, not exactly-once.
+- Multi-partition Kafka and streaming history are not implemented.
 
-### Baseline lint and test
+See [Known limits](../ARCHITECTURE.md#known-limits).
 
-The baseline job validates a clean Python installation, package import, Ruff
-formatting, Ruff linting, and the infrastructure-free test suite.
+---
+
+## CI evidence
+
+Three independent GitHub Actions jobs run on every push to `main`:
+
+| Job | Proves |
+|---|---|
+| Baseline lint and test | Clean install, Ruff, all infrastructure-free tests |
+| Serving integration | Redis, Feast, materialization, online parity and ranking |
+| Streaming integration | Full Compose stack, joined Kafka, Flink and Redis tests |
+
+Current status: see the badge in the [README](../README.md) and the
+[Actions page](https://github.com/oster-dev/featureforge/actions).
 
 ![Baseline lint and test succeeded](images/ci-baseline-lint-and-test.png)
 
-Expected result:
-
-```text
-141 passed, 5 skipped, 0 failed
-```
-
-The five skipped tests require Redis, applied Feast definitions, canonical
-offline snapshots, and materialized online feature values.
-
-### Redis and Feast serving integration
-
-The serving-integration job provisions Redis in a clean GitHub Actions runner,
-generates deterministic source data, builds the canonical offline store, applies
-Feast definitions, materializes validated features, and executes the
-online-serving test suite.
-
 ![Redis and Feast serving integration succeeded](images/ci-redis-and-feast-serving-integration.png)
 
-Expected result:
+The baseline job skips the five online-serving tests on purpose, because they
+need Redis, applied Feast definitions and materialized values. The serving job
+runs them with zero skips.
 
-```text
-5 passed, 0 skipped, 0 failed
-```
-
-The jobs deliberately have different scopes: the baseline job remains fast and
-infrastructure-free, while the serving-integration job validates the full Redis
-and Feast path.
+---
 
 ## Troubleshooting
 
-### Redis is unavailable
+| Symptom | Fix |
+|---|---|
+| Redis unavailable | `docker compose down && docker compose up -d`, then `docker exec featureforge-redis redis-cli ping` |
+| Serving tests skipped | Redis reachable, `feast apply` run, canonical partitions present, features materialized (see below) |
+| Materialization blocked | Inspect `find output -path "*materialization_manifests*" -name "*.json"`, then the [runbook](runbooks/failed-materialization.md) |
+| Streaming tests cannot connect | `docker compose ps`, Redis published on `127.0.0.1:6379`, nothing else on port 6379 |
+| Flink job fails or hangs | `docker compose logs jobmanager --tail 100` and `docker compose logs taskmanager --tail 100` |
 
-Confirm that Docker Desktop is running, then restart the local service:
-
-```bash
-docker compose down
-docker compose up -d
-docker exec featureforge-redis redis-cli ping
-```
-
-### Serving tests are skipped
-
-The serving tests require all of the following:
-
-- Redis is reachable.
-- Feast definitions have been applied.
-- Canonical partitions exist in `output/offline_store/`.
-- Feature values have been materialized into Redis.
-
-Prepare the local stack explicitly:
+Prepare serving explicitly if tests skip:
 
 ```bash
-docker compose up -d
-
-cd feature_repo
-feast apply
-cd ..
-
+docker compose up -d redis
+(cd feature_repo && feast apply)
 featureforge materialize \
   --repo feature_repo \
   --start-time 2026-03-20T00:00:00+00:00 \
   --end-time 2026-03-25T00:00:00+00:00 \
   --manifest-output output
-```
-
-Then run:
-
-```bash
 pytest -v tests/integration/test_online_serving.py
 ```
 
-### Materialization is blocked
+A blocked materialization means the correctness gate found invalid persisted
+data. Fix the data, do not bypass the gate.
 
-FeatureForge validates persisted canonical feature partitions before invoking
-Feast. A blocked materialization means the correctness gate found invalid data.
-
-Inspect the materialization manifest:
-
-```bash
-find output -path "*materialization_manifests*" -name "*.json"
-```
-
-Then follow the
-[Failed Materialization Runbook](runbooks/failed-materialization.md).
+---
 
 ## Cleanup
 
-Stop Redis when the demo is complete:
-
 ```bash
-make docker-down
-```
-
-To remove generated run artifacts before another demonstration:
-
-```bash
+make docker-down                 # stop services
 rm -rf output_e2e output/source_data output/offline_store \
   output/materialization_manifests
 ```
 
 Do not remove `feature_repo/data/registry.db` while Redis or Feast commands
-are running. For a complete local reset, stop Redis first and then either use a
-fresh checkout or deliberately re-apply the Feast repository.
+are running. For a complete reset, stop Redis first, then use a fresh checkout
+or re-apply the Feast repository.
