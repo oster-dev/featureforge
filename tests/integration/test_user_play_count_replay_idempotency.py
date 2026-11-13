@@ -19,6 +19,16 @@ REDIS_URL = "redis://127.0.0.1:6379/0"
 EVENT_TIME = datetime(2026, 1, 1, 11, 30, tzinfo=UTC)
 SUBPROCESS_TIMEOUT_SECONDS = 180
 
+HAND_WRITTEN_JOB = ("user_play_count_1h.py", [])
+GENERIC_JOB = (
+    "feature_from_spec.py",
+    ["--spec", "/opt/flink/specs/user_play_count_1h.yaml"],
+)
+JOB_VARIANTS = [
+    pytest.param(*HAND_WRITTEN_JOB, id="hand_written"),
+    pytest.param(*GENERIC_JOB, id="generic_spec"),
+]
+
 
 def create_topics(bootstrap_servers: str, topics: list[str]) -> None:
     """Create isolated topics with broker-time Kafka record timestamps."""
@@ -109,6 +119,8 @@ def run_validation(
 
 
 def run_play_count(
+    job_script: str,
+    job_arguments: list[str],
     validated_topic: str,
     feature_topic: str,
     late_topic: str,
@@ -117,6 +129,7 @@ def run_play_count(
     no_restart: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     arguments = [
+        *job_arguments,
         "--bootstrap-servers",
         "kafka:29092",
         "--input-topic",
@@ -134,7 +147,7 @@ def run_play_count(
     if no_restart:
         arguments.append("--no-restart")
 
-    return run_command(flink_command("user_play_count_1h.py", arguments))
+    return run_command(flink_command(job_script, arguments))
 
 
 def run_materializer(arguments: list[str]) -> dict[str, dict[str, int]]:
@@ -189,7 +202,10 @@ def make_event(
 
 
 @pytest.mark.integration
-def test_replayed_play_event_does_not_change_redis_value() -> None:
+@pytest.mark.parametrize(("job_script", "job_arguments"), JOB_VARIANTS)
+def test_replayed_play_event_does_not_change_redis_value(
+    job_script: str, job_arguments: list[str]
+) -> None:
     run_id = uuid.uuid4().hex
     input_topic = f"featureforge-stream.integration.replay.input.{run_id}"
     validated_topic = f"featureforge-stream.integration.replay.validated.{run_id}"
@@ -218,6 +234,8 @@ def test_replayed_play_event_does_not_change_redis_value() -> None:
 
     run_validation(input_topic, validated_topic, rejected_topic, run_id)
     completed = run_play_count(
+        job_script,
+        job_arguments,
         validated_topic,
         feature_topic,
         late_topic,
@@ -277,6 +295,8 @@ def test_replayed_play_event_does_not_change_redis_value() -> None:
                 replay_run_id,
             )
             completed = run_play_count(
+                job_script,
+                job_arguments,
                 validated_topic,
                 feature_topic,
                 late_topic,
@@ -294,7 +314,10 @@ def test_replayed_play_event_does_not_change_redis_value() -> None:
 
 
 @pytest.mark.integration
-def test_conflicting_event_identity_fails_the_play_count_job() -> None:
+@pytest.mark.parametrize(("job_script", "job_arguments"), JOB_VARIANTS)
+def test_conflicting_event_identity_fails_the_play_count_job(
+    job_script: str, job_arguments: list[str]
+) -> None:
     run_id = uuid.uuid4().hex
     input_topic = f"featureforge-stream.integration.conflict.input.{run_id}"
     validated_topic = f"featureforge-stream.integration.conflict.validated.{run_id}"
@@ -326,6 +349,8 @@ def test_conflicting_event_identity_fails_the_play_count_job() -> None:
 
     run_validation(input_topic, validated_topic, rejected_topic, run_id)
     completed = run_play_count(
+        job_script,
+        job_arguments,
         validated_topic,
         feature_topic,
         late_topic,
