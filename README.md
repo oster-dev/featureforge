@@ -143,7 +143,7 @@ All of the above run in CI on every pull request and push to `main`, plus a nigh
 Prerequisites: Python 3.11–3.13, Docker, GNU Make.
 
 ```bash
-git clone [https://github.com/oster-dev/featureforge.git](https://github.com/oster-dev/featureforge.git)
+git clone https://github.com/oster-dev/featureforge.git
 cd featureforge
 python3 -m venv .venv && source .venv/bin/activate
 python -m pip install -e ".[dev,feature-store,spark,streaming]"

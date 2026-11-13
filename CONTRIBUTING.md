@@ -13,7 +13,7 @@ Read first: [README](README.md) · [ARCHITECTURE](ARCHITECTURE.md) ·
 Prerequisites: Python 3.11–3.13, Docker, GNU Make, Git.
 
 ```bash
-git clone [https://github.com/oster-dev/featureforge.git](https://github.com/oster-dev/featureforge.git)
+git clone https://github.com/oster-dev/featureforge.git
 cd featureforge
 python3 -m venv .venv && source .venv/bin/activate
 python -m pip install --upgrade pip
