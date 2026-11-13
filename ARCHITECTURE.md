@@ -113,6 +113,15 @@ conflicting payload for a known `event_id` fails the job with
 `EventIdentityConflictError`. A bounded mode lets tests consume the current
 Kafka range and terminate.
 
+**Savepoint resume.** The generic job can be stopped with a savepoint and
+resumed by a new job from it. The Compose stack shares one savepoint volume
+between JobManager and TaskManager. The recovery test shows for the play-count
+spec that the resumed job restores the savepoint (it does not replay from the
+earliest offset), that a redelivered event is not counted again because the
+dedupe state survives, and that a late correction lands in the restored window
+state. This covers a planned stop. It does not cover automatic recovery from a
+checkpoint after a crash.
+
 ### Contracts
 
 `InteractionEventV1` rejects invalid timestamps, ingestion before event time,
@@ -204,7 +213,8 @@ flowchart LR
   `UnsupportedSpecError` instead of being computed wrongly. It is the only
   implementation of `user_play_count_1h` and `user_skip_rate_24h`: on the golden
   fixtures every emitted window matches both references, and the integration
-  tests cover late corrections, too-late routing, replay and the Redis path.
+  tests cover late corrections, too-late routing, replay, savepoint resume and
+  the Redis path.
 - **Still hand-written.** The Redis store policies and the materializers are
   written by hand per feature. `online.ttl` and `offline.store` in the specs
   are declarative only: the Redis stores write keys without expiry and no
@@ -289,8 +299,10 @@ Scope and order: [STATUS.md](STATUS.md) and
 - Local reference implementation: Docker Compose, synthetic data, no production
   scale claim. AWS (S3, DynamoDB, managed Kafka and Flink) is documented in
   [aws-production-profile.md](docs/aws-production-profile.md), not deployed.
-- Replay tests cover fresh bounded executions. **Not** verified: checkpoint or
-  savepoint recovery, dedupe after TTL expiry, multi-partition Kafka.
+- Replay tests cover fresh bounded executions. Stop with a savepoint and resume
+  is verified for the play-count spec on the generic job. **Not** verified:
+  automatic recovery from a checkpoint after a failure, dedupe after TTL
+  expiry, multi-partition Kafka.
 - Flink Kafka sinks use `AT_LEAST_ONCE`. Idempotency comes from dedupe and
   guarded Redis writes, not from end-to-end exactly-once.
 - Streaming history and point-in-time retrieval of streaming features are not

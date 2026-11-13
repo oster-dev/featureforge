@@ -78,4 +78,7 @@ RUN /opt/pyflink/bin/python -m pip install --no-deps --no-cache-dir . \
 
 WORKDIR /opt/flink
 
+RUN mkdir -p /opt/flink/savepoints \
+    && chown flink:flink /opt/flink/savepoints
+
 USER flink

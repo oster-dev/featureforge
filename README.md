@@ -97,6 +97,7 @@ Full design: [ARCHITECTURE.md](ARCHITECTURE.md) ·
 | Late events correct already emitted windows; events too late for all windows are routed out | [`test_user_play_count_late_events.py`](tests/integration/test_user_play_count_late_events.py) |
 | Replayed and duplicate events do not change results | [`test_user_play_count_replay_idempotency.py`](tests/integration/test_user_play_count_replay_idempotency.py) |
 | Conflicting payloads for the same `event_id` fail loudly | [`test_user_play_count_replay_idempotency.py`](tests/integration/test_user_play_count_replay_idempotency.py) |
+| The generic job resumes from a savepoint with its dedupe and window state intact (shown for play count) | [`test_generic_job_recovery.py`](tests/integration/test_generic_job_recovery.py) |
 | Online writes never regress: stale, older, and conflicting updates are rejected | [`test_streaming_redis_online_store.py`](tests/integration/test_streaming_redis_online_store.py), [`test_skip_rate_update_policy.py`](tests/unit/test_skip_rate_update_policy.py) |
 | Concurrent writers are safe (Redis `WATCH`/`MULTI` with bounded retries) | [`test_streaming_redis_online_store_concurrency.py`](tests/integration/test_streaming_redis_online_store_concurrency.py) |
 | Full Kafka → Flink → Kafka → Redis path produces the reference result | [`test_user_play_count_kafka_to_redis.py`](tests/integration/test_user_play_count_kafka_to_redis.py), [`test_skip_rate_flink_to_redis.py`](tests/integration/test_skip_rate_flink_to_redis.py) |
@@ -114,9 +115,10 @@ language is bounded on purpose, see [ADR-008](docs/adr/ADR-008-feature-spec-desi
 | A generic Flink job built from a spec reproduces the golden fixtures of both features: every emitted window matches the spec reference and the Python reference | [`test_feature_from_spec_job.py`](tests/integration/test_feature_from_spec_job.py), [`test_spec_flink_plan.py`](tests/unit/test_spec_flink_plan.py) |
 
 The generic job is the only implementation of both streaming features. It is
-verified on the golden fixtures, late corrections, replay and the Redis path.
-The Redis store policies and the materializers are still written by hand per
-feature. See [STATUS.md](STATUS.md) for what is not yet proven.
+verified on the golden fixtures, late corrections, replay, the Redis path, and
+a savepoint stop and resume. The Redis store policies and the materializers are
+still written by hand per feature. See [STATUS.md](STATUS.md) for what is not
+yet proven.
 
 ### Online access
 
@@ -191,7 +193,7 @@ Both streaming features are defined as specs in
 | Phase | Status |
 |---|---|
 | 1 · Feature store foundation | **Released** as [v0.1.0](https://github.com/oster-dev/featureforge/releases/tag/v0.1.0) |
-| 2 · Streaming feature platform | **Core delivered.** Declarative feature specs: spec model, reference and one generic Flink job running both streaming features are done. Spec-driven stores, recovery evidence, streaming history, and the final demo are open |
+| 2 · Streaming feature platform | **Core delivered.** Declarative feature specs: spec model, reference and one generic Flink job running both streaming features are done, including savepoint resume. Open: automatic checkpoint recovery after a failure, dedupe after TTL expiry, spec-driven stores, streaming history, and the final demo |
 | 3 · End-to-end ML workflow | **Planned** |
 
 Details, open items, and known limitations: **[STATUS.md](STATUS.md)**.
