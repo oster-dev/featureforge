@@ -1,4 +1,4 @@
-"""Isolated skip-rate window, correction, duplicate, and late-routing proofs."""
+"""Isolated skip-rate window, correction, duplicate, and late-routing proofs for both jobs."""
 
 import json
 import re
@@ -116,6 +116,17 @@ def fresh_taskmanager(timeout: float = 180.0) -> None:
 
 @pytest.mark.integration
 @pytest.mark.parametrize(
+    ("job_script", "job_arguments"),
+    [
+        pytest.param("/opt/flink/jobs/user_skip_rate_24h.py", (), id="hand-written"),
+        pytest.param(
+            "/opt/flink/jobs/feature_from_spec.py",
+            ("--spec", "/opt/flink/specs/user_skip_rate_24h.yaml"),
+            id="generic",
+        ),
+    ],
+)
+@pytest.mark.parametrize(
     ("scenario", "offset", "expected_skips"),
     [
         pytest.param("corrections", None, None, id="late-corrections-and-duplicates"),
@@ -154,6 +165,8 @@ def fresh_taskmanager(timeout: float = 180.0) -> None:
     ],
 )
 def test_skip_rate_stream_contract(
+    job_script: str,
+    job_arguments: tuple[str, ...],
     scenario: str,
     offset: timedelta | None,
     expected_skips: int | None,
@@ -315,7 +328,8 @@ def test_skip_rate_stream_contract(
             "--parallelism",
             "1",
             "--python",
-            "/opt/flink/jobs/user_skip_rate_24h.py",
+            job_script,
+            *job_arguments,
             "--input-topic",
             input_topic,
             "--feature-topic",
