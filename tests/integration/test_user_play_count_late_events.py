@@ -5,6 +5,7 @@ import re
 import subprocess
 import time
 from datetime import UTC, datetime
+from urllib.request import urlopen
 from uuid import uuid4
 
 import pytest
@@ -16,7 +17,17 @@ from featureforge.streaming.contracts.events import InteractionEventV1
 pytestmark = pytest.mark.integration
 
 BOOTSTRAP_SERVERS = "127.0.0.1:9092"
+FLINK_API = "http://127.0.0.1:8081"
 WAIT_SECONDS = 90
+
+HAND_WRITTEN_JOB = (
+    "/opt/flink/jobs/user_play_count_1h.py",
+    ["--bootstrap-servers", "kafka:29092"],
+)
+GENERIC_JOB = (
+    "/opt/flink/jobs/feature_from_spec.py",
+    ["--spec", "/opt/flink/specs/user_play_count_1h.yaml"],
+)
 
 
 def run_flink(arguments: list[str]) -> subprocess.CompletedProcess[str]:
@@ -41,6 +52,33 @@ def run_flink(arguments: list[str]) -> subprocess.CompletedProcess[str]:
         f"stderr:\n{completed.stderr}"
     )
     return completed
+
+
+def flink_api(path: str) -> dict:
+    with urlopen(f"{FLINK_API}/{path}", timeout=10) as response:
+        return json.load(response)
+
+
+def wait_for_free_slot(timeout: float = 120.0) -> None:
+    deadline = time.monotonic() + timeout
+    overview = None
+    while time.monotonic() < deadline:
+        overview = flink_api("overview")
+        if overview["slots-available"] >= 1:
+            return
+        time.sleep(1)
+    raise AssertionError(f"No free Flink slot within {timeout}s: {overview}")
+
+
+def wait_for_job_terminal(job_id: str, timeout: float = 120.0) -> None:
+    deadline = time.monotonic() + timeout
+    state = None
+    while time.monotonic() < deadline:
+        state = flink_api(f"jobs/{job_id}")["state"]
+        if state in {"CANCELED", "FAILED", "FINISHED"}:
+            return
+        time.sleep(1)
+    raise AssertionError(f"Job {job_id} did not reach a terminal state; last={state}")
 
 
 def make_event(user_id: str, hour: int, minute: int) -> InteractionEventV1:
@@ -120,7 +158,16 @@ def matches_feature(record, *, user_id, observation_time, play_count):
     )
 
 
-def test_late_event_corrects_emitted_window_and_expired_event_is_routed():
+@pytest.mark.parametrize(
+    ("job_script", "job_arguments"),
+    [
+        pytest.param(*HAND_WRITTEN_JOB, id="hand_written"),
+        pytest.param(*GENERIC_JOB, id="generic_spec"),
+    ],
+)
+def test_late_event_corrects_emitted_window_and_expired_event_is_routed(
+    job_script: str, job_arguments: list[str]
+):
     run_id = uuid4().hex
     input_topic = f"featureforge-stream.integration.lateness.input.{run_id}"
     feature_topic = f"featureforge-stream.integration.lateness.features.{run_id}"
@@ -156,14 +203,16 @@ def test_late_event_corrects_emitted_window_and_expired_event_is_routed():
         feature_consumer = make_consumer(feature_topic)
         late_consumer = make_consumer(late_topic)
 
+        wait_for_free_slot()
         completed = run_flink(
             [
                 "run",
                 "--detached",
+                "--parallelism",
+                "1",
                 "--python",
-                "/opt/flink/jobs/user_play_count_1h.py",
-                "--bootstrap-servers",
-                "kafka:29092",
+                job_script,
+                *job_arguments,
                 "--input-topic",
                 input_topic,
                 "--feature-topic",
@@ -259,6 +308,7 @@ def test_late_event_corrects_emitted_window_and_expired_event_is_routed():
         try:
             if job_id is not None:
                 run_flink(["cancel", job_id])
+                wait_for_job_terminal(job_id)
         finally:
             if feature_consumer is not None:
                 feature_consumer.close()
