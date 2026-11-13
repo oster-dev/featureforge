@@ -24,7 +24,8 @@ Related: [README](README.md) · [Architecture](ARCHITECTURE.md) ·
 | Validation and routing | Rejected events go to a separate topic, valid follow-up events keep flowing | `test_streaming_validation_routing.py` |
 | Late data | Late correction of an emitted window and too-late routing for the play count, both skip-rate correction directions | `test_user_play_count_late_events.py`, `test_user_skip_rate_job.py` |
 | Replay and conflicts | Play count: replay idempotency including the Kafka-to-Redis materializer, and event-identity conflict detection that fails the job. Skip rate: corrections through the materializer and a replay that preserves the Redis value. | `test_user_play_count_replay_idempotency.py`, `test_skip_rate_flink_to_redis.py` |
-| Savepoint resume | The generic job stops with a savepoint and a new job resumes from it. A redelivered event does not count again, a correction lands in the restored window, and the late topic stays empty. The test checks that the new job really restored the savepoint. Shown for the play-count spec. | `tests/integration/test_generic_job_recovery.py`, `docker-compose.yml` (shared savepoint volume) |
+| Savepoint resume | The generic job stops with a savepoint and a new job resumes from it. A redelivered event does not count again, a correction lands in the restored window, and the late topic stays empty. The test checks that the new job really restored the savepoint. Shown for the play-count spec. It covers a planned stop, not a crash. | `tests/integration/test_generic_job_recovery.py`, `docker-compose.yml` (shared savepoint volume) |
+| Crash recovery | The TaskManager is killed while the generic job runs. The same job restarts on its own and restores a checkpoint that contains the earlier events and is not a savepoint. A redelivered event does not count again, a late correction lands in the restored window, and the late topic stays empty. Shown for the play-count spec. The JobManager keeps running and holds the checkpoints in memory. | `tests/integration/test_generic_job_checkpoint_recovery.py` |
 | Unified read access | Batch and streaming play count through one client, explicit missing, freshness and non-atomic metadata | `src/featureforge/online.py`, `test_unified_online.py` |
 | Skip-rate golden fixture | Deterministic event file with hand-calculated expected values: both window edges, a duplicate delivery, ignored event types, a second user, expiry to a zero denominator. Matched by the Python reference, by the spec reference including a sweep over every event boundary, and by the generic Flink job. | `fixtures/streaming/user_skip_rate_24h_v1.jsonl`, `tests/unit/test_streaming_user_skip_rate_golden.py`, `tests/unit/test_spec_golden_parity.py`, `tests/integration/test_feature_from_spec_job.py` |
 | Feature spec model (WP1, stage 1) | Validated declarative spec: windows, lateness, dedupe, update policies, safe expressions. The loader rejects fields that are not in the event contract. Both existing features expressed as specs. | `src/featureforge/spec/`, `feature_repo/specs/`, `tests/unit/test_spec_model.py` |
@@ -37,7 +38,7 @@ Related: [README](README.md) · [Architecture](ARCHITECTURE.md) ·
 
 | Item | State |
 |---|---|
-| WP1: declarative spec and generic engine | Stages 1 to 3 delivered for both features. Stage 4 delivered except automatic checkpoint recovery, dedupe after TTL expiry and spec-driven store policies: every integration test runs on the generic job and the hand-written jobs are deleted. Stages 5 and 6 below. |
+| WP1: declarative spec and generic engine | Stages 1 to 3 delivered for both features. Stage 4 delivered except dedupe after TTL expiry and spec-driven store policies: every integration test runs on the generic job and the hand-written jobs are deleted. Stages 5 and 6 below. |
 | Streaming history and published-as-of retrieval (WP2) | Not started. Needs the time-model decision (`event_time` vs. `published_at`). |
 
 ### WP1 stages
@@ -47,7 +48,7 @@ Related: [README](README.md) · [Architecture](ARCHITECTURE.md) ·
 | 1 | ADR-008, spec model, validation, two specs | **Done** |
 | 2 | Generic reference from a spec, parity with the Python references and the play-count golden fixture | **Done** |
 | 3 | Generic Flink job (`count`, `ratio`): golden fixtures, spec-reference parity, job plan from a spec, generic job verified against the fixtures of both features | **Done** |
-| 4 | 4a to 4f done: the skip-rate scenarios, the play-count golden fixture, the late-event scenarios, replay and identity conflict, the skip-rate Flink-to-Redis flow and the joined play-count flow all ran on both the hand-written and the generic job. 4g done: the hand-written jobs are deleted, the generic job is the only implementation. 4h done: stop with a savepoint and resume on the generic job. Open: automatic checkpoint recovery after a TaskManager failure, dedupe after TTL expiry, spec-driven store policies | In progress |
+| 4 | 4a to 4f done: the skip-rate scenarios, the play-count golden fixture, the late-event scenarios, replay and identity conflict, the skip-rate Flink-to-Redis flow and the joined play-count flow all ran on both the hand-written and the generic job. 4g done: the hand-written jobs are deleted, the generic job is the only implementation. 4h done: stop with a savepoint and resume on the generic job. 4i done: recovery from a TaskManager crash with checkpoint state. Open: dedupe after TTL expiry, JobManager failure, spec-driven store policies | In progress |
 | 5 | Further operators in Flink, composite keys, Spark backfill | Planned |
 | 6 | Two new features by YAML only | Planned |
 
@@ -68,7 +69,7 @@ workflow (Metaflow, MLflow, registry, rollback).
 
 | Gap | Impact |
 |---|---|
-| Savepoint resume is tested, automatic checkpoint recovery is not | Recovery after a TaskManager failure is **not** proven. A savepoint covers a planned stop, not a crash. The savepoint test covers the play-count spec only. |
+| Recovery is tested for a TaskManager crash only | JobManager failure is **not** proven, and the checkpoints live in JobManager memory, so losing it loses them. Checkpoints on a shared volume are not tested. Both recovery tests cover the play-count spec only. |
 | No dedupe test after state TTL expiry (24 h, 48 h) | No claim of unlimited replay protection. |
 | Single-partition Kafka topics only | Partition scaling is not demonstrated. |
 | Flink Kafka sinks are `AT_LEAST_ONCE` | No exactly-once claim. |
@@ -96,4 +97,5 @@ workflow (Metaflow, MLflow, registry, rollback).
 
 A guarantee counts as delivered only when a test, benchmark or drill report
 exists and is linked. Mechanisms present in job code (watermarks, state TTL,
-checkpointing) are not treated as proof of recovery behavior.
+checkpointing) are not treated as proven recovery behavior unless a test
+exercises them.
