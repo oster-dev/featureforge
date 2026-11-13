@@ -53,6 +53,7 @@ services:
     volumes:
       - ./jobs:/opt/flink/jobs:ro
       - ./feature_repo/specs:/opt/flink/specs:ro
+      - flink-savepoints:/opt/flink/savepoints
     healthcheck:
       test:
         - CMD-SHELL
@@ -86,6 +87,7 @@ services:
         python.executable: /opt/pyflink/bin/python
     volumes:
       - ./jobs:/opt/flink/jobs:ro
+      - flink-savepoints:/opt/flink/savepoints
 
   redis:
     image: redis:7.4-alpine
@@ -104,3 +106,4 @@ services:
 volumes:
   kafka-data:
   redis-data:
+  flink-savepoints:

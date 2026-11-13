@@ -31,6 +31,7 @@ flowchart LR
     D6 --> D7[PR 12<br/>CI hardening,<br/>TaskManager per module]:::dev
     D7 --> D8[Stage 4a to 4f<br/>all integration tests<br/>on the generic job]:::dev
     D8 --> D9[Stage 4g<br/>hand-written jobs<br/>removed]:::dev
+    D9 --> D10[Stage 4h<br/>savepoint stop<br/>and resume]:::dev
 
     classDef imp fill:#cfe2ff,stroke:#0d6efd,color:#000
     classDef dev fill:#d4edda,stroke:#28a745,color:#000
@@ -58,7 +59,8 @@ inside FeatureForge.
 | Stage 4d | `a8cb607` | The play-count replay idempotency and identity conflict run on both jobs |
 | Stage 4e | `4535162` | The skip-rate Flink-to-Redis test runs on both jobs |
 | Stage 4f | `8058076` | The joined play-count flow runs on both jobs |
-| Stage 4g | this change | The hand-written feature jobs are removed. Last version: tag `hand-written-jobs-final` |
+| Stage 4g | `a3c2da2` | The hand-written feature jobs are removed. Last version: tag `hand-written-jobs-final` |
+| Stage 4h | this change | The generic job stops with a savepoint and a new job resumes from it, with dedupe and window state intact (play-count spec) |
 
 ---
 
@@ -120,8 +122,9 @@ automatic restarts for this diagnostic run and changes neither computation nor
 Redis write policies.
 
 Replay executions reconstruct results from Kafka input. They do not restore Flink
-state from a checkpoint or savepoint. Since stage 4d both tests run against the
-generic job.
+state from a checkpoint or savepoint. Restoring from a savepoint is covered
+separately by the savepoint test (stage 4h). Since stage 4d both replay tests
+run against the generic job.
 
 ### Unified online access (PR #7)
 
@@ -237,6 +240,23 @@ referenced the removed files. The last version is the tag
 `hand-written-jobs-final`. The independent oracle stays: the pure-Python
 references and the hand-calculated golden fixtures.
 
+### Savepoint resume (stage 4h)
+
+`tests/integration/test_generic_job_recovery.py` stops the generic job for the
+play-count spec with a savepoint and starts a new job from it. The Compose
+stack mounts one `flink-savepoints` volume into JobManager and TaskManager,
+and the Flink image creates `/opt/flink/savepoints` owned by the `flink` user.
+
+The test requires that the new job restored the savepoint. This check matters:
+a job that replays from the earliest offset reaches the same counts, so the
+final values alone would not prove a restore. It also requires that a
+redelivered event is not counted again, that a late correction lands in the
+restored window state, and that the late topic stays empty.
+
+This covers a planned stop and resume. It does not cover automatic recovery
+from a checkpoint after a TaskManager failure, and it is shown for the
+play-count spec only.
+
 ---
 
 ## Current implementation
@@ -272,7 +292,8 @@ Skip-rate access through the unified interface is not yet implemented.
 | Claim | Status |
 |---|---|
 | Rejected-event routing, late correction, too-late routing, skip-rate corrections, duplicates, replay of retained output | Verified locally and in CI |
-| Checkpoint or savepoint restoration | **Not verified.** Checkpointing in code is not a recovery proof |
+| Savepoint stop and resume | Verified for the play-count spec on the generic job: dedupe and window state survive |
+| Checkpoint recovery after a failure | **Not verified.** Checkpointing in code is not a recovery proof |
 | Dedupe behavior after TTL expiry (24 h and 48 h) | **Not verified.** Not unlimited replay protection |
 | Multiple Kafka partitions | **Not verified.** Topics are single-partition |
 | Sustained operation and performance targets | **Not verified** |
@@ -295,8 +316,8 @@ impression or complete) do not imply separate streaming features for them.
 The online-serving tests are not marked `integration`. They can run under
 `-m "not integration"` when their availability check passes, which verifies
 offline files and Redis connectivity but not that expected online values are
-materialized. The unified, routing, late-event and skip-rate tests are marked
-`integration`.
+materialized. The unified, routing, late-event, savepoint and skip-rate tests
+are marked `integration`.
 
 ### Open test-maintenance items
 
@@ -316,12 +337,14 @@ These are maintenance items and not failures of passing tests.
 FeatureForge has an integrated, tested streaming path with event validation,
 event-time windows, bounded replay idempotency, identity-conflict detection,
 guarded Redis materialization, rejected-event routing, continuous late
-correction and two streaming features. Unified batch and stream online access
-covers the play count. Both features run on one generic spec-driven Flink job.
-Store policies, materializers and Spark features are not spec-driven.
+correction, savepoint stop and resume, and two streaming features. Unified
+batch and stream online access covers the play count. Both features run on one
+generic spec-driven Flink job. Store policies, materializers and Spark features
+are not spec-driven.
 
-Remaining before the streaming phase can be called complete: recovery
-verification, TTL-boundary verification, versioned streaming history, skip-rate
-access through the unified client and a reproducible completion demonstration.
-These must be completed or explicitly scoped. For current test and CI results see
-the README badge and the Actions page, not this document.
+Remaining before the streaming phase can be called complete: automatic
+checkpoint recovery verification, TTL-boundary verification, versioned
+streaming history, skip-rate access through the unified client and a
+reproducible completion demonstration. These must be completed or explicitly
+scoped. For current test and CI results see the README badge and the Actions
+page, not this document.

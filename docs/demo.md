@@ -124,6 +124,7 @@ against the reference result.
 | Late events correct an already emitted window | `test_user_play_count_late_events.py` |
 | Events too late for all windows are routed out | `test_user_play_count_late_events.py`, `test_user_skip_rate_job.py` |
 | Replay and duplicates do not change results | `test_user_play_count_replay_idempotency.py` |
+| A job resumed from a savepoint keeps its dedupe and window state | `test_generic_job_recovery.py` |
 | Exact window boundaries are respected | `test_user_skip_rate_job.py` |
 | Stale and conflicting online writes are rejected | `test_redis_skip_rate_store.py` |
 
@@ -145,7 +146,9 @@ A missing value is shown as missing, never as `0`. Exit codes: `0` success,
 
 ### What this demo does not prove
 
-- Checkpoint or savepoint recovery and dedupe after TTL expiry are not covered.
+- Automatic recovery from a checkpoint after a failure and dedupe after TTL
+  expiry are not covered. Resuming from a savepoint is covered by
+  `test_generic_job_recovery.py`.
 - The Flink Kafka sinks are at-least-once. The path is idempotent, not exactly-once.
 - Multi-partition Kafka and streaming history are not implemented.
 
@@ -157,7 +160,7 @@ See [Known limits](../ARCHITECTURE.md#known-limits).
 
 Features can be described declaratively (see
 [ADR-008](adr/ADR-008-feature-spec-design.md)). Parts 1 to 3 need no
-infrastructure. Part 4 needs the streaming stack from Demo B.
+infrastructure. Parts 4 and 5 need the streaming stack from Demo B.
 
 ### 1. Validate the specs
 
@@ -284,11 +287,27 @@ rejected with a clear error before the job starts:
 pytest -v tests/unit/test_spec_flink_plan.py   # 13 passed
 ```
 
+### 5. Stop the job with a savepoint and resume it
+
+The generic job for the play-count spec is stopped with a savepoint. A new job
+resumes from that savepoint. The test shows that the new job restored the
+savepoint, that a redelivered event is not counted again, that a late
+correction lands in the restored window, and that the late topic stays empty:
+
+```bash
+docker compose up -d --build
+pytest -v -m integration tests/integration/test_generic_job_recovery.py   # 1 passed
+```
+
+Both the JobManager and the TaskManager mount the `flink-savepoints` volume,
+so the savepoint written by one is readable by the other.
+
 ### What this demo does not prove
 
 - The generic job is verified on the golden fixtures, late corrections, replay
-  and the Redis path for both features. Recovery (checkpoint restore, dedupe
-  state after TTL expiry) is not proven for it.
+  and the Redis path for both features, and resumes from a savepoint for the
+  play-count spec. Automatic recovery from a checkpoint after a failure and
+  dedupe state after TTL expiry are not proven for it.
 - The Redis stores and the materializers are still written by hand per feature.
   No Spark feature or store is driven by a spec.
 - `online.ttl` in a spec is declarative. The current stores write without expiry.
@@ -331,6 +350,7 @@ runs them with zero skips.
 | Flink job fails or hangs | `docker compose logs jobmanager --tail 100` and `docker compose logs taskmanager --tail 100` |
 | Generic job fails with `ModuleNotFoundError` | A dependency is missing in `docker/flink/Dockerfile`. Rebuild with `docker compose up -d --build` |
 | Changed code under `src/` not picked up by Flink | `jobs/` and `feature_repo/specs/` are mounted, `src/` is copied into the image. Rebuild with `docker compose up -d --build` |
+| Savepoint cannot be written or read | JobManager and TaskManager must both mount the `flink-savepoints` volume. A volume with old permissions: `docker compose down`, `docker volume rm featureforge-stream_flink-savepoints`, `docker compose up -d --build` |
 | Spec validation fails | Read the printed field path and message. An unknown event field is reported with the available fields |
 
 Prepare serving explicitly if tests skip:

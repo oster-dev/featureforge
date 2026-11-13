@@ -14,6 +14,7 @@ MODULES=(
   tests/integration/test_user_skip_rate_job.py
   tests/integration/test_feature_from_spec_job.py
   tests/integration/test_skip_rate_flink_to_redis.py
+  tests/integration/test_generic_job_recovery.py
   tests/integration/test_skip_rate_materialization.py
   tests/integration/test_redis_skip_rate_store.py
 )
