@@ -29,6 +29,8 @@ flowchart LR
     D4 --> D5[CI stabilization<br/>fresh TaskManager<br/>per skip-rate test]:::dev
     D5 --> D6[PR 11<br/>feature spec<br/>model]:::dev
     D6 --> D7[PR 12<br/>CI hardening,<br/>TaskManager per module]:::dev
+    D7 --> D8[Stage 4a to 4f<br/>all integration tests<br/>on the generic job]:::dev
+    D8 --> D9[Stage 4g<br/>hand-written jobs<br/>removed]:::dev
 
     classDef imp fill:#cfe2ff,stroke:#0d6efd,color:#000
     classDef dev fill:#d4edda,stroke:#28a745,color:#000
@@ -50,6 +52,13 @@ inside FeatureForge.
 | CI fixes | up to `1ba2b93` | Fresh TaskManager per skip-rate test. Last recorded state of `1ba2b93`: all three CI jobs green |
 | PR #11 | `1c1a8ac` | Declarative feature spec model and validation (ADR-008) |
 | PR #12 | `1281d2c` | CI hardening, fresh TaskManager per Flink test module, TaskManager metaspace logging |
+| Stage 4a | `1ad56ce` | The skip-rate job scenarios run on the hand-written and the generic job |
+| Stage 4b | `0ea7156` | The play-count spec reproduces its golden fixture on the generic job |
+| Stage 4c | `7d97afe` | The play-count late-event scenarios run on both jobs |
+| Stage 4d | `a8cb607` | The play-count replay idempotency and identity conflict run on both jobs |
+| Stage 4e | `4535162` | The skip-rate Flink-to-Redis test runs on both jobs |
+| Stage 4f | `8058076` | The joined play-count flow runs on both jobs |
+| Stage 4g | this change | The hand-written feature jobs are removed. Last version: tag `hand-written-jobs-final` |
 
 ---
 
@@ -81,12 +90,15 @@ Imported from the source tag and adapted from `featureforge_stream` to
 - `src/featureforge/streaming/reference/user_skip_rate.py`
 - `src/featureforge/streaming/skip_rate_store.py`
 - `src/featureforge/streaming/materialize_skip_rate.py`
-- `jobs/user_skip_rate_24h.py`
+- `jobs/user_skip_rate_24h.py` (replaced by the generic job in stage 4g; the last version is in the tag `hand-written-jobs-final`)
 - `tests/unit/test_skip_rate_update_policy.py`, `tests/unit/test_user_skip_rate.py`
 - `tests/integration/test_redis_skip_rate_store.py`
 - `tests/integration/test_skip_rate_materialization.py`
 - `tests/integration/test_skip_rate_flink_to_redis.py`
 - `tests/integration/test_user_skip_rate_job.py`
+
+The play-count job `jobs/user_play_count_1h.py` came with Import 4 and was
+replaced in the same way.
 
 ---
 
@@ -108,7 +120,8 @@ automatic restarts for this diagnostic run and changes neither computation nor
 Redis write policies.
 
 Replay executions reconstruct results from Kafka input. They do not restore Flink
-state from a checkpoint or savepoint.
+state from a checkpoint or savepoint. Since stage 4d both tests run against the
+generic job.
 
 ### Unified online access (PR #7)
 
@@ -144,7 +157,8 @@ verifies that a distinct late event corrects an already emitted window from one
 to two, and that an event too late for all windows reaches the late topic with
 schema `v1`, reason `TOO_LATE_FOR_ALL_ASSIGNED_WINDOWS`, the feature name and
 the original payload. It waits for observable outputs rather than fixed sleeps,
-cancels its own resolved job ID and cleans up its isolated topics.
+cancels its own resolved job ID and cleans up its isolated topics. Since stage
+4c it runs against the generic job.
 
 This test verifies Flink's Kafka outputs. It does not run corrections through the
 Redis materializer. The Redis policy is covered separately by Redis integration
@@ -167,10 +181,10 @@ events count toward neither value.
 
 The Flink job uses 24-hour sliding windows with a one-minute slide, a 10-minute
 bounded-out-of-orderness watermark, 30 minutes of allowed lateness and a 48-hour
-deduplication TTL. The Redis store compares `(play_count, skip_count)`
-componentwise within one observation window and never compares rates by
-magnitude. A newer window replaces an older one. Incomparable vectors raise
-`SkipRateUpdateConflictError`.
+deduplication TTL. Since stage 4g these parameters come from the spec. The Redis
+store compares `(play_count, skip_count)` componentwise within one observation
+window and never compares rates by magnitude. A newer window replaces an older
+one. Incomparable vectors raise `SkipRateUpdateConflictError`.
 
 ### CI stabilization
 
@@ -192,10 +206,36 @@ not yet explained.
 
 `src/featureforge/spec/` defines a validated YAML specification for streaming
 features (ADR-008). `feature_repo/specs/` contains specs for `user_play_count_1h`
-and `user_skip_rate_24h`. The specs are validated and can be evaluated by an
-exact reference, but **no Flink job, store or Spark feature is spec-driven yet**.
-The hand-written jobs remain the executed implementation. `online.ttl` in a spec
-is declarative; the current Redis stores write without expiry.
+and `user_skip_rate_24h`. The specs are validated, evaluated by an exact
+reference, and drive the generic Flink job `jobs/feature_from_spec.py`, which
+runs both features (see the next section). No store or Spark feature is
+spec-driven yet. `online.ttl` in a spec is declarative; the current Redis stores
+write without expiry.
+
+### Generic job consolidation (WP1 stage 4)
+
+The generic job builds the windowed computation from a plan derived from a spec.
+It supports count aggregations and one entity key. Both features moved to it in
+stages, each verified before the next, with the hand-written job kept as a
+parity check until all tests passed on the generic job:
+
+- 4a: the eight skip-rate job scenarios (late corrections in both directions
+  with duplicates, too-late routing, both window edges, zero denominator).
+- 4b: the play-count golden fixture, with exact field set and hand-calculated
+  windows.
+- 4c: the play-count late correction and too-late routing.
+- 4d: play-count replay idempotency including the Redis materializer, and the
+  event-identity conflict failure.
+- 4e: the skip-rate Flink-to-Redis flow with corrections and replay.
+- 4f: the joined play-count flow from validation to Redis.
+
+In stage 4g the hand-written jobs `jobs/user_play_count_1h.py` and
+`jobs/user_skip_rate_24h.py` were removed, together with the `hand_written` test
+parameters. Both jobs wrote to the same default topics as the generic job, so
+the materializers and stores are unchanged. No deployment configuration
+referenced the removed files. The last version is the tag
+`hand-written-jobs-final`. The independent oracle stays: the pure-Python
+references and the hand-calculated golden fixtures.
 
 ---
 
@@ -204,17 +244,17 @@ is declarative; the current Redis stores write without expiry.
 | Component | Location | Behavior |
 |---|---|---|
 | Validation and routing | `jobs/validate_and_route_events.py` | Valid and rejected outputs, continuous or bounded |
-| Play count 1h | `jobs/user_play_count_1h.py` | 1 h windows, 1 min slide, 24 h dedupe TTL |
-| Skip rate 24h | `jobs/user_skip_rate_24h.py` | 24 h windows, 1 min slide, 48 h dedupe TTL |
+| Play count 1h | `jobs/feature_from_spec.py` with `feature_repo/specs/user_play_count_1h.yaml` | 1 h windows, 1 min slide, 24 h dedupe TTL |
+| Skip rate 24h | `jobs/feature_from_spec.py` with `feature_repo/specs/user_skip_rate_24h.yaml` | 24 h windows, 1 min slide, 48 h dedupe TTL |
 | Materializers | `src/featureforge/streaming/materialize.py`, `materialize_skip_rate.py` | Single-partition topics, reject empty ranges and tombstones, commit offsets only after Redis succeeds |
 | Online stores | `online_store.py`, `skip_rate_store.py` | Feature-specific guarded Redis writes |
 | Unified access | `src/featureforge/online.py` | Batch features and streaming play count |
-| Feature specs | `src/featureforge/spec/`, `feature_repo/specs/` | Validation only at runtime; not executed by any job |
+| Feature specs | `src/featureforge/spec/`, `feature_repo/specs/` | Drive the generic Flink job for both features |
 
-Both feature jobs share watermark delay (10 min), allowed lateness (30 min),
-checkpointing (10 s), too-late side outputs, event-ID dedupe and explicit failure
-for conflicting payloads. Identical duplicates neither emit nor refresh the
-dedupe retention.
+Both features run on the generic job and share watermark delay (10 min),
+allowed lateness (30 min), checkpointing (10 s), too-late side outputs,
+event-ID dedupe and explicit failure for conflicting payloads. Identical
+duplicates neither emit nor refresh the dedupe retention.
 
 The play-count store accepts newer windows (including zero), rejects older
 windows, leaves identical values unchanged, accepts increasing same-window
@@ -240,7 +280,8 @@ Skip-rate access through the unified interface is not yet implemented.
 | Zero emission for inactive users | **Not established.** A newer window can replace a value with zero, but no window job emits zero merely because time advances |
 | Historical streaming publication and published-as-of retrieval | **Not implemented.** No `published_at` is fabricated |
 | Atomic mixed batch and stream reads | **Not provided** (`atomic: false`) |
-| Spec-driven execution in Flink or Spark | **Not implemented.** Only the Python reference evaluates specs |
+| Spec-driven execution in Flink | Verified for count and ratio features: the generic job is the only implementation of both streaming features |
+| Spec-driven stores, materializers and Spark features | **Not implemented.** Store policies and materializers are hand-written per feature |
 
 Fresh bounded reprocessing is not recovery. Cancelling a test job during cleanup
 is not a recovery test. Passing replay, routing and correction tests must not be
@@ -263,6 +304,8 @@ materialized. The unified, routing, late-event and skip-rate tests are marked
 - Clean up the Redis key and topics created by older joined and replay tests.
 - Use separate rejected and too-late topics in the original joined test.
 - Align the online-serving tests with the `integration` marker boundary.
+- Rename the `hand_written` field in `test_feature_from_spec_job.py`, which now
+  holds the Python reference function.
 
 These are maintenance items and not failures of passing tests.
 
@@ -274,8 +317,8 @@ FeatureForge has an integrated, tested streaming path with event validation,
 event-time windows, bounded replay idempotency, identity-conflict detection,
 guarded Redis materialization, rejected-event routing, continuous late
 correction and two streaming features. Unified batch and stream online access
-covers the play count. A validated declarative spec exists for both features but
-is not yet executed by a job.
+covers the play count. Both features run on one generic spec-driven Flink job.
+Store policies, materializers and Spark features are not spec-driven.
 
 Remaining before the streaming phase can be called complete: recovery
 verification, TTL-boundary verification, versioned streaming history, skip-rate

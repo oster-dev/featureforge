@@ -15,7 +15,6 @@ import pytest
 from featureforge.streaming.contracts.events import InteractionEventV1
 from featureforge.streaming.reference.user_skip_rate import calculate_user_skip_rate_24h
 
-HAND_WRITTEN_JOB = ("user_skip_rate_24h.py", [])
 GENERIC_JOB = (
     "feature_from_spec.py",
     ["--spec", "/opt/flink/specs/user_skip_rate_24h.yaml"],
@@ -111,7 +110,6 @@ def fresh_taskmanager(timeout: float = 180.0) -> None:
 @pytest.mark.parametrize(
     ("job_script", "job_arguments"),
     [
-        pytest.param(*HAND_WRITTEN_JOB, id="hand_written"),
         pytest.param(*GENERIC_JOB, id="generic_spec"),
     ],
 )

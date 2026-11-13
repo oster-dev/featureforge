@@ -16,11 +16,11 @@ flowchart LR
         A1[Generate] --> A2[Backfill] --> A3{Correctness<br/>gate} --> A4[Feast<br/>materialize] --> A5[Freshness<br/>check] --> A6[Online lookup<br/>and ranking]
     end
     subgraph B["Demo B: streaming"]
-        B1[Kafka events] --> B2[Flink validate<br/>and route] --> B3[Flink features<br/>play count, skip rate] --> B4[Materializer] --> B5[Redis] --> B6[Unified online<br/>client]
+        B1[Kafka events] --> B2[Flink validate<br/>and route] --> B3[Flink feature job<br/>spec-driven] --> B4[Materializer] --> B5[Redis] --> B6[Unified online<br/>client]
     end
     subgraph C["Demo C: feature spec"]
-        C1[YAML spec] --> C2[Validate<br/>and field check] --> C3[Exact reference<br/>evaluation] --> C4[Golden fixtures<br/>and hand-written<br/>references]
-        C2 --> C5[Generic Flink job<br/>for skip rate] --> C4
+        C1[YAML spec] --> C2[Validate<br/>and field check] --> C3[Exact reference<br/>evaluation] --> C4[Golden fixtures<br/>and Python<br/>references]
+        C2 --> C5[Generic Flink job<br/>for both features] --> C4
     end
 ```
 
@@ -206,7 +206,7 @@ user_000002 {'play_count': 1}
 user_unknown {'play_count': 0}
 ```
 
-The same values come from the hand-written reference. The test suite checks
+The same values come from the Python reference. The test suite checks
 that agreement on randomized inputs placed exactly on window boundaries:
 
 ```bash
@@ -258,27 +258,27 @@ user000002 2026-01-02T12:00:00+00:00 {'play_count': 0, 'skip_count': 1, 'skip_ra
 Between the first and second line, one event leaves the window on its lower
 edge and one enters on its upper edge, and the rate moves from `0.5` to `0.75`.
 The tests that hold these values, including a sweep over every event boundary
-against the hand-written reference:
+against the Python reference:
 
 ```bash
 pytest -v tests/unit/test_streaming_user_skip_rate_golden.py tests/unit/test_spec_golden_parity.py   # 14 passed
 ```
 
-### 4. Run the generic Flink job on the fixture
+### 4. Run the generic Flink job on the fixtures
 
-The generic job reads the skip-rate spec and builds the windowed computation
-from it. The test sends the fixture through the job and compares **every**
-emitted window with the spec reference and the hand-written reference:
+The generic job reads a spec and builds the windowed computation from it. The
+test sends the golden fixture of each feature through the job and compares
+**every** emitted window with the spec reference and the Python reference:
 
 ```bash
 docker compose up -d --build
-pytest -v -m integration tests/integration/test_feature_from_spec_job.py   # 1 passed
+pytest -v -m integration tests/integration/test_feature_from_spec_job.py   # 2 passed
 ```
 
-The test also requires five hand-calculated windows, no window emitted twice,
-and an empty late topic. A spec outside what the job supports, such as an
-`avg` aggregation or a composite key, is rejected with a clear error before the
-job starts:
+The test also requires hand-calculated windows (five for skip rate, seven for
+play count), no window emitted twice, and an empty late topic. A spec outside
+what the job supports, such as an `avg` aggregation or a composite key, is
+rejected with a clear error before the job starts:
 
 ```bash
 pytest -v tests/unit/test_spec_flink_plan.py   # 13 passed
@@ -286,11 +286,11 @@ pytest -v tests/unit/test_spec_flink_plan.py   # 13 passed
 
 ### What this demo does not prove
 
-- The generic job is verified for `user_skip_rate_24h` on time-ordered input.
-  Late corrections, too-late routing, replay, the Redis path, recovery and a
-  single-counter spec (play count) are not re-proven for it.
-- The production Flink jobs and the Redis stores are still the hand-written
-  ones. No Spark feature or store is driven by a spec.
+- The generic job is verified on the golden fixtures, late corrections, replay
+  and the Redis path for both features. Recovery (checkpoint restore, dedupe
+  state after TTL expiry) is not proven for it.
+- The Redis stores and the materializers are still written by hand per feature.
+  No Spark feature or store is driven by a spec.
 - `online.ttl` in a spec is declarative. The current stores write without expiry.
 
 ---

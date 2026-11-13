@@ -118,7 +118,6 @@ def fresh_taskmanager(timeout: float = 180.0) -> None:
 @pytest.mark.parametrize(
     ("job_script", "job_arguments"),
     [
-        pytest.param("/opt/flink/jobs/user_skip_rate_24h.py", (), id="hand-written"),
         pytest.param(
             "/opt/flink/jobs/feature_from_spec.py",
             ("--spec", "/opt/flink/specs/user_skip_rate_24h.yaml"),

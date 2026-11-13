@@ -20,10 +20,6 @@ BOOTSTRAP_SERVERS = "127.0.0.1:9092"
 FLINK_API = "http://127.0.0.1:8081"
 WAIT_SECONDS = 90
 
-HAND_WRITTEN_JOB = (
-    "/opt/flink/jobs/user_play_count_1h.py",
-    ["--bootstrap-servers", "kafka:29092"],
-)
 GENERIC_JOB = (
     "/opt/flink/jobs/feature_from_spec.py",
     ["--spec", "/opt/flink/specs/user_play_count_1h.yaml"],
@@ -161,7 +157,6 @@ def matches_feature(record, *, user_id, observation_time, play_count):
 @pytest.mark.parametrize(
     ("job_script", "job_arguments"),
     [
-        pytest.param(*HAND_WRITTEN_JOB, id="hand_written"),
         pytest.param(*GENERIC_JOB, id="generic_spec"),
     ],
 )

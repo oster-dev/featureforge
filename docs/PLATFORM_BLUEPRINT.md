@@ -1,9 +1,9 @@
 # FeatureForge Platform Blueprint
 
-**Status:** target design, updated 2026-11-12.
+**Status:** target design, updated 2026-11-13.
 **Baseline:** v0.1.0 released. Streaming core delivered. Feature spec model,
-exact reference and a generic Flink job are delivered for `user_skip_rate_24h`.
-The production jobs and store policies are still hand-written.
+exact reference and a generic Flink job are delivered. The generic job runs both
+streaming features. Store policies and materializers are still hand-written.
 
 This document describes the **target** system. Implemented behavior is in
 [ARCHITECTURE.md](../ARCHITECTURE.md). Delivery status is in [STATUS.md](../STATUS.md).
@@ -41,11 +41,11 @@ deployment lifecycle.
 
 ```mermaid
 flowchart LR
-    SPEC["Feature specs<br/>model, reference and a generic<br/>job for skip rate done"]:::wip
+    SPEC["Feature specs<br/>model, reference and generic<br/>job for both features done"]:::wip
 
     subgraph Compute
         BATCH[Pandas reference<br/>PySpark backfill]:::done
-        STREAM[Flink feature jobs<br/>hand-written, one generic<br/>job verified]:::done
+        STREAM[Flink feature job<br/>one generic spec-driven<br/>job]:::done
     end
 
     subgraph Storage
@@ -95,8 +95,10 @@ time-based evaluation, online lookup and CI.
 Delivered since: Kafka/Flink validation and routing, `user_play_count_1h`,
 `user_skip_rate_24h`, late-event handling, replay idempotency, guarded Redis
 stores, unified online client, a validated declarative feature spec with an exact
-Python reference (ADR-008), a hand-calculated skip-rate golden fixture, and a
-generic Flink job that reproduces that fixture for `user_skip_rate_24h`.
+Python reference (ADR-008), hand-calculated golden fixtures for both streaming
+features, and one generic Flink job that is the only implementation of both
+streaming features. It is verified on the golden fixtures, late corrections,
+replay and the Redis path.
 
 **First integrated feature set:** seven-day user engagement, seven-day content
 popularity, `user_play_count_1h`, `user_skip_rate_24h`. Prove this slice before
@@ -118,7 +120,7 @@ the source actually generates.
 
 | Component | Owns | Rule |
 |---|---|---|
-| Contracts and catalog | Feature identity, entity, schema, version, window semantics, quality and freshness rules | Small typed spec with a **bounded operator set**. No universal SQL-to-Flink compiler. Today: spec model, validation, an exact reference and a generic Flink job for count and ratio features, verified for skip rate. No catalog. The production jobs and the store policies are still hand-written |
+| Contracts and catalog | Feature identity, entity, schema, version, window semantics, quality and freshness rules | Small typed spec with a **bounded operator set**. No universal SQL-to-Flink compiler. Today: spec model, validation, an exact reference and a generic Flink job for count and ratio features, running both streaming features. No catalog. The store policies and materializers are still hand-written |
 | Batch computation | Pandas references, PySpark, backfills, offline publication | A later backfill must not rewrite the recorded availability of an earlier online value |
 | Streaming computation | Validation, Flink jobs, late routing, finite-horizon dedupe, output contracts | Keep feature-specific correction policies. Append-only ordering is not general revision support |
 | Storage | Offline tables, versioned streaming history | Online stores hold current accepted values. History retains the versions needed for declared retrieval. Neither is assumed to update atomically with the other |
@@ -266,7 +268,7 @@ flowchart LR
 |---|---|---|
 | A | Preserve released batch behavior, inventory dependencies, record import provenance | Done |
 | B | Integrate play-count slice, validation-to-online behavior, common read interface | Done |
-| C | Skip-rate and late corrections done. Feature spec model, exact reference and a generic Flink job for skip rate done. Open: the remaining behaviors on the generic job, migration of both features, spec-driven stores, streaming history, published-as-of retrieval, availability boundaries | In progress |
+| C | Skip-rate and late corrections done. Feature spec model, exact reference and one generic Flink job running both features done, the hand-written jobs are removed. Open: spec-driven stores, recovery evidence, streaming history, published-as-of retrieval, availability boundaries | In progress |
 | D | Label audit, mixed datasets, batch-only vs batch-plus-stream comparison, model-backed inference | Planned |
 | E | Metrics, recovery drills, benchmarks, clean-clone demo, notebook, reproducible release | Planned |
 

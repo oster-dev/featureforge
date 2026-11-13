@@ -36,7 +36,7 @@ flowchart LR
     subgraph Stream["Streaming path"]
         VAL[Flink validation<br/>& routing]
         REJ[(Rejected topic)]
-        FJ[Flink feature jobs<br/>event time · dedupe · windows]
+        FJ[Flink feature job<br/>spec-driven · event time · dedupe · windows]
         LATE[(Late topic)]
         MAT[Guarded<br/>materializers]
     end
@@ -109,13 +109,14 @@ language is bounded on purpose, see [ADR-008](docs/adr/ADR-008-feature-spec-desi
 | Guarantee | Evidence |
 |---|---|
 | Specs are validated before anything runs: bad windows, unsafe expressions, inconsistent dedupe or update policies and unknown event fields are rejected | [`test_spec_model.py`](tests/unit/test_spec_model.py) |
-| One exact reference evaluates a spec and matches the hand-written references on randomized inputs at window boundaries | [`test_spec_reference.py`](tests/unit/test_spec_reference.py) |
-| The skip-rate golden fixture has hand-calculated values that the hand-written and the spec reference both reproduce | [`test_streaming_user_skip_rate_golden.py`](tests/unit/test_streaming_user_skip_rate_golden.py), [`test_spec_golden_parity.py`](tests/unit/test_spec_golden_parity.py) |
-| A generic Flink job built from the skip-rate spec reproduces the fixture: every emitted window matches both references | [`test_feature_from_spec_job.py`](tests/integration/test_feature_from_spec_job.py), [`test_spec_flink_plan.py`](tests/unit/test_spec_flink_plan.py) |
+| One exact reference evaluates a spec and matches the Python references on randomized inputs at window boundaries | [`test_spec_reference.py`](tests/unit/test_spec_reference.py) |
+| The skip-rate golden fixture has hand-calculated values that the Python reference and the spec reference both reproduce | [`test_streaming_user_skip_rate_golden.py`](tests/unit/test_streaming_user_skip_rate_golden.py), [`test_spec_golden_parity.py`](tests/unit/test_spec_golden_parity.py) |
+| A generic Flink job built from a spec reproduces the golden fixtures of both features: every emitted window matches the spec reference and the Python reference | [`test_feature_from_spec_job.py`](tests/integration/test_feature_from_spec_job.py), [`test_spec_flink_plan.py`](tests/unit/test_spec_flink_plan.py) |
 
-The generic job is verified for `user_skip_rate_24h` on time-ordered input.
-The production streaming jobs are still the hand-written ones. See
-[STATUS.md](STATUS.md) for what is not yet proven.
+The generic job is the only implementation of both streaming features. It is
+verified on the golden fixtures, late corrections, replay and the Redis path.
+The Redis store policies and the materializers are still written by hand per
+feature. See [STATUS.md](STATUS.md) for what is not yet proven.
 
 ### Online access
 
@@ -180,8 +181,8 @@ Expected output, troubleshooting, and cleanup: [Demo Guide](docs/demo.md).
 | `user_play_count_1h` | Streaming | `user_id` | Play events in `(t − 1h, t]`, sliding |
 | `user_skip_rate_24h` | Streaming | `user_id` | `skips / (plays + skips)` in `(t − 24h, t]`, 1-minute slide, explicit zero-denominator behavior |
 
-Both streaming features are also expressed as specs in
-[`feature_repo/specs/`](feature_repo/specs/).
+Both streaming features are defined as specs in
+[`feature_repo/specs/`](feature_repo/specs/) and computed by one generic Flink job.
 
 ---
 
@@ -190,7 +191,7 @@ Both streaming features are also expressed as specs in
 | Phase | Status |
 |---|---|
 | 1 · Feature store foundation | **Released** as [v0.1.0](https://github.com/oster-dev/featureforge/releases/tag/v0.1.0) |
-| 2 · Streaming feature platform | **Core delivered.** Declarative feature specs: spec model, reference and a generic Flink job for the skip-rate feature are done. Recovery evidence, streaming history, and the final demo are open |
+| 2 · Streaming feature platform | **Core delivered.** Declarative feature specs: spec model, reference and one generic Flink job running both streaming features are done. Spec-driven stores, recovery evidence, streaming history, and the final demo are open |
 | 3 · End-to-end ML workflow | **Planned** |
 
 Details, open items, and known limitations: **[STATUS.md](STATUS.md)**.

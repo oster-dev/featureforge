@@ -17,7 +17,6 @@ BOOTSTRAP_SERVERS = "127.0.0.1:9092"
 REDIS_URL = "redis://127.0.0.1:6379/0"
 EVENT_TIME = datetime(2026, 1, 1, 11, 30, tzinfo=UTC)
 
-HAND_WRITTEN_JOB = ("user_play_count_1h.py", [])
 GENERIC_JOB = (
     "feature_from_spec.py",
     ["--spec", "/opt/flink/specs/user_play_count_1h.yaml"],
@@ -122,7 +121,6 @@ def run_materializer(arguments: list[str]) -> None:
 @pytest.mark.parametrize(
     ("job_script", "job_arguments"),
     [
-        pytest.param(*HAND_WRITTEN_JOB, id="hand_written"),
         pytest.param(*GENERIC_JOB, id="generic_spec"),
     ],
 )
