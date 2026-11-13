@@ -1,6 +1,6 @@
 # ADR-008: Declarative feature specification
 
-Status: Accepted · Date: 2026-11-12
+Status: Accepted · Date: 2026-11-12 · Updated: 2026-11-13 (migration completed)
 
 ## Context
 
@@ -45,7 +45,9 @@ are supported. Operators beyond this set require a new ADR.
 The spec-driven Python reference is exact and deliberately simple. The Flink job
 and the Spark backfill must produce the same values. Where an operator is
 approximate in an engine (`approx_distinct`), the reference stays exact and the
-accepted error bound is documented with the engine.
+accepted error bound is documented with the engine. The generic Flink job
+supports count aggregations and one entity key. Other operators and composite
+keys are rejected with a clear error, not computed approximately.
 
 ## Comparison
 
@@ -75,6 +77,15 @@ Sources:
 
 ## Migration
 
-`user_play_count_1h` and `user_skip_rate_24h` move to specs. The hand-written jobs
-are deleted only when parity tests against the golden fixtures and the
-hand-written references are green.
+`user_play_count_1h` and `user_skip_rate_24h` run on the generic job
+`jobs/feature_from_spec.py`. The hand-written Flink jobs were deleted after
+parity was proven: every integration test of both features ran against both
+jobs and passed, and the golden fixtures matched the spec reference and the
+Python references. The last version of the hand-written jobs is the tag
+`hand-written-jobs-final`.
+
+The Redis store policies, the materializers and Spark features are still
+hand-written per feature. Spec-driven stores are the remaining part of the
+migration and need their own decision, because `online.ttl` enforcement and the
+`window_replace` policy change store behavior. Provenance of the migration
+stages: [streaming-migration.md](../streaming-migration.md).

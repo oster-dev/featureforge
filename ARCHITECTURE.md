@@ -20,7 +20,7 @@ flowchart LR
     subgraph Stream["Streaming path"]
         K0[(Kafka<br/>raw events)] --> VAL[Flink validation<br/>and routing]
         VAL --> K1[(Kafka<br/>validated events)]
-        K1 --> FJ[Flink feature jobs<br/>event time, dedupe, windows]
+        K1 --> FJ[Flink feature job<br/>spec-driven, event time,<br/>dedupe, windows]
         FJ --> K2[(Kafka<br/>feature topics)]
         K2 --> MAT[Guarded<br/>materializers]
     end
@@ -38,7 +38,7 @@ flowchart LR
 | Offline store | One canonical Parquet root, Hive-style `observation_date` partitions |
 | Retrieval and materialization | Feast, point-in-time joins |
 | Streaming | Kafka, Flink (PyFlink), Pydantic contracts |
-| Feature definitions as data | YAML specs, Pydantic validation, exact reference, generic Flink job (skip rate) |
+| Feature definitions as data | YAML specs, Pydantic validation, exact reference, one generic Flink job for both streaming features |
 | Online store | Redis, feature-specific write policies |
 | Quality | pytest, Ruff, four CI layers |
 
@@ -83,13 +83,12 @@ flowchart LR
     V --> OK[(validated.v1)]
     V --> REJ[(rejected.v1)]
 
-    OK --> P[play_count_1h job]
-    OK --> S[skip_rate_24h job]
+    OK --> J[Generic feature job<br/>one run per spec]
 
-    P --> PF[(features.user-play-count-1h.v1)]
-    P --> PL[(play-count late topic)]
-    S --> SF[(features.user-skip-rate-24h.v1)]
-    S --> SL[(skip-rate late topic)]
+    J -->|user_play_count_1h| PF[(features.user-play-count-1h.v1)]
+    J -->|user_play_count_1h| PL[(play-count late topic)]
+    J -->|user_skip_rate_24h| SF[(features.user-skip-rate-24h.v1)]
+    J -->|user_skip_rate_24h| SL[(skip-rate late topic)]
 
     PF --> M1[Play-count<br/>materializer]
     SF --> M2[Skip-rate<br/>materializer]
@@ -106,11 +105,13 @@ flowchart LR
 | Checkpoint interval | 10 s | 10 s |
 | Emits | play count | play count, skip count, skip rate |
 
-Both jobs assign event time, deduplicate by `event_id`, aggregate in user-keyed
-sliding windows, and send events that are too late for every window to a
-side-output topic. A conflicting payload for a known `event_id` fails the job
-with `EventIdentityConflictError`. A bounded mode lets tests consume the
-current Kafka range and terminate.
+The generic job runs once per spec and takes these parameters from the spec.
+For each feature it assigns event time, deduplicates by the spec's dedupe key
+(`event_id` in both shipped specs), aggregates in user-keyed sliding windows,
+and sends events that are too late for every window to a side-output topic. A
+conflicting payload for a known `event_id` fails the job with
+`EventIdentityConflictError`. A bounded mode lets tests consume the current
+Kafka range and terminate.
 
 ### Contracts
 
@@ -192,19 +193,21 @@ flowchart LR
   `(t - size, t]`, validates event identities across the whole input before any
   filtering, and returns `None`, never zero, for an empty `avg`, `min` or `max`.
   It is the oracle the engines are compared with.
-- **Golden fixture.** The skip-rate fixture holds hand-calculated values for
+- **Golden fixtures.** The skip-rate fixture holds hand-calculated values for
   both window edges, a duplicate delivery, ignored event types, a second user
-  and expiry to a zero denominator. The hand-written reference and the spec
-  reference both reproduce it.
+  and expiry to a zero denominator. The play-count fixture covers the window
+  edges and a deduplicated event. The Python reference and the spec reference
+  both reproduce them.
 - **Generic Flink job.** `jobs/feature_from_spec.py` builds the windowed
   computation from a plan derived from the spec. The plan supports count
   aggregations and one entity key. Other operators and composite keys raise
-  `UnsupportedSpecError` instead of being computed wrongly. For
-  `user_skip_rate_24h` on time-ordered input, every emitted window matches both
-  references.
-- **Still hand-written.** The production streaming jobs and the Redis store
-  policies are the hand-written ones. `online.ttl` and `offline.store` in the
-  specs are declarative only: the Redis stores write keys without expiry and no
+  `UnsupportedSpecError` instead of being computed wrongly. It is the only
+  implementation of `user_play_count_1h` and `user_skip_rate_24h`: on the golden
+  fixtures every emitted window matches both references, and the integration
+  tests cover late corrections, too-late routing, replay and the Redis path.
+- **Still hand-written.** The Redis store policies and the materializers are
+  written by hand per feature. `online.ttl` and `offline.store` in the specs
+  are declarative only: the Redis stores write keys without expiry and no
   Iceberg store exists.
 
 ---
@@ -273,11 +276,11 @@ flowchart LR
     classDef plan fill:#e2e3e5,stroke:#6c757d,color:#000
 ```
 
-Planned and **not implemented**: migration of both features to the generic job
-and spec-driven store policies, further operators in Flink, Iceberg history,
-Cassandra backend, serving service with load tests, observability and recovery
-drills, ML workflow with registry and rollback. Scope and order:
-[STATUS.md](STATUS.md) and [docs/PLATFORM_BLUEPRINT.md](docs/PLATFORM_BLUEPRINT.md).
+Planned and **not implemented**: spec-driven store policies, further operators
+in Flink, Iceberg history, Cassandra backend, serving service with load tests,
+observability and recovery drills, ML workflow with registry and rollback.
+Scope and order: [STATUS.md](STATUS.md) and
+[docs/PLATFORM_BLUEPRINT.md](docs/PLATFORM_BLUEPRINT.md).
 
 ---
 
@@ -292,9 +295,8 @@ drills, ML workflow with registry and rollback. Scope and order:
   guarded Redis writes, not from end-to-end exactly-once.
 - Streaming history and point-in-time retrieval of streaming features are not
   implemented.
-- The generic spec-driven job is verified only for `user_skip_rate_24h` on
-  time-ordered input. Late corrections, too-late routing, replay, the Redis
-  path and a single-counter spec are not yet re-proven for it.
+- The event-identity conflict failure is tested for the play count only. The
+  skip-rate spec runs the same code path.
 - The TaskManager instability seen in CI is isolated, not explained.
 
 ## Decisions

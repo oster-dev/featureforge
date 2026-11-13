@@ -78,7 +78,7 @@ unformatted. CI fails on both checks, and it is the cheapest failure to avoid.
 | Feast, materialization, online serving | `docker compose up -d`, `feast apply`, then `pytest tests/integration/test_online_serving.py tests/integration/test_unified_online.py` |
 | Redis store policies | `pytest -m integration tests/integration/test_streaming_redis_online_store*.py tests/integration/test_redis_skip_rate_store.py` |
 | A feature spec, the spec model, reference or job plan | `python -m featureforge.spec.loader feature_repo/specs/*.yaml`, then `pytest tests/unit/test_spec_model.py tests/unit/test_spec_reference.py tests/unit/test_spec_golden_parity.py tests/unit/test_spec_flink_plan.py` |
-| The generic Flink job, `src/`, or `docker/flink/Dockerfile` | `docker compose up -d --build`, then `pytest -v -m integration tests/integration/test_feature_from_spec_job.py` |
+| The generic Flink job (`jobs/feature_from_spec.py`), `src/`, or `docker/flink/Dockerfile` | `docker compose up -d --build`, then the full streaming selection below: the generic job is the only implementation of both streaming features |
 | Flink jobs, contracts, routing, materializers | The full streaming selection below |
 
 Full streaming selection (identical to CI):
@@ -163,16 +163,20 @@ flowchart TD
 
 **Feature specs**
 
-- Define a new feature as a spec in `feature_repo/specs/` first. Further
-  hand-written single features without the spec engine are out of scope, see
-  [STATUS.md](STATUS.md). Store policies are not spec-driven yet, so a new
-  feature still needs its policy tested and documented.
+- Define a new feature as a spec in `feature_repo/specs/` first. Do not add a
+  feature-specific Flink job: the generic job `jobs/feature_from_spec.py` is
+  the only implementation of both streaming features. A capability the job
+  lacks is added to the generic job and the spec language, with an ADR, not
+  worked around in a new job. Further hand-written single features without the
+  spec engine are out of scope, see [STATUS.md](STATUS.md). Store policies are
+  not spec-driven yet, so a new feature still needs its policy tested and
+  documented.
 - A spec must pass `python -m featureforge.spec.loader` before anything runs it.
   Do not weaken the model validation or the event-field check to make a spec
   pass. Fix the spec.
 - The spec reference is the oracle. An engine must match it, never the other
   way round. Changing reference semantics means updating the golden fixtures,
-  the hand-written references and the ADR.
+  the Python references and the ADR.
 - An operator outside the set in ADR-008 needs a new ADR. The generic Flink job
   supports count aggregations and one entity key. Unsupported specs must be
   rejected with a clear error, not computed approximately.
@@ -297,6 +301,7 @@ Small, focused commits that describe the behavior or contract changed:
 ```text
 feat: add user skip rate 24h streaming feature
 feat: add generic spec-driven Flink job for count and ratio features
+refactor: remove the hand-written feature jobs
 test: verify streaming routing and late-event behavior
 test: add skip-rate golden fixture with hand-calculated values
 ci: expand Flink integration selection
