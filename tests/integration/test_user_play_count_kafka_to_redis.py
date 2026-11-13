@@ -17,6 +17,12 @@ BOOTSTRAP_SERVERS = "127.0.0.1:9092"
 REDIS_URL = "redis://127.0.0.1:6379/0"
 EVENT_TIME = datetime(2026, 1, 1, 11, 30, tzinfo=UTC)
 
+HAND_WRITTEN_JOB = ("user_play_count_1h.py", [])
+GENERIC_JOB = (
+    "feature_from_spec.py",
+    ["--spec", "/opt/flink/specs/user_play_count_1h.yaml"],
+)
+
 
 def create_topics(bootstrap_servers: str, topics: list[str]) -> None:
     admin = AdminClient({"bootstrap.servers": bootstrap_servers})
@@ -65,7 +71,7 @@ def run_flink_job(arguments: list[str]) -> None:
         )
 
 
-def run_play_count_job(arguments: list[str]) -> None:
+def run_play_count_job(job_script: str, job_arguments: list[str], arguments: list[str]) -> None:
     completed = subprocess.run(
         [
             "docker",
@@ -74,7 +80,8 @@ def run_play_count_job(arguments: list[str]) -> None:
             "-T",
             "jobmanager",
             "python",
-            "/opt/flink/jobs/user_play_count_1h.py",
+            f"/opt/flink/jobs/{job_script}",
+            *job_arguments,
             *arguments,
         ],
         check=False,
@@ -112,7 +119,16 @@ def run_materializer(arguments: list[str]) -> None:
 
 
 @pytest.mark.integration
-def test_user_play_count_flows_from_kafka_to_redis() -> None:
+@pytest.mark.parametrize(
+    ("job_script", "job_arguments"),
+    [
+        pytest.param(*HAND_WRITTEN_JOB, id="hand_written"),
+        pytest.param(*GENERIC_JOB, id="generic_spec"),
+    ],
+)
+def test_user_play_count_flows_from_kafka_to_redis(
+    job_script: str, job_arguments: list[str]
+) -> None:
     run_id = uuid.uuid4().hex
     input_topic = f"featureforge-stream.integration.input.{run_id}"
     validated_topic = f"featureforge-stream.integration.validated.{run_id}"
@@ -161,6 +177,8 @@ def test_user_play_count_flows_from_kafka_to_redis() -> None:
     )
 
     run_play_count_job(
+        job_script,
+        job_arguments,
         [
             "--bootstrap-servers",
             "kafka:29092",
@@ -173,7 +191,7 @@ def test_user_play_count_flows_from_kafka_to_redis() -> None:
             "--group-id",
             f"user-play-count-{run_id}",
             "--bounded",
-        ]
+        ],
     )
 
     run_materializer(
