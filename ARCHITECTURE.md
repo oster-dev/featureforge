@@ -119,8 +119,17 @@ between JobManager and TaskManager. The recovery test shows for the play-count
 spec that the resumed job restores the savepoint (it does not replay from the
 earliest offset), that a redelivered event is not counted again because the
 dedupe state survives, and that a late correction lands in the restored window
-state. This covers a planned stop. It does not cover automatic recovery from a
-checkpoint after a crash.
+state. This covers a planned stop. Crash recovery follows.
+
+**Crash recovery.** The recovery test kills the TaskManager while the job runs.
+The restart strategy of the cluster (fixed delay, 30 attempts) restarts the same
+job. It restores the latest checkpoint, which the test requires to have been
+triggered after the first event was processed and which is not a savepoint. A
+redelivered event is not counted again, and a late correction lands in the
+restored window. The JobManager keeps running and holds the checkpoints in
+memory, so this does not cover JobManager loss. Kafka sinks are
+`AT_LEAST_ONCE`, so the test checks the final value per window, not the number
+of emissions.
 
 ### Contracts
 
@@ -213,8 +222,8 @@ flowchart LR
   `UnsupportedSpecError` instead of being computed wrongly. It is the only
   implementation of `user_play_count_1h` and `user_skip_rate_24h`: on the golden
   fixtures every emitted window matches both references, and the integration
-  tests cover late corrections, too-late routing, replay, savepoint resume and
-  the Redis path.
+  tests cover late corrections, too-late routing, replay, savepoint resume,
+  crash recovery and the Redis path.
 - **Still hand-written.** The Redis store policies and the materializers are
   written by hand per feature. `online.ttl` and `offline.store` in the specs
   are declarative only: the Redis stores write keys without expiry and no
@@ -299,9 +308,9 @@ Scope and order: [STATUS.md](STATUS.md) and
 - Local reference implementation: Docker Compose, synthetic data, no production
   scale claim. AWS (S3, DynamoDB, managed Kafka and Flink) is documented in
   [aws-production-profile.md](docs/aws-production-profile.md), not deployed.
-- Replay tests cover fresh bounded executions. Stop with a savepoint and resume
-  is verified for the play-count spec on the generic job. **Not** verified:
-  automatic recovery from a checkpoint after a failure, dedupe after TTL
+- Replay tests cover fresh bounded executions. Stop with a savepoint and resume,
+  and recovery from a TaskManager crash, are verified for the play-count spec on
+  the generic job. **Not** verified: JobManager failure, dedupe after TTL
   expiry, multi-partition Kafka.
 - Flink Kafka sinks use `AT_LEAST_ONCE`. Idempotency comes from dedupe and
   guarded Redis writes, not from end-to-end exactly-once.

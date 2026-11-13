@@ -32,6 +32,7 @@ flowchart LR
     D7 --> D8[Stage 4a to 4f<br/>all integration tests<br/>on the generic job]:::dev
     D8 --> D9[Stage 4g<br/>hand-written jobs<br/>removed]:::dev
     D9 --> D10[Stage 4h<br/>savepoint stop<br/>and resume]:::dev
+    D10 --> D11[Stage 4i<br/>TaskManager crash<br/>recovery]:::dev
 
     classDef imp fill:#cfe2ff,stroke:#0d6efd,color:#000
     classDef dev fill:#d4edda,stroke:#28a745,color:#000
@@ -60,7 +61,8 @@ inside FeatureForge.
 | Stage 4e | `4535162` | The skip-rate Flink-to-Redis test runs on both jobs |
 | Stage 4f | `8058076` | The joined play-count flow runs on both jobs |
 | Stage 4g | `a3c2da2` | The hand-written feature jobs are removed. Last version: tag `hand-written-jobs-final` |
-| Stage 4h | this change | The generic job stops with a savepoint and a new job resumes from it, with dedupe and window state intact (play-count spec) |
+| Stage 4h | `c2e9365` | The generic job stops with a savepoint and a new job resumes from it, with dedupe and window state intact (play-count spec) |
+| Stage 4i | this change | The generic job recovers from a TaskManager crash with checkpoint state (play-count spec) |
 
 ---
 
@@ -122,9 +124,9 @@ automatic restarts for this diagnostic run and changes neither computation nor
 Redis write policies.
 
 Replay executions reconstruct results from Kafka input. They do not restore Flink
-state from a checkpoint or savepoint. Restoring from a savepoint is covered
-separately by the savepoint test (stage 4h). Since stage 4d both replay tests
-run against the generic job.
+state from a checkpoint or savepoint. Restoring from a savepoint and from a
+checkpoint after a crash is covered separately (stages 4h and 4i). Since stage
+4d both replay tests run against the generic job.
 
 ### Unified online access (PR #7)
 
@@ -253,9 +255,28 @@ final values alone would not prove a restore. It also requires that a
 redelivered event is not counted again, that a late correction lands in the
 restored window state, and that the late topic stays empty.
 
-This covers a planned stop and resume. It does not cover automatic recovery
-from a checkpoint after a TaskManager failure, and it is shown for the
-play-count spec only.
+This covers a planned stop and resume. Recovery after a crash is covered by
+stage 4i. Both tests are shown for the play-count spec only.
+
+### Crash recovery (stage 4i)
+
+`tests/integration/test_generic_job_checkpoint_recovery.py` starts the generic
+job for the play-count spec with the cluster restart strategy, so without
+`--no-restart`. After the first event is processed, it waits for a checkpoint
+that was triggered later (checkpoint ids follow trigger order), kills the
+TaskManager and starts it again.
+
+The test requires that a checkpoint was restored for the same job, that this
+checkpoint is not a savepoint and is not older than the one holding the state,
+that a redelivered event is not counted again, that a late correction lands in
+the restored window, and that the late topic stays empty. The Kafka sinks are
+`AT_LEAST_ONCE`, so the test waits for a window value of at least 2 and
+checks it, instead of counting emissions.
+
+The JobManager keeps running. The checkpoints live in JobManager memory, so
+this does not cover JobManager loss or checkpoints on a shared volume. The
+test restarts the TaskManager in its cleanup and runs in its own CI module, so
+the next module starts from a fresh TaskManager anyway.
 
 ---
 
@@ -293,7 +314,8 @@ Skip-rate access through the unified interface is not yet implemented.
 |---|---|
 | Rejected-event routing, late correction, too-late routing, skip-rate corrections, duplicates, replay of retained output | Verified locally and in CI |
 | Savepoint stop and resume | Verified for the play-count spec on the generic job: dedupe and window state survive |
-| Checkpoint recovery after a failure | **Not verified.** Checkpointing in code is not a recovery proof |
+| Checkpoint recovery after a TaskManager crash | Verified for the play-count spec on the generic job: dedupe and window state survive |
+| JobManager failure and checkpoints on a shared volume | **Not verified.** Checkpoints are held in JobManager memory |
 | Dedupe behavior after TTL expiry (24 h and 48 h) | **Not verified.** Not unlimited replay protection |
 | Multiple Kafka partitions | **Not verified.** Topics are single-partition |
 | Sustained operation and performance targets | **Not verified** |
@@ -316,8 +338,8 @@ impression or complete) do not imply separate streaming features for them.
 The online-serving tests are not marked `integration`. They can run under
 `-m "not integration"` when their availability check passes, which verifies
 offline files and Redis connectivity but not that expected online values are
-materialized. The unified, routing, late-event, savepoint and skip-rate tests
-are marked `integration`.
+materialized. The unified, routing, late-event, savepoint, crash-recovery and
+skip-rate tests are marked `integration`.
 
 ### Open test-maintenance items
 
@@ -337,14 +359,13 @@ These are maintenance items and not failures of passing tests.
 FeatureForge has an integrated, tested streaming path with event validation,
 event-time windows, bounded replay idempotency, identity-conflict detection,
 guarded Redis materialization, rejected-event routing, continuous late
-correction, savepoint stop and resume, and two streaming features. Unified
-batch and stream online access covers the play count. Both features run on one
-generic spec-driven Flink job. Store policies, materializers and Spark features
-are not spec-driven.
+correction, savepoint stop and resume, recovery from a TaskManager crash, and
+two streaming features. Unified batch and stream online access covers the play
+count. Both features run on one generic spec-driven Flink job. Store policies,
+materializers and Spark features are not spec-driven.
 
-Remaining before the streaming phase can be called complete: automatic
-checkpoint recovery verification, TTL-boundary verification, versioned
-streaming history, skip-rate access through the unified client and a
-reproducible completion demonstration. These must be completed or explicitly
-scoped. For current test and CI results see the README badge and the Actions
-page, not this document.
+Remaining before the streaming phase can be called complete: JobManager-failure
+recovery verification, TTL-boundary verification, versioned streaming history,
+skip-rate access through the unified client and a reproducible completion
+demonstration. These must be completed or explicitly scoped. For current test
+and CI results see the README badge and the Actions page, not this document.

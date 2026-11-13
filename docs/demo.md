@@ -31,7 +31,7 @@ flowchart LR
 - GNU Make
 
 ```bash
-git clone [https://github.com/oster-dev/featureforge.git](https://github.com/oster-dev/featureforge.git)
+git clone https://github.com/oster-dev/featureforge.git
 cd featureforge
 python3 -m venv .venv && source .venv/bin/activate
 python -m pip install --upgrade pip
@@ -125,6 +125,7 @@ against the reference result.
 | Events too late for all windows are routed out | `test_user_play_count_late_events.py`, `test_user_skip_rate_job.py` |
 | Replay and duplicates do not change results | `test_user_play_count_replay_idempotency.py` |
 | A job resumed from a savepoint keeps its dedupe and window state | `test_generic_job_recovery.py` |
+| A job recovers from a TaskManager crash with its dedupe and window state | `test_generic_job_checkpoint_recovery.py` |
 | Exact window boundaries are respected | `test_user_skip_rate_job.py` |
 | Stale and conflicting online writes are rejected | `test_redis_skip_rate_store.py` |
 
@@ -146,9 +147,9 @@ A missing value is shown as missing, never as `0`. Exit codes: `0` success,
 
 ### What this demo does not prove
 
-- Automatic recovery from a checkpoint after a failure and dedupe after TTL
-  expiry are not covered. Resuming from a savepoint is covered by
-  `test_generic_job_recovery.py`.
+- Dedupe after TTL expiry and JobManager failure are not covered. Resuming from
+  a savepoint and recovering from a TaskManager crash are covered by
+  `test_generic_job_recovery.py` and `test_generic_job_checkpoint_recovery.py`.
 - The Flink Kafka sinks are at-least-once. The path is idempotent, not exactly-once.
 - Multi-partition Kafka and streaming history are not implemented.
 
@@ -160,7 +161,7 @@ See [Known limits](../ARCHITECTURE.md#known-limits).
 
 Features can be described declaratively (see
 [ADR-008](adr/ADR-008-feature-spec-design.md)). Parts 1 to 3 need no
-infrastructure. Parts 4 and 5 need the streaming stack from Demo B.
+infrastructure. Parts 4 to 6 need the streaming stack from Demo B.
 
 ### 1. Validate the specs
 
@@ -302,12 +303,28 @@ pytest -v -m integration tests/integration/test_generic_job_recovery.py   # 1 pa
 Both the JobManager and the TaskManager mount the `flink-savepoints` volume,
 so the savepoint written by one is readable by the other.
 
+### 6. Kill the TaskManager and let the job recover
+
+The test kills the TaskManager while the generic job runs for the play-count
+spec. The same job restarts on its own and restores a checkpoint that is not a
+savepoint. A redelivered event is not counted again, a late correction lands in
+the restored window, and the late topic stays empty:
+
+```bash
+docker compose up -d --build
+pytest -v -m integration tests/integration/test_generic_job_checkpoint_recovery.py   # 1 passed
+```
+
+The test restarts the TaskManager in its cleanup. The JobManager keeps running
+and holds the checkpoints in memory, so this does not show recovery from a
+JobManager failure.
+
 ### What this demo does not prove
 
 - The generic job is verified on the golden fixtures, late corrections, replay
-  and the Redis path for both features, and resumes from a savepoint for the
-  play-count spec. Automatic recovery from a checkpoint after a failure and
-  dedupe state after TTL expiry are not proven for it.
+  and the Redis path for both features, and resumes from a savepoint and
+  recovers from a TaskManager crash for the play-count spec. JobManager failure
+  and dedupe state after TTL expiry are not proven for it.
 - The Redis stores and the materializers are still written by hand per feature.
   No Spark feature or store is driven by a spec.
 - `online.ttl` in a spec is declarative. The current stores write without expiry.
@@ -348,6 +365,7 @@ runs them with zero skips.
 | Materialization blocked | Inspect `find output -path "*materialization_manifests*" -name "*.json"`, then the [runbook](runbooks/failed-materialization.md) |
 | Streaming tests cannot connect | `docker compose ps`, Redis published on `127.0.0.1:6379`, nothing else on port 6379 |
 | Flink job fails or hangs | `docker compose logs jobmanager --tail 100` and `docker compose logs taskmanager --tail 100` |
+| TaskManager missing after an interrupted recovery test | `docker compose up -d taskmanager`, then `curl -s http://127.0.0.1:8081/overview` shows one TaskManager and a free slot |
 | Generic job fails with `ModuleNotFoundError` | A dependency is missing in `docker/flink/Dockerfile`. Rebuild with `docker compose up -d --build` |
 | Changed code under `src/` not picked up by Flink | `jobs/` and `feature_repo/specs/` are mounted, `src/` is copied into the image. Rebuild with `docker compose up -d --build` |
 | Savepoint cannot be written or read | JobManager and TaskManager must both mount the `flink-savepoints` volume. A volume with old permissions: `docker compose down`, `docker volume rm featureforge-stream_flink-savepoints`, `docker compose up -d --build` |
