@@ -126,6 +126,7 @@ against the reference result.
 | Replay and duplicates do not change results | `test_user_play_count_replay_idempotency.py` |
 | A job resumed from a savepoint keeps its dedupe and window state | `test_generic_job_recovery.py` |
 | A job recovers from a TaskManager crash with its dedupe and window state | `test_generic_job_checkpoint_recovery.py` |
+| The dedupe state expires after its TTL (shortened TTL, play-count spec) | `test_generic_job_dedupe_ttl.py` |
 | Exact window boundaries are respected | `test_user_skip_rate_job.py` |
 | Stale and conflicting online writes are rejected | `test_redis_skip_rate_store.py` |
 
@@ -147,9 +148,10 @@ A missing value is shown as missing, never as `0`. Exit codes: `0` success,
 
 ### What this demo does not prove
 
-- Dedupe after TTL expiry and JobManager failure are not covered. Resuming from
-  a savepoint and recovering from a TaskManager crash are covered by
-  `test_generic_job_recovery.py` and `test_generic_job_checkpoint_recovery.py`.
+- JobManager failure is not covered, and dedupe expiry is shown only with a
+  shortened TTL. Resuming from a savepoint, recovering from a TaskManager crash
+  and dedupe expiry are covered by `test_generic_job_recovery.py`,
+  `test_generic_job_checkpoint_recovery.py` and `test_generic_job_dedupe_ttl.py`.
 - The Flink Kafka sinks are at-least-once. The path is idempotent, not exactly-once.
 - Multi-partition Kafka and streaming history are not implemented.
 
@@ -323,8 +325,9 @@ JobManager failure.
 
 - The generic job is verified on the golden fixtures, late corrections, replay
   and the Redis path for both features, and resumes from a savepoint and
-  recovers from a TaskManager crash for the play-count spec. JobManager failure
-  and dedupe state after TTL expiry are not proven for it.
+  recovers from a TaskManager crash for the play-count spec, and its dedupe state
+  expires after a shortened TTL. JobManager failure and the production TTL values
+  are not proven for it.
 - The Redis stores and the materializers are still written by hand per feature.
   No Spark feature or store is driven by a spec.
 - `online.ttl` in a spec is declarative. The current stores write without expiry.
