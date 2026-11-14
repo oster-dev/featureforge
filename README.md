@@ -160,7 +160,7 @@ docker compose up -d --build
 pytest -v -m integration tests/integration/test_skip_rate_flink_to_redis.py
 
 # Feature specs: validate the shipped specs
-python -m featureforge.spec.loader feature_repo/specs/*.yaml
+python -m featureforge.cli validate-spec
 ```
 
 Read a feature through the unified online client:

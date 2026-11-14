@@ -149,6 +149,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum allowed latest-partition lag in hours (default: 24).",
     )
 
+    validate_spec_parser = subparsers.add_parser(
+        "validate-spec",
+        help="Validate feature spec YAML files against the spec model and event contract.",
+    )
+    validate_spec_parser.add_argument(
+        "paths",
+        nargs="*",
+        type=Path,
+        help=("Spec files to validate. Defaults to every YAML file in feature_repo/specs."),
+    )
+
     materialize_parser = subparsers.add_parser(
         "materialize",
         help="Materialize Feast offline feature values into the online store.",
@@ -425,6 +436,23 @@ def run_materialize_incremental_command(
     console.print(f"Run manifest: {result.manifest_path}")
 
 
+_DEFAULT_SPEC_DIR = Path("feature_repo/specs")
+
+
+def run_validate_spec_command(paths: list[Path]) -> int:
+    """Validate feature specs and return a process status.
+
+    Exit codes follow the spec loader: 0 valid, 1 invalid, 2 usage or missing file.
+    """
+    from featureforge.spec.loader import main as validate_specs
+
+    spec_paths = paths or sorted(_DEFAULT_SPEC_DIR.glob("*.yaml"))
+    if not spec_paths:
+        Console().print(f"[red]✗[/red] No spec files found in {_DEFAULT_SPEC_DIR}")
+        return 2
+    return validate_specs([str(spec_path) for spec_path in spec_paths])
+
+
 def main() -> None:
     """Parse command-line arguments and run the selected command."""
     parser = build_parser()
@@ -453,6 +481,8 @@ def main() -> None:
             reference_time=args.reference_time,
             max_lag_hours=args.max_lag_hours,
         )
+    elif args.command == "validate-spec":
+        raise SystemExit(run_validate_spec_command(args.paths))
     elif args.command == "materialize":
         run_materialize_command(
             repo_path=args.repo,

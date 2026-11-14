@@ -77,7 +77,7 @@ unformatted. CI fails on both checks, and it is the cheapest failure to avoid.
 | Batch features, backfill, Spark | `pytest tests/unit/test_spark_features.py tests/unit/test_spark_parquet_features.py` |
 | Feast, materialization, online serving | `docker compose up -d`, `feast apply`, then `pytest tests/integration/test_online_serving.py tests/integration/test_unified_online.py` |
 | Redis store policies | `pytest -m integration tests/integration/test_streaming_redis_online_store*.py tests/integration/test_redis_skip_rate_store.py` |
-| A feature spec, the spec model, reference or job plan | `python -m featureforge.spec.loader feature_repo/specs/*.yaml`, then `pytest tests/unit/test_spec_model.py tests/unit/test_spec_reference.py tests/unit/test_spec_golden_parity.py tests/unit/test_spec_flink_plan.py` |
+| A feature spec, the spec model, reference or job plan | `python -m featureforge.cli validate-spec`, then `pytest tests/unit/test_spec_model.py tests/unit/test_spec_reference.py tests/unit/test_spec_golden_parity.py tests/unit/test_spec_flink_plan.py` |
 | The generic Flink job (`jobs/feature_from_spec.py`), `src/`, `docker/flink/Dockerfile`, or `docker-compose.yml` | `docker compose up -d --build`, then the full streaming selection below: the generic job is the only implementation of both streaming features |
 | Flink jobs, contracts, routing, materializers, savepoint or crash recovery | The full streaming selection below |
 
@@ -175,7 +175,7 @@ flowchart TD
   spec engine are out of scope, see [STATUS.md](STATUS.md). Store policies are
   not spec-driven yet, so a new feature still needs its policy tested and
   documented.
-- A spec must pass `python -m featureforge.spec.loader` before anything runs it.
+- A spec must pass `python -m featureforge.cli validate-spec` before anything runs it.
   Do not weaken the model validation or the event-field check to make a spec
   pass. Fix the spec.
 - The spec reference is the oracle. An engine must match it, never the other
@@ -276,7 +276,7 @@ Background: [ADR-004](docs/adr/ADR-004-github-actions-ci.md).
 | Rebuilt job code not picked up | `jobs/` and `feature_repo/specs/` are mounted. Changes under `src/` or `docker/flink/Dockerfile` need `docker compose up -d --build` |
 | `ModuleNotFoundError` inside a Flink job | A dependency is missing in `docker/flink/Dockerfile`. Check with `docker compose exec -T jobmanager /opt/pyflink/bin/python -c "import featureforge.spec.loader"` |
 | Savepoint cannot be written or read | Both `jobmanager` and `taskmanager` must mount the `flink-savepoints` volume at `/opt/flink/savepoints`, owned by `flink`. A volume created before this setup keeps old permissions: `docker compose down`, `docker volume rm featureforge-stream_flink-savepoints`, then `docker compose up -d --build` |
-| A spec is rejected | `python -m featureforge.spec.loader <spec.yaml>` prints each violated rule and the available names |
+| A spec is rejected | `python -m featureforge.cli validate-spec <spec.yaml>` prints each violated rule and the available names |
 | `SkipRateUpdateConflictError` | Compare stored and incoming count vectors, find the upstream producer, fix or replay upstream. Never edit Redis by hand or weaken the policy |
 
 Useful commands:
