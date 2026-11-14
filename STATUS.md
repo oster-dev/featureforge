@@ -50,7 +50,7 @@ Related: [README](README.md) · [Architecture](ARCHITECTURE.md) ·
 | 3 | Generic Flink job (`count`, `ratio`): golden fixtures, spec-reference parity, job plan from a spec, generic job verified against the fixtures of both features | **Done** |
 | 4 | 4a to 4f done: the skip-rate scenarios, the play-count golden fixture, the late-event scenarios, replay and identity conflict, the skip-rate Flink-to-Redis flow and the joined play-count flow all ran on both the hand-written and the generic job. 4g done: the hand-written jobs are deleted, the generic job is the only implementation. 4h done: stop with a savepoint and resume on the generic job. 4i done: recovery from a TaskManager crash with checkpoint state. 4j done: the dedupe state expires after its TTL, shown with a shortened TTL for the play-count spec. Open: JobManager failure, spec-driven store policies | In progress |
 | 5 | Further operators in Flink, composite keys, Spark backfill | Planned |
-| 6 | Two new features by YAML only | Planned |
+| 6 | Two new features by YAML only. 6a done: `content_play_count_1h` (entity `content_id`) runs on the generic job from a spec alone and matches hand-calculated windows. Open: landing in the online store, which needs spec-driven stores, and `user_content_affinity_7d` with a composite key | In progress |
 
 ## Next
 

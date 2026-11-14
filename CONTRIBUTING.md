@@ -94,6 +94,8 @@ pytest -v -ra -m integration \
   tests/integration/test_skip_rate_flink_to_redis.py \
   tests/integration/test_generic_job_recovery.py \
   tests/integration/test_generic_job_checkpoint_recovery.py \
+  tests/integration/test_generic_job_dedupe_ttl.py \
+  tests/integration/test_generic_job_content_play_count.py \
   tests/integration/test_skip_rate_materialization.py \
   tests/integration/test_redis_skip_rate_store.py
 ```

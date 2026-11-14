@@ -115,6 +115,7 @@ language is bounded on purpose, see [ADR-008](docs/adr/ADR-008-feature-spec-desi
 | One exact reference evaluates a spec and matches the Python references on randomized inputs at window boundaries | [`test_spec_reference.py`](tests/unit/test_spec_reference.py) |
 | The skip-rate golden fixture has hand-calculated values that the Python reference and the spec reference both reproduce | [`test_streaming_user_skip_rate_golden.py`](tests/unit/test_streaming_user_skip_rate_golden.py), [`test_spec_golden_parity.py`](tests/unit/test_spec_golden_parity.py) |
 | A generic Flink job built from a spec reproduces the golden fixtures of both features: every emitted window matches the spec reference and the Python reference | [`test_feature_from_spec_job.py`](tests/integration/test_feature_from_spec_job.py), [`test_spec_flink_plan.py`](tests/unit/test_spec_flink_plan.py) |
+| A feature defined only by a YAML spec with another entity key (`content_id`) runs on the generic job and matches hand-calculated windows | [`test_generic_job_content_play_count.py`](tests/integration/test_generic_job_content_play_count.py) |
 
 The generic job is the only implementation of both streaming features. It is
 verified on the golden fixtures, late corrections, replay, the Redis path, a
@@ -158,7 +159,7 @@ make demo
 docker compose up -d --build
 pytest -v -m integration tests/integration/test_skip_rate_flink_to_redis.py
 
-# Feature specs: validate both shipped specs
+# Feature specs: validate the shipped specs
 python -m featureforge.spec.loader feature_repo/specs/*.yaml
 ```
 
@@ -184,9 +185,11 @@ Expected output, troubleshooting, and cleanup: [Demo Guide](docs/demo.md).
 | `content_popularity` (8 values) | Batch | `content_id` | Views, unique viewers, watch time, recency |
 | `user_play_count_1h` | Streaming | `user_id` | Play events in `(t − 1h, t]`, sliding |
 | `user_skip_rate_24h` | Streaming | `user_id` | `skips / (plays + skips)` in `(t − 24h, t]`, 1-minute slide, explicit zero-denominator behavior |
+| `content_play_count_1h` | Streaming (spec only) | `content_id` | Play events of a content item in `(t − 1h, t]`, sliding. Computed by the generic job from a YAML spec alone, not yet materialized to Redis |
 
-Both streaming features are defined as specs in
+All three streaming features are defined as specs in
 [`feature_repo/specs/`](feature_repo/specs/) and computed by one generic Flink job.
+Only the first two have a materializer and Redis store.
 
 ---
 
