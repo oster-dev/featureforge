@@ -64,7 +64,7 @@ inside FeatureForge.
 | Stage 4g | `a3c2da2` | The hand-written feature jobs are removed. Last version: tag `hand-written-jobs-final` |
 | Stage 4h | `c2e9365` | The generic job stops with a savepoint and a new job resumes from it, with dedupe and window state intact (play-count spec) |
 | Stage 4i | `e56934d` | The generic job recovers from a TaskManager crash with checkpoint state (play-count spec) |
-| Stage 4j | this change | The dedupe state expires after its TTL: a redelivery inside it is ignored, one after it is counted again. The job expires the state with a processing-time timer because the PyFlink 1.20 state TTL did not expire it (play-count spec, shortened TTL) |
+| Stage 4j | `de74e6d` | The dedupe state expires after its TTL: a redelivery inside it is ignored, one after it is counted again. The job expires the state with a processing-time timer because the PyFlink 1.20 state TTL did not expire it (play-count spec, shortened TTL) |
 
 ---
 
