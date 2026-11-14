@@ -38,7 +38,7 @@ flowchart LR
 | Offline store | One canonical Parquet root, Hive-style `observation_date` partitions |
 | Retrieval and materialization | Feast, point-in-time joins |
 | Streaming | Kafka, Flink (PyFlink), Pydantic contracts |
-| Feature definitions as data | YAML specs, Pydantic validation, exact reference, one generic Flink job for both streaming features |
+| Feature definitions as data | YAML specs, Pydantic validation, exact reference, one generic Flink job for all spec-defined streaming features |
 | Online store | Redis, feature-specific write policies |
 | Quality | pytest, Ruff, four CI layers |
 
@@ -107,11 +107,25 @@ flowchart LR
 
 The generic job runs once per spec and takes these parameters from the spec.
 For each feature it assigns event time, deduplicates by the spec's dedupe key
-(`event_id` in both shipped specs), aggregates in user-keyed sliding windows,
+(`event_id` in all shipped specs), aggregates in sliding windows keyed by the
+spec's entity key,
 and sends events that are too late for every window to a side-output topic. A
 conflicting payload for a known `event_id` fails the job with
 `EventIdentityConflictError`. A bounded mode lets tests consume the current
 Kafka range and terminate.
+
+The dedupe state expires through a processing-time timer that the job registers
+for each event ID when it first sees it. Flink state TTL is not used for this:
+on PyFlink 1.20.3 it did not expire the state (see
+[streaming provenance](docs/streaming-migration.md), stage 4j). Replay
+protection is therefore bounded by the spec's dedupe TTL, and an event
+redelivered after expiry is counted again.
+
+**Spec-only feature.** `content_play_count_1h` has entity `content_id` and is
+defined by a YAML spec alone. It runs on the same job without code changes, and
+its integration test checks every window of two contents against
+hand-calculated values. It has no materializer or Redis store yet, because
+those are written by hand per feature.
 
 **Savepoint resume.** The generic job can be stopped with a savepoint and
 resumed by a new job from it. The Compose stack shares one savepoint volume
@@ -223,7 +237,8 @@ flowchart LR
   implementation of `user_play_count_1h` and `user_skip_rate_24h`: on the golden
   fixtures every emitted window matches both references, and the integration
   tests cover late corrections, too-late routing, replay, savepoint resume,
-  crash recovery and the Redis path.
+  crash recovery and the Redis path. A third spec, `content_play_count_1h` with
+  entity `content_id`, runs on it without code changes.
 - **Still hand-written.** The Redis store policies and the materializers are
   written by hand per feature. `online.ttl` and `offline.store` in the specs
   are declarative only: the Redis stores write keys without expiry and no
@@ -320,6 +335,9 @@ Scope and order: [STATUS.md](STATUS.md) and
   implemented.
 - The event-identity conflict failure is tested for the play count only. The
   skip-rate spec runs the same code path.
+- A feature defined only by a spec (`content_play_count_1h`) is computed by the
+  generic job but cannot be served online yet: store policies and materializers
+  are hand-written per feature.
 - The TaskManager instability seen in CI is isolated, not explained.
 
 ## Decisions
