@@ -160,6 +160,41 @@ def build_parser() -> argparse.ArgumentParser:
         help=("Spec files to validate. Defaults to every YAML file in feature_repo/specs."),
     )
 
+    test_spec_parser = subparsers.add_parser(
+        "test-spec",
+        help="Evaluate a feature spec on an event file with the reference implementation.",
+    )
+    test_spec_parser.add_argument(
+        "spec",
+        type=Path,
+        help="Path to the feature spec YAML file.",
+    )
+    test_spec_parser.add_argument(
+        "--events",
+        type=Path,
+        required=True,
+        help="JSONL file with interaction events.",
+    )
+    test_spec_parser.add_argument(
+        "--entity",
+        action="append",
+        required=True,
+        metavar="KEY=VALUE",
+        help="Entity to evaluate, for example user_id=user_000001. Repeat for composite keys.",
+    )
+    test_spec_parser.add_argument(
+        "--at",
+        required=True,
+        help="Observation time in UTC, ISO 8601, for example 2026-01-01T12:00:00+00:00.",
+    )
+    test_spec_parser.add_argument(
+        "--expect",
+        action="append",
+        default=[],
+        metavar="NAME=VALUE",
+        help="Expected value of a spec output. Exit code 1 if it differs. Repeatable.",
+    )
+
     materialize_parser = subparsers.add_parser(
         "materialize",
         help="Materialize Feast offline feature values into the online store.",
@@ -453,6 +488,124 @@ def run_validate_spec_command(paths: list[Path]) -> int:
     return validate_specs([str(spec_path) for spec_path in spec_paths])
 
 
+def _parse_pairs(items: list[str], flag: str) -> dict[str, str]:
+    pairs: dict[str, str] = {}
+    for item in items:
+        key, separator, value = item.partition("=")
+        if not separator or not key:
+            raise ValueError(f"{flag} expects KEY=VALUE, got {item!r}")
+        pairs[key] = value
+    return pairs
+
+
+def _read_events(path: Path) -> list:
+    from pydantic import ValidationError
+
+    from featureforge.streaming.contracts.events import InteractionEventV1
+
+    events = []
+    with open(path, encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            if not line.strip():
+                continue
+            try:
+                events.append(InteractionEventV1.model_validate_json(line))
+            except ValidationError as exc:
+                first = exc.errors()[0]
+                where = ".".join(str(part) for part in first["loc"]) or "<event>"
+                raise ValueError(
+                    f"{path.name}, line {line_number}: invalid event, {where}: {first['msg']}"
+                ) from exc
+    return events
+
+
+def _values_match(actual: object, expected: str) -> bool:
+    if expected.lower() == "none":
+        return actual is None
+    if isinstance(actual, int | float) and not isinstance(actual, bool):
+        try:
+            return abs(actual - float(expected)) < 1e-9
+        except ValueError:
+            return False
+    return str(actual) == expected
+
+
+def run_test_spec_command(
+    spec_path: Path,
+    events_path: Path,
+    entity_args: list[str],
+    at: str,
+    expect_args: list[str],
+) -> int:
+    """Evaluate a spec on an event file with the reference and return a process status.
+
+    Exit codes: 0 ok, 1 invalid input or a failed expectation, 2 a file is missing.
+    """
+    from pydantic import ValidationError
+    from rich.markup import escape
+    from rich.table import Table
+
+    from featureforge.spec.loader import format_errors, load_spec
+    from featureforge.spec.reference import EventIdentityConflictError, evaluate_spec
+
+    console = Console()
+    try:
+        spec = load_spec(spec_path)
+        entity = _parse_pairs(entity_args, "--entity")
+        expected = _parse_pairs(expect_args, "--expect")
+        observation_time = parse_utc_datetime(at)
+        events = _read_events(events_path)
+        result = evaluate_spec(spec, events, entity=entity, observation_time=observation_time)
+    except FileNotFoundError as exc:
+        console.print(f"[red]✗[/red] file not found: {exc.filename}", soft_wrap=True)
+        return 2
+    except ValidationError as exc:
+        console.print(f"[red]✗[/red] {spec_path.name}", soft_wrap=True)
+        for line in format_errors(exc):
+            console.print(f"    {escape(line)}", soft_wrap=True)
+        return 1
+    except (ValueError, TypeError, EventIdentityConflictError) as exc:
+        console.print(f"[red]✗[/red] {escape(str(exc))}", soft_wrap=True)
+        return 1
+
+    entity_text = ", ".join(f"{key}={value}" for key, value in entity.items())
+    console.print(f"{escape(result.spec_name)} · {escape(entity_text)}", soft_wrap=True)
+    console.print(
+        f"Window ({result.window_start_exclusive.isoformat()}, "
+        f"{result.observation_time.isoformat()}] · {len(events)} events read",
+        soft_wrap=True,
+    )
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("value")
+    table.add_column("result")
+    for name, value in result.values.items():
+        table.add_row(escape(name), escape(str(value)))
+    console.print(table)
+
+    failed = False
+    for name, wanted in expected.items():
+        if name not in result.values:
+            console.print(
+                f"[red]✗[/red] {escape(name)}: not an output of this spec, "
+                f"available: {escape(str(sorted(result.values)))}",
+                soft_wrap=True,
+            )
+            failed = True
+            continue
+        actual = result.values[name]
+        if _values_match(actual, wanted):
+            console.print(
+                f"[green]✓[/green] {escape(name)} = {escape(str(actual))}", soft_wrap=True
+            )
+        else:
+            console.print(
+                f"[red]✗[/red] {escape(name)}: expected {escape(wanted)}, got {escape(str(actual))}",
+                soft_wrap=True,
+            )
+            failed = True
+    return 1 if failed else 0
+
+
 def main() -> None:
     """Parse command-line arguments and run the selected command."""
     parser = build_parser()
@@ -483,6 +636,16 @@ def main() -> None:
         )
     elif args.command == "validate-spec":
         raise SystemExit(run_validate_spec_command(args.paths))
+    elif args.command == "test-spec":
+        raise SystemExit(
+            run_test_spec_command(
+                spec_path=args.spec,
+                events_path=args.events,
+                entity_args=args.entity,
+                at=args.at,
+                expect_args=args.expect,
+            )
+        )
     elif args.command == "materialize":
         run_materialize_command(
             repo_path=args.repo,
