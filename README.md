@@ -161,6 +161,12 @@ pytest -v -m integration tests/integration/test_skip_rate_flink_to_redis.py
 
 # Feature specs: validate the shipped specs
 python -m featureforge.cli validate-spec
+
+# Try a spec on an event file, no Docker needed
+python -m featureforge.cli test-spec feature_repo/specs/user_play_count_1h.yaml \
+  --events fixtures/streaming/user_play_count_1h_v1.jsonl \
+  --entity user_id=user_000001 --at 2026-01-01T11:30:00+00:00 \
+  --expect play_count=3
 ```
 
 Read a feature through the unified online client:
