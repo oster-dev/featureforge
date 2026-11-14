@@ -20,7 +20,7 @@ from pyflink.datastream.functions import (
     ProcessWindowFunction,
 )
 from pyflink.datastream.output_tag import OutputTag
-from pyflink.datastream.state import StateTtlConfig, ValueStateDescriptor
+from pyflink.datastream.state import ValueStateDescriptor
 from pyflink.datastream.window import SlidingEventTimeWindows
 
 from featureforge.spec.flink_plan import (
@@ -60,12 +60,6 @@ class DeduplicateEvents(KeyedProcessFunction):
 
     def open(self, runtime_context):
         descriptor = ValueStateDescriptor("logical-event-payload-v1", Types.STRING())
-        descriptor.enable_time_to_live(
-            StateTtlConfig.new_builder(Time.milliseconds(self.dedupe_ttl_ms))
-            .set_update_type(StateTtlConfig.UpdateType.OnCreateAndWrite)
-            .set_state_visibility(StateTtlConfig.StateVisibility.NeverReturnExpired)
-            .build()
-        )
         self.logical_payload = runtime_context.get_state(descriptor)
 
     def process_element(self, value, ctx):
@@ -79,6 +73,10 @@ class DeduplicateEvents(KeyedProcessFunction):
 
         if previous_payload is None:
             self.logical_payload.update(logical_payload)
+            timers = ctx.timer_service()
+            timers.register_processing_time_timer(
+                timers.current_processing_time() + self.dedupe_ttl_ms
+            )
             yield value
             return
 
@@ -86,6 +84,11 @@ class DeduplicateEvents(KeyedProcessFunction):
             raise EventIdentityConflictError(
                 f"Conflicting logical payload for event_id={event.event_id}"
             )
+
+    def on_timer(self, timestamp, ctx):
+        # PyFlink 1.20 state TTL does not expire this state (FLINK-34625), so expire it here.
+        self.logical_payload.clear()
+        yield from ()
 
 
 class CountEvents(AggregateFunction):

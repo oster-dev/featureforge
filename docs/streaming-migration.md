@@ -33,6 +33,7 @@ flowchart LR
     D8 --> D9[Stage 4g<br/>hand-written jobs<br/>removed]:::dev
     D9 --> D10[Stage 4h<br/>savepoint stop<br/>and resume]:::dev
     D10 --> D11[Stage 4i<br/>TaskManager crash<br/>recovery]:::dev
+    D11 --> D12[Stage 4j<br/>dedupe expiry<br/>after TTL]:::dev
 
     classDef imp fill:#cfe2ff,stroke:#0d6efd,color:#000
     classDef dev fill:#d4edda,stroke:#28a745,color:#000
@@ -62,7 +63,8 @@ inside FeatureForge.
 | Stage 4f | `8058076` | The joined play-count flow runs on both jobs |
 | Stage 4g | `a3c2da2` | The hand-written feature jobs are removed. Last version: tag `hand-written-jobs-final` |
 | Stage 4h | `c2e9365` | The generic job stops with a savepoint and a new job resumes from it, with dedupe and window state intact (play-count spec) |
-| Stage 4i | this change | The generic job recovers from a TaskManager crash with checkpoint state (play-count spec) |
+| Stage 4i | `e56934d` | The generic job recovers from a TaskManager crash with checkpoint state (play-count spec) |
+| Stage 4j | this change | The dedupe state expires after its TTL: a redelivery inside it is ignored, one after it is counted again. The job expires the state with a processing-time timer because the PyFlink 1.20 state TTL did not expire it (play-count spec, shortened TTL) |
 
 ---
 
@@ -278,6 +280,27 @@ this does not cover JobManager loss or checkpoints on a shared volume. The
 test restarts the TaskManager in its cleanup and runs in its own CI module, so
 the next module starts from a fresh TaskManager anyway.
 
+### Dedupe expiry (stage 4j)
+
+`tests/integration/test_generic_job_dedupe_ttl.py` runs the generic job with a copy of the
+play-count spec: 20 s windows, 5 s slide, 10 s allowed lateness and a 30 s dedupe TTL. The
+shortened values satisfy the spec rule that the dedupe TTL is at least window plus allowed
+lateness. The test publishes an event and waits for its window. A redelivery after about 15 s
+must not be counted. A second redelivery after about 36 s must be counted, so the window
+reaches 2. This also shows that an ignored duplicate does not refresh the retention.
+
+The first version of the test failed. The job used Flink state TTL with `OnCreateAndWrite`
+and `NeverReturnExpired`, and the dedupe state did not expire in PyFlink 1.20.3: the
+redelivery stayed ignored after 80 s, while a fresh event with a new ID updated the same
+window. The behavior matches the reported issue FLINK-34625. Since stage 4j the job
+registers a processing-time timer when it first sees an event ID and clears the state when
+the timer fires.
+
+Replay protection is therefore bounded by the TTL. An event redelivered after expiry is
+counted again. The test uses the shortened spec only. The production values of 24 h and
+48 h are configuration and are not exercised.
+
+
 ---
 
 ## Current implementation
@@ -295,7 +318,7 @@ the next module starts from a fresh TaskManager anyway.
 Both features run on the generic job and share watermark delay (10 min),
 allowed lateness (30 min), checkpointing (10 s), too-late side outputs,
 event-ID dedupe and explicit failure for conflicting payloads. Identical
-duplicates neither emit nor refresh the dedupe retention.
+duplicates neither emit nor refresh the dedupe retention. A processing-time timer per event ID enforces the retention.
 
 The play-count store accepts newer windows (including zero), rejects older
 windows, leaves identical values unchanged, accepts increasing same-window
@@ -316,7 +339,7 @@ Skip-rate access through the unified interface is not yet implemented.
 | Savepoint stop and resume | Verified for the play-count spec on the generic job: dedupe and window state survive |
 | Checkpoint recovery after a TaskManager crash | Verified for the play-count spec on the generic job: dedupe and window state survive |
 | JobManager failure and checkpoints on a shared volume | **Not verified.** Checkpoints are held in JobManager memory |
-| Dedupe behavior after TTL expiry (24 h and 48 h) | **Not verified.** Not unlimited replay protection |
+| Dedupe expiry after the TTL | Verified for the play-count spec with a shortened TTL (30 s): a redelivery after expiry is counted again. The production values of 24 h and 48 h are not exercised |
 | Multiple Kafka partitions | **Not verified.** Topics are single-partition |
 | Sustained operation and performance targets | **Not verified** |
 | Exactly-once delivery | **Not claimed.** Flink Kafka sinks use `AT_LEAST_ONCE` |
@@ -338,7 +361,7 @@ impression or complete) do not imply separate streaming features for them.
 The online-serving tests are not marked `integration`. They can run under
 `-m "not integration"` when their availability check passes, which verifies
 offline files and Redis connectivity but not that expected online values are
-materialized. The unified, routing, late-event, savepoint, crash-recovery and
+materialized. The unified, routing, late-event, savepoint, crash-recovery, dedupe-expiry and
 skip-rate tests are marked `integration`.
 
 ### Open test-maintenance items
@@ -359,13 +382,13 @@ These are maintenance items and not failures of passing tests.
 FeatureForge has an integrated, tested streaming path with event validation,
 event-time windows, bounded replay idempotency, identity-conflict detection,
 guarded Redis materialization, rejected-event routing, continuous late
-correction, savepoint stop and resume, recovery from a TaskManager crash, and
+correction, savepoint stop and resume, recovery from a TaskManager crash, dedupe expiry after a shortened TTL, and
 two streaming features. Unified batch and stream online access covers the play
 count. Both features run on one generic spec-driven Flink job. Store policies,
 materializers and Spark features are not spec-driven.
 
 Remaining before the streaming phase can be called complete: JobManager-failure
-recovery verification, TTL-boundary verification, versioned streaming history,
+recovery verification, verification at the production TTL values, versioned streaming history,
 skip-rate access through the unified client and a reproducible completion
 demonstration. These must be completed or explicitly scoped. For current test
 and CI results see the README badge and the Actions page, not this document.

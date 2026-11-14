@@ -99,6 +99,7 @@ Full design: [ARCHITECTURE.md](ARCHITECTURE.md) ·
 | Conflicting payloads for the same `event_id` fail loudly | [`test_user_play_count_replay_idempotency.py`](tests/integration/test_user_play_count_replay_idempotency.py) |
 | The generic job resumes from a savepoint with its dedupe and window state intact (shown for play count) | [`test_generic_job_recovery.py`](tests/integration/test_generic_job_recovery.py) |
 | The generic job recovers from a TaskManager crash with its dedupe and window state restored from a checkpoint (shown for play count) | [`test_generic_job_checkpoint_recovery.py`](tests/integration/test_generic_job_checkpoint_recovery.py) |
+| The generic job's dedupe state expires after its TTL: a redelivery inside the TTL is ignored, one after it is counted again (shown for play count with a shortened TTL) | [`test_generic_job_dedupe_ttl.py`](tests/integration/test_generic_job_dedupe_ttl.py) |
 | Online writes never regress: stale, older, and conflicting updates are rejected | [`test_streaming_redis_online_store.py`](tests/integration/test_streaming_redis_online_store.py), [`test_skip_rate_update_policy.py`](tests/unit/test_skip_rate_update_policy.py) |
 | Concurrent writers are safe (Redis `WATCH`/`MULTI` with bounded retries) | [`test_streaming_redis_online_store_concurrency.py`](tests/integration/test_streaming_redis_online_store_concurrency.py) |
 | Full Kafka → Flink → Kafka → Redis path produces the reference result | [`test_user_play_count_kafka_to_redis.py`](tests/integration/test_user_play_count_kafka_to_redis.py), [`test_skip_rate_flink_to_redis.py`](tests/integration/test_skip_rate_flink_to_redis.py) |
@@ -194,7 +195,7 @@ Both streaming features are defined as specs in
 | Phase | Status |
 |---|---|
 | 1 · Feature store foundation | **Released** as [v0.1.0](https://github.com/oster-dev/featureforge/releases/tag/v0.1.0) |
-| 2 · Streaming feature platform | **Core delivered.** Declarative feature specs: spec model, reference and one generic Flink job running both streaming features are done, including savepoint resume and recovery from a TaskManager crash. Open: dedupe after TTL expiry, JobManager failure, spec-driven stores, streaming history, and the final demo |
+| 2 · Streaming feature platform | **Core delivered.** Declarative feature specs: spec model, reference and one generic Flink job running both streaming features are done, including savepoint resume and recovery from a TaskManager crash. Open: JobManager failure, spec-driven stores, streaming history, and the final demo |
 | 3 · End-to-end ML workflow | **Planned** |
 
 Details, open items, and known limitations: **[STATUS.md](STATUS.md)**.

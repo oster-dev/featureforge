@@ -310,8 +310,10 @@ Scope and order: [STATUS.md](STATUS.md) and
   [aws-production-profile.md](docs/aws-production-profile.md), not deployed.
 - Replay tests cover fresh bounded executions. Stop with a savepoint and resume,
   and recovery from a TaskManager crash, are verified for the play-count spec on
-  the generic job. **Not** verified: JobManager failure, dedupe after TTL
-  expiry, multi-partition Kafka.
+  the generic job. Dedupe expiry after the TTL is verified for the play-count
+  spec with a shortened TTL: a redelivery after expiry is counted again.
+  **Not** verified: JobManager failure, the production TTL values of 24 h and
+  48 h, multi-partition Kafka.
 - Flink Kafka sinks use `AT_LEAST_ONCE`. Idempotency comes from dedupe and
   guarded Redis writes, not from end-to-end exactly-once.
 - Streaming history and point-in-time retrieval of streaming features are not

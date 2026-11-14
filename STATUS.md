@@ -38,7 +38,7 @@ Related: [README](README.md) · [Architecture](ARCHITECTURE.md) ·
 
 | Item | State |
 |---|---|
-| WP1: declarative spec and generic engine | Stages 1 to 3 delivered for both features. Stage 4 delivered except dedupe after TTL expiry and spec-driven store policies: every integration test runs on the generic job and the hand-written jobs are deleted. Stages 5 and 6 below. |
+| WP1: declarative spec and generic engine | Stages 1 to 3 delivered for both features. Stage 4 delivered except spec-driven store policies: every integration test runs on the generic job and the hand-written jobs are deleted. Stages 5 and 6 below. |
 | Streaming history and published-as-of retrieval (WP2) | Not started. Needs the time-model decision (`event_time` vs. `published_at`). |
 
 ### WP1 stages
@@ -48,7 +48,7 @@ Related: [README](README.md) · [Architecture](ARCHITECTURE.md) ·
 | 1 | ADR-008, spec model, validation, two specs | **Done** |
 | 2 | Generic reference from a spec, parity with the Python references and the play-count golden fixture | **Done** |
 | 3 | Generic Flink job (`count`, `ratio`): golden fixtures, spec-reference parity, job plan from a spec, generic job verified against the fixtures of both features | **Done** |
-| 4 | 4a to 4f done: the skip-rate scenarios, the play-count golden fixture, the late-event scenarios, replay and identity conflict, the skip-rate Flink-to-Redis flow and the joined play-count flow all ran on both the hand-written and the generic job. 4g done: the hand-written jobs are deleted, the generic job is the only implementation. 4h done: stop with a savepoint and resume on the generic job. 4i done: recovery from a TaskManager crash with checkpoint state. Open: dedupe after TTL expiry, JobManager failure, spec-driven store policies | In progress |
+| 4 | 4a to 4f done: the skip-rate scenarios, the play-count golden fixture, the late-event scenarios, replay and identity conflict, the skip-rate Flink-to-Redis flow and the joined play-count flow all ran on both the hand-written and the generic job. 4g done: the hand-written jobs are deleted, the generic job is the only implementation. 4h done: stop with a savepoint and resume on the generic job. 4i done: recovery from a TaskManager crash with checkpoint state. 4j done: the dedupe state expires after its TTL, shown with a shortened TTL for the play-count spec. Open: JobManager failure, spec-driven store policies | In progress |
 | 5 | Further operators in Flink, composite keys, Spark backfill | Planned |
 | 6 | Two new features by YAML only | Planned |
 
@@ -70,7 +70,7 @@ workflow (Metaflow, MLflow, registry, rollback).
 | Gap | Impact |
 |---|---|
 | Recovery is tested for a TaskManager crash only | JobManager failure is **not** proven, and the checkpoints live in JobManager memory, so losing it loses them. Checkpoints on a shared volume are not tested. Both recovery tests cover the play-count spec only. |
-| No dedupe test after state TTL expiry (24 h, 48 h) | No claim of unlimited replay protection. |
+| Dedupe expiry is shown with a shortened TTL (30 s) for the play-count spec, not at 24 h or 48 h | The production values are configuration. A redelivery after expiry is counted again, so replay protection is bounded by the TTL. |
 | Single-partition Kafka topics only | Partition scaling is not demonstrated. |
 | Flink Kafka sinks are `AT_LEAST_ONCE` | No exactly-once claim. |
 | TaskManager failure in long CI runs is isolated, not explained | A fresh TaskManager per module isolates it. The metaspace is logged per module to test a class-loading-leak hypothesis. Root cause open. |
@@ -98,4 +98,5 @@ workflow (Metaflow, MLflow, registry, rollback).
 A guarantee counts as delivered only when a test, benchmark or drill report
 exists and is linked. Mechanisms present in job code (watermarks, state TTL,
 checkpointing) are not treated as proven recovery behavior unless a test
-exercises them.
+exercises them. The dedupe state TTL is the example: the configured Flink state
+TTL did not expire the state until a test showed it.
