@@ -1,18 +1,13 @@
 # FeatureForge Architecture
 
-
 FeatureForge computes features once and serves them consistently for offline
 training and low-latency online inference, from batch and streaming sources.
 
-
 This document describes what is **implemented and tested today**.
-
 
 ---
 
-
 ## 1. System overview
-
 
 ```mermaid
 flowchart LR
@@ -22,7 +17,6 @@ flowchart LR
         OFF --> GATE{Correctness<br/>and freshness gates}
     end
 
-
     subgraph Stream["Streaming path"]
         K0[(Kafka<br/>raw events)] --> VAL[Flink validation<br/>and routing]
         VAL --> K1[(Kafka<br/>validated events)]
@@ -31,14 +25,12 @@ flowchart LR
         K2 --> MAT[Guarded<br/>materializers]
     end
 
-
     GATE --> FEAST[Feast]
     FEAST -->|historical retrieval| TRAIN[Training pipeline]
     FEAST -->|materialization| REDIS[(Redis<br/>online store)]
     MAT --> REDIS
     REDIS --> CLIENT[Unified online client<br/>availability and freshness]
 ```
-
 
 | Concern | Implementation |
 |---|---|
@@ -50,12 +42,9 @@ flowchart LR
 | Online store | Redis. A spec-driven store and materializer for count and ratio specs, hand-written stores for the two original features |
 | Quality | pytest, Ruff, four CI layers |
 
-
 ---
 
-
 ## 2. Batch path
-
 
 ```mermaid
 flowchart LR
@@ -70,7 +59,6 @@ flowchart LR
     FR -->|stale| ALERT[Named failed check]
 ```
 
-
 - **One canonical source.** Backfill, correctness gate, freshness check, Feast
   and parity tests all read the same offline path. This prevents validating one
   path while serving another. See ADR-001 and ADR-002.
@@ -83,15 +71,11 @@ flowchart LR
   excluded, the observation time is included. Spark timestamps are encoded as
   UTC epoch microseconds to avoid timezone drift across the Python/JVM boundary.
 
-
 ---
-
 
 ## 3. Streaming path
 
-
 ### Topics and jobs
-
 
 ```mermaid
 flowchart LR
@@ -99,9 +83,7 @@ flowchart LR
     V --> OK[(validated.v1)]
     V --> REJ[(rejected.v1)]
 
-
     OK --> J[Generic feature job<br/>one run per spec]
-
 
     J -->|user_play_count_1h| PF[(features.user-play-count-1h.v1)]
     J -->|user_play_count_1h| PL[(play-count late topic)]
@@ -110,7 +92,6 @@ flowchart LR
     J -->|content_play_count_1h| CF[(features.content-play-count-1h.v1)]
     J -->|content_play_count_1h| CL[(content late topic)]
 
-
     PF --> M1[Play-count<br/>materializer]
     SF --> M2[Skip-rate<br/>materializer]
     CF --> M3[Spec-driven<br/>materializer]
@@ -118,7 +99,6 @@ flowchart LR
     M2 --> R
     M3 --> R
 ```
-
 
 | Parameter | `user_play_count_1h` | `user_skip_rate_24h` | `content_play_count_1h` |
 |---|---|---|---|
@@ -129,7 +109,6 @@ flowchart LR
 | Checkpoint interval | 10 s | 10 s | 10 s |
 | Emits | play count | play count, skip count, skip rate | play count |
 
-
 The generic job runs once per spec and takes these parameters from the spec.
 For each feature it assigns event time, deduplicates by the spec's dedupe key
 (`event_id` in all shipped specs), aggregates in sliding windows keyed by the
@@ -139,14 +118,12 @@ conflicting payload for a known `event_id` fails the job with
 `EventIdentityConflictError`. A bounded mode lets tests consume the current
 Kafka range and terminate.
 
-
 The dedupe state expires through a processing-time timer that the job registers
 for each event ID when it first sees it. Flink state TTL is not used for this:
 on PyFlink 1.20.3 it did not expire the state (see
 [streaming provenance](docs/streaming-migration.md), stage 4j). Replay
 protection is therefore bounded by the spec's dedupe TTL, and an event
 redelivered after expiry is counted again.
-
 
 **Spec-only feature.** `content_play_count_1h` has entity `content_id` and is
 defined by a YAML spec alone. It runs on the same job without code changes, and
@@ -156,7 +133,6 @@ spec-driven store and materializer, also without feature-specific code (see
 [Spec-driven online path](#4-declarative-feature-specs)). An end-to-end test
 runs it from events through the validation job, the generic job and that path.
 
-
 **Savepoint resume.** The generic job can be stopped with a savepoint and
 resumed by a new job from it. The Compose stack shares one savepoint volume
 between JobManager and TaskManager. The recovery test shows for the play-count
@@ -164,7 +140,6 @@ spec that the resumed job restores the savepoint (it does not replay from the
 earliest offset), that a redelivered event is not counted again because the
 dedupe state survives, and that a late correction lands in the restored window
 state. This covers a planned stop. Crash recovery follows.
-
 
 **Crash recovery.** The recovery test kills the TaskManager while the job runs.
 The restart strategy of the cluster (fixed delay, 30 attempts) restarts the same
@@ -176,23 +151,18 @@ memory, so this does not cover JobManager loss. Kafka sinks are
 `AT_LEAST_ONCE`, so the test checks the final value per window, not the number
 of emissions.
 
-
 ### Contracts
-
 
 `InteractionEventV1` rejects invalid timestamps, ingestion before event time,
 unknown fields, unsupported event types or sources, and invalid play semantics.
 Invalid input becomes a rejection record with a stable schema and reason code.
 It never blocks the valid events behind it.
 
-
 ### Online write policies
-
 
 The update policy is part of the spec (`online.update_policy`). The two
 original features have hand-written stores. The spec-driven store implements
 the same ordering for any count or ratio spec.
-
 
 ```mermaid
 flowchart TD
@@ -205,7 +175,6 @@ flowchart TD
     SAME -->|decrease| DISCARD
     SAME -->|incomparable| ERR[UpdateConflictError<br/>SkipRateUpdateConflictError in the hand-written store]
 ```
-
 
 - **Play count** is append-only. Within one window the count may only grow.
 - **Skip rate** compares `(play_count, skip_count)` componentwise, never the
@@ -224,9 +193,7 @@ flowchart TD
   new namespace.
 - **Concurrency.** Writers use Redis `WATCH`/`MULTI` with bounded retries.
 
-
 ### Materializers
-
 
 ```mermaid
 sequenceDiagram
@@ -243,10 +210,8 @@ sequenceDiagram
     end
 ```
 
-
 Offsets are committed only after the Redis write. A materializer refuses an
 empty Kafka range instead of silently completing without work.
-
 
 The spec-driven materializer (`materialize_spec`) takes a spec instead of a
 feature-specific module. It derives the feature topic from the spec
@@ -256,17 +221,13 @@ original features), validates every record against the spec with
 spec-driven store. It reads single-partition topics only and rejects
 tombstones. An invalid record stops the run without committing its offset.
 
-
 ---
 
-
 ## 4. Declarative feature specs
-
 
 A feature can be described as a YAML spec instead of new platform code. The
 spec language is bounded on purpose (ADR-008): it is not a general SQL or
 streaming compiler.
-
 
 ```mermaid
 flowchart LR
@@ -282,7 +243,6 @@ flowchart LR
     FX --> G
     R -.->|compared with| G
 ```
-
 
 - **A spec is data.** It declares entity keys, source, aggregations, derived
   values, window, lateness, deduplication, online policy, offline target and
@@ -323,17 +283,13 @@ flowchart LR
   declarative only: no Iceberg store exists. `online.ttl` is enforced by the
   spec-driven store only.
 
-
 ---
 
-
 ## 5. Serving
-
 
 `OnlineFeatureClient` reads batch features (via Feast) and streaming features
 (via the Redis streaming store) through one interface. Every value carries its
 backend, availability, observation time, age and freshness class.
-
 
 - A missing value is never converted to `0`.
 - Availability and freshness are separate dimensions.
@@ -341,16 +297,12 @@ backend, availability, observation time, age and freshness class.
 - Exit codes of `python -m featureforge.online`: `0` success including explicit
   missing values, `1` feature errors, `2` invalid request.
 
-
 Serving parity tests compare Redis values with the latest canonical offline
 partition.
 
-
 ---
 
-
 ## 6. Testing and CI
-
 
 ```mermaid
 flowchart LR
@@ -361,7 +313,6 @@ flowchart LR
     F -.->|on failure| ART[Diagnostics artifact]
 ```
 
-
 | CI job | Proves |
 |---|---|
 | Baseline | Clean install, Ruff, all tests marked not `integration` |
@@ -369,28 +320,22 @@ flowchart LR
 | Serving integration | Generate, backfill, apply, materialize, online parity, Redis store tests |
 | Streaming integration | Full Compose stack, joined Kafka, Flink and Redis tests, including the generic spec-driven job |
 
-
 Streaming integration tests that start Flink jobs each recreate the TaskManager
 first. Reusing one long-lived worker across many PyFlink jobs became unstable
 in CI. The root cause is not yet identified, so this isolates the tests but
 does not explain the failure. See [Known limits](#known-limits).
 
-
 The Flink image installs its Python dependencies explicitly and checks the
 project imports at build time. A new runtime dependency of the job path must
 be added to `docker/flink/Dockerfile`.
-
 
 Failure simulations (stale partitions, invalid windows, missing Feast
 repository) live in `tests/failure_simulations/`, with runbooks in
 `docs/runbooks/`.
 
-
 ---
 
-
 ## 7. Roadmap
-
 
 ```mermaid
 flowchart LR
@@ -399,12 +344,10 @@ flowchart LR
     P3[Phase 3<br/>End-to-end ML<br/>Planned]:::plan
     P1 --> P2 --> P3
 
-
     classDef done fill:#d4edda,stroke:#28a745,color:#000
     classDef wip fill:#fff3cd,stroke:#e0a800,color:#000
     classDef plan fill:#e2e3e5,stroke:#6c757d,color:#000
 ```
-
 
 Planned and **not implemented**: a `window_replace` store policy, further
 operators in Flink, Iceberg history, Cassandra backend, serving service with
@@ -412,12 +355,9 @@ load tests, observability and recovery drills, ML workflow with registry and
 rollback. Scope and order: [STATUS.md](STATUS.md) and
 [docs/PLATFORM_BLUEPRINT.md](docs/PLATFORM_BLUEPRINT.md).
 
-
 ---
 
-
 ## Known limits
-
 
 - Local reference implementation: Docker Compose, synthetic data, no production
   scale claim. AWS (S3, DynamoDB, managed Kafka and Flink) is documented in
@@ -440,9 +380,7 @@ rollback. Scope and order: [STATUS.md](STATUS.md) and
   that write keys without expiry.
 - The TaskManager instability seen in CI is isolated, not explained.
 
-
 ## Decisions
-
 
 | ADR | Topic |
 |---|---|
@@ -456,9 +394,7 @@ rollback. Scope and order: [STATUS.md](STATUS.md) and
 | 008 | Declarative feature specification |
 | 009 | Spec-driven online stores and materializer |
 
-
 ## Principles
-
 
 Event time, never ingestion time. Explicit time boundaries. Executable data
 contracts. Deterministic output paths. Fail before bad data reaches consumers.

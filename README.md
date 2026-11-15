@@ -1,30 +1,23 @@
 # FeatureForge
 
-
 [![CI](https://github.com/oster-dev/featureforge/actions/workflows/ci.yml/badge.svg)](https://github.com/oster-dev/featureforge/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/oster-dev/featureforge)](https://github.com/oster-dev/featureforge/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-
 **A production-inspired ML feature platform that computes features once and serves them correctly for both offline training and low-latency online inference, from batch and streaming sources.**
-
 
 FeatureForge focuses on the parts that make feature platforms trustworthy:
 point-in-time correctness, event-time semantics, idempotent writes, and
 offline/online consistency. Every claimed guarantee below links to the test
 that proves it.
 
-
 > **Scope, stated honestly:** FeatureForge is a local reference implementation.
 > It runs on Docker Compose, uses synthetic data, and does not claim production
 > scale. Its value is in the explicit contracts and the evidence behind them.
 
-
 ---
 
-
 ## Architecture
-
 
 ```mermaid
 flowchart LR
@@ -33,14 +26,12 @@ flowchart LR
         EV[(Kafka<br/>interaction-events.v1)]
     end
 
-
     subgraph Batch["Batch path"]
         PD[Pandas reference]
         SP[PySpark engine]
         OFF[(Canonical offline store<br/>Parquet, partitioned)]
         GATE{Correctness &<br/>freshness gates}
     end
-
 
     subgraph Stream["Streaming path"]
         VAL[Flink validation<br/>& routing]
@@ -50,16 +41,13 @@ flowchart LR
         MAT[Guarded<br/>materializers]
     end
 
-
     subgraph Serving
         FEAST[Feast]
         REDIS[(Redis<br/>online store)]
         API[Unified online client<br/>availability · freshness]
     end
 
-
     TRAIN[Training pipeline<br/>point-in-time retrieval]
-
 
     GEN --> PD & SP --> OFF --> GATE --> FEAST
     FEAST -->|historical retrieval| TRAIN
@@ -69,7 +57,6 @@ flowchart LR
     FJ --> LATE
     REDIS --> API
 ```
-
 
 | Layer | Technology |
 |---|---|
@@ -82,20 +69,15 @@ flowchart LR
 | Contracts | Pydantic |
 | Quality | pytest, Ruff, GitHub Actions (baseline, Python 3.11/3.12, serving integration, Flink integration) |
 
-
 Full design: [ARCHITECTURE.md](ARCHITECTURE.md) ·
 [Platform Blueprint](docs/PLATFORM_BLUEPRINT.md) ·
 [ADRs](docs/adr/)
 
-
 ---
-
 
 ## Guarantees and the evidence behind them
 
-
 ### Offline and training data
-
 
 | Guarantee | Evidence |
 |---|---|
@@ -106,9 +88,7 @@ Full design: [ARCHITECTURE.md](ARCHITECTURE.md) ·
 | Stale features are detected against an explicit freshness SLO | [`test_stale_features.py`](tests/failure_simulations/test_stale_features.py) |
 | Online values match the latest offline snapshot | [`test_online_serving.py`](tests/integration/test_online_serving.py) |
 
-
 ### Streaming
-
 
 | Guarantee | Evidence |
 |---|---|
@@ -124,13 +104,10 @@ Full design: [ARCHITECTURE.md](ARCHITECTURE.md) ·
 | Concurrent writers are safe (Redis `WATCH`/`MULTI` with bounded retries) | [`test_streaming_redis_online_store_concurrency.py`](tests/integration/test_streaming_redis_online_store_concurrency.py) |
 | Full Kafka → Flink → Kafka → Redis path produces the reference result | [`test_user_play_count_kafka_to_redis.py`](tests/integration/test_user_play_count_kafka_to_redis.py), [`test_skip_rate_flink_to_redis.py`](tests/integration/test_skip_rate_flink_to_redis.py) |
 
-
 ### Declarative feature specs
-
 
 A feature can be defined as a YAML spec instead of new platform code. The spec
 language is bounded on purpose, see [ADR-008](docs/adr/ADR-008-feature-spec-design.md).
-
 
 | Guarantee | Evidence |
 |---|---|
@@ -143,24 +120,19 @@ language is bounded on purpose, see [ADR-008](docs/adr/ADR-008-feature-spec-desi
 | The spec-driven store orders updates exactly like the hand-written skip-rate policy (compared on 768 combinations), refuses incomparable counts, and enforces `online.ttl` as a Redis expiry that only a written update refreshes | [`test_count_vector_update.py`](tests/unit/test_count_vector_update.py), [`test_spec_store.py`](tests/unit/test_spec_store.py), [`test_spec_store_redis.py`](tests/integration/test_spec_store_redis.py) |
 | `validate-spec` and `test-spec` check and try a spec without Docker, with documented exit codes | [`test_cli_validate_spec.py`](tests/unit/test_cli_validate_spec.py), [`test_cli_test_spec.py`](tests/unit/test_cli_test_spec.py) |
 
-
 The generic job is the only implementation of both streaming features. It is
 verified on the golden fixtures, late corrections, replay, the Redis path, a
 savepoint stop and resume, and recovery from a TaskManager crash. The Redis
 store policies and the materializers of the two original features are still written by hand. A spec-driven store and materializer serve a YAML-only feature end to end. See
 [STATUS.md](STATUS.md) for what is not yet proven.
 
-
 ### Online access
-
 
 | Guarantee | Evidence |
 |---|---|
 | Batch and streaming features are read through one client with explicit availability and freshness, and missing values are never silently turned into `0` | [`test_unified_online.py`](tests/integration/test_unified_online.py), [`test_online.py`](tests/unit/test_online.py) |
 
-
 All of the above run in CI on every pull request and push to `main`, plus a nightly run:
-
 
 | CI layer | What it proves |
 |---|---|
@@ -169,15 +141,11 @@ All of the above run in CI on every pull request and push to `main`, plus a nigh
 | Redis and Feast serving integration | Generation → backfill → Feast apply → materialization → online parity |
 | Flink Kafka-to-Redis integration | Full Docker Compose streaming stack, joined end-to-end tests |
 
-
 ---
-
 
 ## Quick start
 
-
 Prerequisites: Python 3.11–3.13, Docker, GNU Make.
-
 
 ```bash
 git clone [https://github.com/oster-dev/featureforge.git](https://github.com/oster-dev/featureforge.git)
@@ -185,21 +153,17 @@ cd featureforge
 python3 -m venv .venv && source .venv/bin/activate
 python -m pip install -e ".[dev,feature-store,spark,streaming]"
 
-
 # Batch path: generate → backfill → validate → materialize → serve
 docker compose up -d redis
 (cd feature_repo && feast apply)
 make demo
 
-
 # Streaming path: Kafka → Flink → Redis, verified end to end
 docker compose up -d --build
 pytest -v -m integration tests/integration/test_skip_rate_flink_to_redis.py
 
-
 # Feature specs: validate the shipped specs
 python -m featureforge.cli validate-spec
-
 
 # Try a spec on an event file, no Docker needed
 python -m featureforge.cli test-spec feature_repo/specs/user_play_count_1h.yaml \
@@ -208,9 +172,7 @@ python -m featureforge.cli test-spec feature_repo/specs/user_play_count_1h.yaml 
   --expect play_count=3
 ```
 
-
 Read a feature through the unified online client:
-
 
 ```bash
 python -m featureforge.online \
@@ -220,15 +182,11 @@ python -m featureforge.online \
   --stream-max-age-seconds 7200
 ```
 
-
 Expected output, troubleshooting, and cleanup: [Demo Guide](docs/demo.md).
-
 
 ---
 
-
 ## Features
-
 
 | Feature | Path | Entity | Definition |
 |---|---|---|---|
@@ -238,17 +196,13 @@ Expected output, troubleshooting, and cleanup: [Demo Guide](docs/demo.md).
 | `user_skip_rate_24h` | Streaming | `user_id` | `skips / (plays + skips)` in `(t − 24h, t]`, 1-minute slide, explicit zero-denominator behavior |
 | `content_play_count_1h` | Streaming (spec only) | `content_id` | Play events of a content item in `(t − 1h, t]`, sliding. Computed by the generic job from a YAML spec alone and served from Redis by the spec-driven store and materializer |
 
-
 All three streaming features are defined as specs in
 [`feature_repo/specs/`](feature_repo/specs/) and computed by one generic Flink job.
 The first two use hand-written materializers and Redis stores. `content_play_count_1h` uses the spec-driven store and materializer.
 
-
 ---
 
-
 ## Status
-
 
 | Phase | Status |
 |---|---|
@@ -256,15 +210,11 @@ The first two use hand-written materializers and Redis stores. `content_play_cou
 | 2 · Streaming feature platform | **Core delivered.** Declarative feature specs: spec model, reference and one generic Flink job running both streaming features are done, including savepoint resume and recovery from a TaskManager crash. A spec-driven Redis store and materializer serve a YAML-only feature end to end. Open: JobManager failure, thin wrappers for the hand-written stores, streaming history, and the final demo |
 | 3 · End-to-end ML workflow | **Planned** |
 
-
 Details, open items, and known limitations: **[STATUS.md](STATUS.md)**.
-
 
 ---
 
-
 ## Documentation
-
 
 | Document | Content |
 |---|---|
@@ -279,11 +229,8 @@ Details, open items, and known limitations: **[STATUS.md](STATUS.md)**.
 | [docs/aws-production-profile.md](docs/aws-production-profile.md) | Documented AWS mapping (S3, DynamoDB) |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Local setup and test execution |
 
-
 ---
 
-
 ## License
-
 
 MIT, see [LICENSE](LICENSE).

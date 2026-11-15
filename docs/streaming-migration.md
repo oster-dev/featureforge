@@ -1,10 +1,8 @@
 # Streaming integration provenance
 
-
 FeatureForge incorporates streaming functionality into the same platform as its
 offline feature engineering and online serving paths. The source repository
 records the origin of imported components. It is not a separate platform.
-
 
 | | |
 |---|---|
@@ -12,16 +10,12 @@ records the origin of imported components. It is not a separate platform.
 | Source tag | `v0.1.0` |
 | Source commit | `a681c281806af492a05b2b4a141f2683f752e1a9` |
 
-
 Exclusions listed for an early import stage apply to that stage only, not to the
 current repository.
 
-
 ---
 
-
 ## Timeline
-
 
 ```mermaid
 flowchart LR
@@ -46,15 +40,12 @@ flowchart LR
     D15 --> D16[Stage 4k<br/>spec-driven store<br/>and materializer]:::dev
     D16 --> D17[Stage 6b<br/>YAML-only feature<br/>from events to Redis]:::dev
 
-
     classDef imp fill:#cfe2ff,stroke:#0d6efd,color:#000
     classDef dev fill:#d4edda,stroke:#28a745,color:#000
 ```
 
-
 Blue stages were imported from the source commit. Green stages are development
 inside FeatureForge.
-
 
 | Stage | Merge commit | Content |
 |---|---|---|
@@ -89,26 +80,20 @@ inside FeatureForge.
 | Stage 4k (PR #38) | `9711627` | Spec-driven Kafka-to-Redis materializer |
 | Stage 6b (PR #39) | `7513240` | `content_play_count_1h` runs from events to Redis through the validation job, the generic job, the spec-driven materializer and store, without a new Python file |
 
-
 ---
 
-
 ## Imported components
-
 
 Computation and validation semantics, Redis key names, store semantics and
 assertions were preserved in every import. Adaptions were limited to package
 imports, test filenames, fixture locations, Kafka topic names, the `integration`
 pytest marker, and the new `streaming` optional dependency group.
 
-
 ### Import 4 specifics
-
 
 The Flink image installs the project without transitive dependencies to avoid
 conflicting with the Apache Beam installation in the base image. Pydantic is
 installed explicitly for the streaming contracts.
-
 
 The joined test established the first end-to-end proof for one play event:
 publish to Kafka, validate in Flink, compute `user_play_count_1h`, materialize
@@ -116,13 +101,10 @@ into Redis, read the stored feature and assert entity, count and window
 metadata. It did not establish checkpoint recovery, sustained operation or all
 late-event behaviors.
 
-
 ### Skip-rate import (PR #9)
-
 
 Imported from the source tag and adapted from `featureforge_stream` to
 `featureforge.streaming`:
-
 
 - `src/featureforge/streaming/contracts/user_skip_rate.py`
 - `src/featureforge/streaming/reference/user_skip_rate.py`
@@ -135,26 +117,20 @@ Imported from the source tag and adapted from `featureforge_stream` to
 - `tests/integration/test_skip_rate_flink_to_redis.py`
 - `tests/integration/test_user_skip_rate_job.py`
 
-
 The play-count job `jobs/user_play_count_1h.py` came with Import 4 and was
 replaced in the same way.
 
-
 ---
-
 
 ## Development inside FeatureForge
 
-
 ### Replay and identity conflicts (PR #6)
-
 
 The replay test publishes repeated deliveries of the same logical play event
 with different `ingested_at` values, reprocesses through fresh bounded
 executions, and requires the stored feature and its serialized Redis value to be
 identical before and after replay. The materializer resumes with its existing
 consumer group and reports the repeated updates as stale or unchanged.
-
 
 The conflict test publishes two events with the same `event_id` and different
 `content_id`. It requires a non-zero exit code, `EventIdentityConflictError`
@@ -163,21 +139,17 @@ failure, not an accepted conflict result. The job option `--no-restart` disables
 automatic restarts for this diagnostic run and changes neither computation nor
 Redis write policies.
 
-
 Replay executions reconstruct results from Kafka input. They do not restore Flink
 state from a checkpoint or savepoint. Restoring from a savepoint and from a
 checkpoint after a crash is covered separately (stages 4h and 4i). Since stage
 4d both replay tests run against the generic job.
 
-
 ### Unified online access (PR #7)
-
 
 `OnlineFeatureClient` reads user engagement and content popularity through Feast
 and `user_play_count_1h` through the Redis streaming store. Each value carries
 backend, availability, observation time, age, freshness class, schema version
 and error type where applicable.
-
 
 - Availability and freshness are separate dimensions.
 - A valid zero stays present. A missing value is never replaced by zero. A
@@ -194,15 +166,12 @@ and error type where applicable.
 - `python -m featureforge.online` exits `0` for successful reads including
   explicit missing values, `1` for feature errors, `2` for invalid requests.
 
-
 ### Routing and late events (PR #8)
-
 
 The routing test publishes invalid JSON, a valid play event, a contract-invalid
 event and a second valid event. It requires exactly two validated and two
 rejected records with reasons `INVALID_JSON` and `EVENT_CONTRACT_VIOLATION`,
 proving that rejected records do not block valid follow-up processing.
-
 
 The late-event test runs the play-count job in detached continuous mode and
 verifies that a distinct late event corrects an already emitted window from one
@@ -212,30 +181,24 @@ the original payload. It waits for observable outputs rather than fixed sleeps,
 cancels its own resolved job ID and cleans up its isolated topics. Since stage
 4c it runs against the generic job.
 
-
 This test verifies Flink's Kafka outputs. It does not run corrections through the
 Redis materializer. The Redis policy is covered separately by Redis integration
 tests.
-
 
 Test topics are created with `message.timestamp.type=LogAppendTime`, because
 historical record timestamps interfered with broker retention. The payload
 `event_time` is preserved.
 
-
 ### Skip-rate feature (PR #9)
-
 
 ```text
 skip_rate = skip_count / (play_count + skip_count)
 window    = (observation_time - 24 hours, observation_time]
 ```
 
-
 The reference deduplicates by `event_id`, validates identity conflicts across the
 complete input and excludes `ingested_at` from identity. Impression and complete
 events count toward neither value.
-
 
 The Flink job uses 24-hour sliding windows with a one-minute slide, a 10-minute
 bounded-out-of-orderness watermark, 30 minutes of allowed lateness and a 48-hour
@@ -244,15 +207,12 @@ store compares `(play_count, skip_count)` componentwise within one observation
 window and never compares rates by magnitude. A newer window replaces an older
 one. Incomparable vectors raise `SkipRateUpdateConflictError`.
 
-
 ### CI stabilization
-
 
 Running many PyFlink jobs against one long-lived TaskManager became unstable in
 GitHub Actions after roughly 7 to 8 jobs: jobs delivered no output, then failed
 with exhausted restart attempts. Raising timeouts and metaspace only delayed the
 failure.
-
 
 The skip-rate suite recreates the TaskManager before every test, starts jobs with
 `--parallelism 1`, waits for a terminal job state after cancelling, and reports
@@ -263,9 +223,7 @@ logs the TaskManager metaspace after each module to test a class-loading-leak
 hypothesis. This **isolates** the tests. The underlying TaskManager failure is
 not yet explained.
 
-
 ### Declarative feature spec (PR #11)
-
 
 `src/featureforge/spec/` defines a validated YAML specification for streaming
 features (ADR-008). `feature_repo/specs/` contains specs for `user_play_count_1h`
@@ -276,15 +234,12 @@ spec-driven in stage 4k, Spark features are not spec-driven yet. `online.ttl`
 in a spec is enforced by the spec-driven store. The hand-written Redis stores
 write without expiry.
 
-
 ### Generic job consolidation (WP1 stage 4)
-
 
 The generic job builds the windowed computation from a plan derived from a spec.
 It supports count aggregations and one entity key. Both features moved to it in
 stages, each verified before the next, with the hand-written job kept as a
 parity check until all tests passed on the generic job:
-
 
 - 4a: the eight skip-rate job scenarios (late corrections in both directions
   with duplicates, too-late routing, both window edges, zero denominator).
@@ -296,7 +251,6 @@ parity check until all tests passed on the generic job:
 - 4e: the skip-rate Flink-to-Redis flow with corrections and replay.
 - 4f: the joined play-count flow from validation to Redis.
 
-
 In stage 4g the hand-written jobs `jobs/user_play_count_1h.py` and
 `jobs/user_skip_rate_24h.py` were removed, together with the `hand_written` test
 parameters. Both jobs wrote to the same default topics as the generic job, so
@@ -305,15 +259,12 @@ referenced the removed files. The last version is the tag
 `hand-written-jobs-final`. The independent oracle stays: the pure-Python
 references and the hand-calculated golden fixtures.
 
-
 ### Savepoint resume (stage 4h)
-
 
 `tests/integration/test_generic_job_recovery.py` stops the generic job for the
 play-count spec with a savepoint and starts a new job from it. The Compose
 stack mounts one `flink-savepoints` volume into JobManager and TaskManager,
 and the Flink image creates `/opt/flink/savepoints` owned by the `flink` user.
-
 
 The test requires that the new job restored the savepoint. This check matters:
 a job that replays from the earliest offset reaches the same counts, so the
@@ -321,20 +272,16 @@ final values alone would not prove a restore. It also requires that a
 redelivered event is not counted again, that a late correction lands in the
 restored window state, and that the late topic stays empty.
 
-
 This covers a planned stop and resume. Recovery after a crash is covered by
 stage 4i. Both tests are shown for the play-count spec only.
 
-
 ### Crash recovery (stage 4i)
-
 
 `tests/integration/test_generic_job_checkpoint_recovery.py` starts the generic
 job for the play-count spec with the cluster restart strategy, so without
 `--no-restart`. After the first event is processed, it waits for a checkpoint
 that was triggered later (checkpoint ids follow trigger order), kills the
 TaskManager and starts it again.
-
 
 The test requires that a checkpoint was restored for the same job, that this
 checkpoint is not a savepoint and is not older than the one holding the state,
@@ -343,15 +290,12 @@ the restored window, and that the late topic stays empty. The Kafka sinks are
 `AT_LEAST_ONCE`, so the test waits for a window value of at least 2 and
 checks it, instead of counting emissions.
 
-
 The JobManager keeps running. The checkpoints live in JobManager memory, so
 this does not cover JobManager loss or checkpoints on a shared volume. The
 test restarts the TaskManager in its cleanup and runs in its own CI module, so
 the next module starts from a fresh TaskManager anyway.
 
-
 ### Dedupe expiry (stage 4j)
-
 
 `tests/integration/test_generic_job_dedupe_ttl.py` runs the generic job with a copy of the
 play-count spec: 20 s windows, 5 s slide, 10 s allowed lateness and a 30 s dedupe TTL. The
@@ -360,7 +304,6 @@ lateness. The test publishes an event and waits for its window. A redelivery aft
 must not be counted. A second redelivery after about 36 s must be counted, so the window
 reaches 2. This also shows that an ignored duplicate does not refresh the retention.
 
-
 The first version of the test failed. The job used Flink state TTL with `OnCreateAndWrite`
 and `NeverReturnExpired`, and the dedupe state did not expire in PyFlink 1.20.3: the
 redelivery stayed ignored after 80 s, while a fresh event with a new ID updated the same
@@ -368,14 +311,11 @@ window. The behavior matches the reported issue FLINK-34625. Since stage 4j the 
 registers a processing-time timer when it first sees an event ID and clears the state when
 the timer fires.
 
-
 Replay protection is therefore bounded by the TTL. An event redelivered after expiry is
 counted again. The test uses the shortened spec only. The production values of 24 h and
 48 h are configuration and are not exercised.
 
-
 ### Content feature from YAML only (stage 6a)
-
 
 `tests/integration/test_generic_job_content_play_count.py` runs
 `content_play_count_1h` on the generic job without code changes. The spec is the
@@ -387,9 +327,7 @@ influence A. The expected count per window is hand-calculated from the play
 offsets. Every expected window must be present, no window may be emitted twice,
 every record has exactly the expected fields, and the late topic stays empty.
 
-
 ### Practitioner commands (PRs #33 and #34)
-
 
 `python -m featureforge.cli validate-spec` checks spec files against the spec
 model and the event contract. `python -m featureforge.cli test-spec` evaluates a
@@ -398,15 +336,12 @@ observation time and can check expected values with `--expect`. Both use exit
 codes (0 ok, 1 invalid input or failed expectation, 2 missing file) and run
 without Docker. `test-spec` runs the reference, not the Flink job.
 
-
 ### Spec-driven online path (stage 4k, ADR-009)
-
 
 Stores and materializers were hand-written per feature. ADR-009 replaces them
 with one decision function, one store and one materializer that take the spec.
 The hand-written stores, models, materializers and their tests are unchanged.
 Thin wrappers are planned.
-
 
 - **Decision function (PR #36).** `contracts/count_vector.py` orders windows
   first and compares same-window count vectors componentwise. A vector with one
@@ -438,16 +373,13 @@ Thin wrappers are planned.
   `{"stale": 1, "unchanged": 1, "written": 4}`, the stored values, the TTL and
   that a second run with the same group does nothing.
 
-
 ### End-to-end proof (stage 6b)
-
 
 `tests/integration/test_content_play_count_end_to_end.py` runs the whole path for
 a feature that has no job, store, materializer or record type of its own: the
 validation job, the generic Flink job on the mounted spec
 `feature_repo/specs/content_play_count_1h.yaml` (both bounded), `materialize_spec`
 and a read through `RedisSpecStore`.
-
 
 Content `content_000001` has plays at 11:30 and 11:40, and the second event is
 delivered twice. Content `content_000002` has one play at 11:30. The expected
@@ -459,12 +391,9 @@ second run with the same consumer group does nothing. A replay with a new group
 reads all 130 records again and yields 128 `stale` and 2 `unchanged`, so a
 replay cannot undo the stored state.
 
-
 ---
 
-
 ## Current implementation
-
 
 | Component | Location | Behavior |
 |---|---|---|
@@ -479,12 +408,10 @@ replay cannot undo the stored state.
 | Unified access | `src/featureforge/online.py` | Batch features and streaming play count |
 | Feature specs | `src/featureforge/spec/`, `feature_repo/specs/` | Drive the generic Flink job for all three features |
 
-
 All three features run on the generic job and share watermark delay (10 min),
 allowed lateness (30 min), checkpointing (10 s), too-late side outputs,
 event-ID dedupe and explicit failure for conflicting payloads. Identical
 duplicates neither emit nor refresh the dedupe retention. A processing-time timer per event ID enforces the retention.
-
 
 The play-count store accepts newer windows (including zero), rejects older
 windows, leaves identical values unchanged, accepts increasing same-window
@@ -494,15 +421,11 @@ describes rejection under an ordering policy and is distinct from the read
 interface's freshness class. The spec-driven store applies the same ordering to
 any count vector and adds the TTL.
 
-
 Skip-rate access through the unified interface is not yet implemented.
-
 
 ---
 
-
 ## Verification boundaries
-
 
 | Claim | Status |
 |---|---|
@@ -523,18 +446,14 @@ Skip-rate access through the unified interface is not yet implemented.
 | `WATCH` retry of the spec-driven store | Verified with a mocked pipeline only. **Not verified** with a real concurrent writer |
 | `window_replace` store policy and Spark features from a spec | **Not implemented** |
 
-
 Fresh bounded reprocessing is not recovery. Cancelling a test job during cleanup
 is not a recovery test. Passing replay, routing and correction tests must not be
 described as end-to-end exactly-once.
 
-
 Event types in the contract that are not produced by a Flink job (for example
 impression or complete) do not imply separate streaming features for them.
 
-
 ### Test-environment notes
-
 
 The online-serving tests are not marked `integration`. They can run under
 `-m "not integration"` when their availability check passes, which verifies
@@ -543,9 +462,7 @@ materialized. The unified, routing, late-event, savepoint, crash-recovery,
 dedupe-expiry, skip-rate, spec-driven store, spec-driven materializer and
 end-to-end tests are marked `integration`.
 
-
 ### Open test-maintenance items
-
 
 - Add subprocess timeouts to the original joined Kafka-to-Redis test.
 - Clean up the Redis key and topics created by older joined and replay tests.
@@ -554,15 +471,11 @@ end-to-end tests are marked `integration`.
 - Rename the `hand_written` field in `test_feature_from_spec_job.py`, which now
   holds the Python reference function.
 
-
 These are maintenance items and not failures of passing tests.
-
 
 ---
 
-
 ## Milestone statement
-
 
 FeatureForge has an integrated, tested streaming path with event validation,
 event-time windows, bounded replay idempotency, identity-conflict detection,
@@ -574,7 +487,6 @@ spec-driven store and materializer serve count and ratio features, and a
 feature defined by a YAML spec alone (`content_play_count_1h`) is proven from
 events to Redis. The two original features still use hand-written stores and
 materializers, and Spark features are not spec-driven.
-
 
 Remaining before the streaming phase can be called complete: JobManager-failure
 recovery verification, verification at the production TTL values, thin wrappers

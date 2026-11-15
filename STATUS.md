@@ -1,14 +1,11 @@
 # FeatureForge Status
 
-
 Last updated: 2026-11-15 · CI: see the
 [Actions page](https://github.com/oster-dev/featureforge/actions)
-
 
 This file is the single place for what is **delivered**, **in progress**, and
 **deliberately out of scope**. Other documents link here instead of repeating
 status. Claims in the README link to the test or document that proves them.
-
 
 Related: [README](README.md) · [Architecture](ARCHITECTURE.md) ·
 [Platform blueprint](docs/PLATFORM_BLUEPRINT.md) ·
@@ -16,12 +13,9 @@ Related: [README](README.md) · [Architecture](ARCHITECTURE.md) ·
 [ADR-008](docs/adr/ADR-008-feature-spec-design.md) ·
 [ADR-009](docs/adr/ADR-009-spec-driven-online-stores.md)
 
-
 ---
 
-
 ## Delivered
-
 
 | Area | What exists | Evidence |
 |---|---|---|
@@ -44,18 +38,14 @@ Related: [README](README.md) · [Architecture](ARCHITECTURE.md) ·
 | CI | Baseline, Python 3.11/3.12 compatibility job, serving integration, streaming Flink integration with a fresh TaskManager per module, nightly run, concurrency and timeouts, Dependabot for Actions | `.github/workflows/ci.yml`, `scripts/ci/run_flink_integration.sh` |
 | Documentation | Architecture, blueprint, demo guide with batch, streaming and feature-spec walkthroughs, ADRs, AWS production profile (design only) | `docs/` |
 
-
 ## In progress
-
 
 | Item | State |
 |---|---|
 | WP1: declarative spec and generic engine | Stages 1 to 3 delivered for both features. Stage 4 delivered except JobManager failure and the thin wrappers for the hand-written stores and materializers of the two original features: every integration test runs on the generic job, the hand-written jobs are deleted, and a spec-driven store and materializer exist. Stages 5 and 6 below. |
 | Streaming history and published-as-of retrieval (WP2) | Not started. Needs the time-model decision (`event_time` vs. `published_at`). |
 
-
 ### WP1 stages
-
 
 | Stage | Content | State |
 |---|---|---|
@@ -66,12 +56,9 @@ Related: [README](README.md) · [Architecture](ARCHITECTURE.md) ·
 | 5 | Further operators in Flink, composite keys, Spark backfill | Planned |
 | 6 | Two new features by YAML only. 6a done: `content_play_count_1h` (entity `content_id`) runs on the generic job from a spec alone and matches hand-calculated windows. 6b done: `content_play_count_1h` reaches Redis from events through the generic Flink job, `materialize_spec` and `RedisSpecStore` without a new Python file. Open: `user_content_affinity_7d` with a composite key | In progress |
 
-
 ## Next
 
-
 Order follows the [readiness plan](docs/PLATFORM_BLUEPRINT.md):
-
 
 1. **WP1:** stages 4 to 6 above.
 2. **WP2:** Iceberg offline store, stream history, point-in-time training datasets, parity test.
@@ -79,13 +66,10 @@ Order follows the [readiness plan](docs/PLATFORM_BLUEPRINT.md):
 4. **WP4:** feature-serving service and load test.
 5. **WP5:** observability, recovery drills, soak run.
 
-
 Later: catalog and discovery, embeddings, notebooks, profiling, end-to-end ML
 workflow (Metaflow, MLflow, registry, rollback).
 
-
 ## Known gaps
-
 
 | Gap | Impact |
 |---|---|
@@ -105,9 +89,7 @@ workflow (Metaflow, MLflow, registry, rollback).
 | No latency or throughput numbers | No benchmark exists yet. |
 | Older joined and replay tests lack topic cleanup and subprocess timeouts | Tracked in [streaming provenance](docs/streaming-migration.md#open-test-maintenance-items). |
 
-
 ## Deliberately out of scope
-
 
 - **AWS deployment.** Only the [production profile](docs/aws-production-profile.md) as design documentation.
 - **Kubernetes.**
@@ -116,9 +98,7 @@ workflow (Metaflow, MLflow, registry, rollback).
 - **Production-scale claims.** Local soak and load tests are production-inspired, not production experience.
 - **Cross-region disaster recovery.**
 
-
 ## How to read the evidence
-
 
 A guarantee counts as delivered only when a test, benchmark or drill report
 exists and is linked. Mechanisms present in job code (watermarks, state TTL,
