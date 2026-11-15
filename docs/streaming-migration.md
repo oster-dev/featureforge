@@ -34,6 +34,11 @@ flowchart LR
     D9 --> D10[Stage 4h<br/>savepoint stop<br/>and resume]:::dev
     D10 --> D11[Stage 4i<br/>TaskManager crash<br/>recovery]:::dev
     D11 --> D12[Stage 4j<br/>dedupe expiry<br/>after TTL]:::dev
+    D12 --> D13[Stage 6a<br/>YAML-only content<br/>feature on the job]:::dev
+    D13 --> D14[PR 33 and 34<br/>validate-spec and<br/>test-spec]:::dev
+    D14 --> D15[ADR-009<br/>spec-driven<br/>online stores]:::dev
+    D15 --> D16[Stage 4k<br/>spec-driven store<br/>and materializer]:::dev
+    D16 --> D17[Stage 6b<br/>YAML-only feature<br/>from events to Redis]:::dev
 
     classDef imp fill:#cfe2ff,stroke:#0d6efd,color:#000
     classDef dev fill:#d4edda,stroke:#28a745,color:#000
@@ -64,7 +69,16 @@ inside FeatureForge.
 | Stage 4g | `a3c2da2` | The hand-written feature jobs are removed. Last version: tag `hand-written-jobs-final` |
 | Stage 4h | `c2e9365` | The generic job stops with a savepoint and a new job resumes from it, with dedupe and window state intact (play-count spec) |
 | Stage 4i | `e56934d` | The generic job recovers from a TaskManager crash with checkpoint state (play-count spec) |
-| Stage 4j | `de74e6d` | The dedupe state expires after its TTL: a redelivery inside it is ignored, one after it is counted again. The job expires the state with a processing-time timer because the PyFlink 1.20 state TTL did not expire it (play-count spec, shortened TTL) |
+| Stage 4j (PR #30) | `de74e6d` | The dedupe state expires after its TTL: a redelivery inside it is ignored, one after it is counted again. The job expires the state with a processing-time timer because the PyFlink 1.20 state TTL did not expire it (play-count spec, shortened TTL) |
+| PR #31 | `8146b70` | The merge commit of stage 4j is recorded in this document |
+| Stage 6a (PR #32) | `a108622` | `content_play_count_1h` (entity `content_id`) runs on the generic job from a YAML spec alone and matches hand-calculated windows |
+| PR #33 | `0386f97` | `validate-spec` command for feature specs |
+| PR #34 | `8360f83` | `test-spec` command: a spec is evaluated on a JSONL event file with the spec reference, without Docker |
+| PR #35 | `52b113a` | ADR-009: spec-driven online stores and materializer |
+| Stage 4k (PR #36) | `9e1324b` | One decision function for count-vector updates, compared with the hand-written skip-rate policy |
+| Stage 4k (PR #37) | `d42230f` | Feature record parser and spec-driven Redis store with `online.ttl` expiry |
+| Stage 4k (PR #38) | `9711627` | Spec-driven Kafka-to-Redis materializer |
+| Stage 6b (PR #39) | `7513240` | `content_play_count_1h` runs from events to Redis through the validation job, the generic job, the spec-driven materializer and store, without a new Python file |
 
 ---
 
@@ -215,8 +229,9 @@ not yet explained.
 features (ADR-008). `feature_repo/specs/` contains specs for `user_play_count_1h`
 and `user_skip_rate_24h`. The specs are validated, evaluated by an exact
 reference, and drive the generic Flink job `jobs/feature_from_spec.py`, which
-runs both features (see the next section). No store or Spark feature is
-spec-driven yet. `online.ttl` in a spec is declarative; the current Redis stores
+runs both features (see the next section). Stores and materializers became
+spec-driven in stage 4k, Spark features are not spec-driven yet. `online.ttl`
+in a spec is enforced by the spec-driven store. The hand-written Redis stores
 write without expiry.
 
 ### Generic job consolidation (WP1 stage 4)
@@ -300,6 +315,81 @@ Replay protection is therefore bounded by the TTL. An event redelivered after ex
 counted again. The test uses the shortened spec only. The production values of 24 h and
 48 h are configuration and are not exercised.
 
+### Content feature from YAML only (stage 6a)
+
+`tests/integration/test_generic_job_content_play_count.py` runs
+`content_play_count_1h` on the generic job without code changes. The spec is the
+play-count spec with `content_id` as entity. The test asserts the job plan (entity
+key and feature name), then publishes plays for two contents: content A gets three
+plays from two users, one of them playing twice, and content B gets one play. Plays
+of different users count together for one content item, and content B must not
+influence A. The expected count per window is hand-calculated from the play
+offsets. Every expected window must be present, no window may be emitted twice,
+every record has exactly the expected fields, and the late topic stays empty.
+
+### Practitioner commands (PRs #33 and #34)
+
+`python -m featureforge.cli validate-spec` checks spec files against the spec
+model and the event contract. `python -m featureforge.cli test-spec` evaluates a
+spec with the spec reference on a JSONL event file for one entity and one
+observation time and can check expected values with `--expect`. Both use exit
+codes (0 ok, 1 invalid input or failed expectation, 2 missing file) and run
+without Docker. `test-spec` runs the reference, not the Flink job.
+
+### Spec-driven online path (stage 4k, ADR-009)
+
+Stores and materializers were hand-written per feature. ADR-009 replaces them
+with one decision function, one store and one materializer that take the spec.
+The hand-written stores, models, materializers and their tests are unchanged.
+Thin wrappers are planned.
+
+- **Decision function (PR #36).** `contracts/count_vector.py` orders windows
+  first and compares same-window count vectors componentwise. A vector with one
+  component is the append-only play-count rule. Incomparable vectors raise
+  `UpdateConflictError`. Derived values are never ordered. A test compares it
+  with the hand-written skip-rate decision on 768 combinations.
+- **Record parser and store (PR #37).** `contracts/feature_record.py` parses the
+  record the generic job emits and validates it against the spec: field set,
+  schema version, feature name, entity id (non-empty, no whitespace), window
+  length, non-negative integer counts and derived values recomputed from the spec
+  expressions. It reads what the hand-written models write, and the hand-written
+  models read what it writes. `spec_store.py` implements `RedisSpecStore` with
+  the same `WATCH`/`MULTI` loop and 16 retries as the hand-written stores. Its
+  default keys equal the keys of the two original features. `online.ttl` is set
+  as a Redis expiry with every written update, runs in wall-clock time and is
+  not extended by unchanged or stale updates. The store refuses `window_replace`,
+  non-Redis specs and composite keys. Unit tests use a mocked pipeline (retry,
+  the 16-attempt limit, the TTL argument), and nine integration tests run against
+  a real Redis.
+- **Materializer (PR #38).** `materialize_spec.py` derives the feature topic from
+  the spec (equal to the topics of the two original features), validates each
+  record and writes it through the store. It keeps the behavior of the
+  hand-written materializers: single-partition topics only, empty ranges and
+  tombstones rejected, offsets committed only after a successful write. Unit
+  tests reuse the fakes of the existing materializer tests for three specs. An
+  integration test with real Kafka and Redis publishes six records for
+  `content_play_count_1h` (a correction, a duplicate, a second entity, a newer
+  window with a smaller count and an older window) and requires the results
+  `{"stale": 1, "unchanged": 1, "written": 4}`, the stored values, the TTL and
+  that a second run with the same group does nothing.
+
+### End-to-end proof (stage 6b)
+
+`tests/integration/test_content_play_count_end_to_end.py` runs the whole path for
+a feature that has no job, store, materializer or record type of its own: the
+validation job, the generic Flink job on the mounted spec
+`feature_repo/specs/content_play_count_1h.yaml` (both bounded), `materialize_spec`
+and a read through `RedisSpecStore`.
+
+Content `content_000001` has plays at 11:30 and 11:40, and the second event is
+delivered twice. Content `content_000002` has one play at 11:30. The expected
+values are hand-calculated: 70 windows ending 11:30 to 12:39 and 60 windows
+ending 11:30 to 12:29, so 130 records. The final windows are 12:39 and 12:29,
+both with count 1. A counted duplicate would show as 2 in the last window of
+`content_000001`. The stored value has a Redis expiry within `online.ttl`. A
+second run with the same consumer group does nothing. A replay with a new group
+reads all 130 records again and yields 128 `stale` and 2 `unchanged`, so a
+replay cannot undo the stored state.
 
 ---
 
@@ -310,12 +400,15 @@ counted again. The test uses the shortened spec only. The production values of 2
 | Validation and routing | `jobs/validate_and_route_events.py` | Valid and rejected outputs, continuous or bounded |
 | Play count 1h | `jobs/feature_from_spec.py` with `feature_repo/specs/user_play_count_1h.yaml` | 1 h windows, 1 min slide, 24 h dedupe TTL |
 | Skip rate 24h | `jobs/feature_from_spec.py` with `feature_repo/specs/user_skip_rate_24h.yaml` | 24 h windows, 1 min slide, 48 h dedupe TTL |
-| Materializers | `src/featureforge/streaming/materialize.py`, `materialize_skip_rate.py` | Single-partition topics, reject empty ranges and tombstones, commit offsets only after Redis succeeds |
-| Online stores | `online_store.py`, `skip_rate_store.py` | Feature-specific guarded Redis writes |
+| Content play count 1h | `jobs/feature_from_spec.py` with `feature_repo/specs/content_play_count_1h.yaml` | 1 h windows, 1 min slide, 24 h dedupe TTL, entity `content_id` |
+| Materializers | `src/featureforge/streaming/materialize.py`, `materialize_skip_rate.py` | The two original features. Single-partition topics, reject empty ranges and tombstones, commit offsets only after Redis succeeds |
+| Online stores | `online_store.py`, `skip_rate_store.py` | The two original features. Feature-specific guarded Redis writes, no key expiry |
+| Spec-driven materializer | `src/featureforge/streaming/materialize_spec.py` | Any count or ratio spec. Topic derived from the spec, records validated against the spec, same guarantees as the hand-written materializers |
+| Spec-driven store | `src/featureforge/streaming/spec_store.py`, `contracts/feature_record.py`, `contracts/count_vector.py` | Any count or ratio spec with one entity key. Guarded writes with `WATCH`/`MULTI`, `append_only` and `componentwise_monotonic`, `online.ttl` as Redis expiry |
 | Unified access | `src/featureforge/online.py` | Batch features and streaming play count |
-| Feature specs | `src/featureforge/spec/`, `feature_repo/specs/` | Drive the generic Flink job for both features |
+| Feature specs | `src/featureforge/spec/`, `feature_repo/specs/` | Drive the generic Flink job for all three features |
 
-Both features run on the generic job and share watermark delay (10 min),
+All three features run on the generic job and share watermark delay (10 min),
 allowed lateness (30 min), checkpointing (10 s), too-late side outputs,
 event-ID dedupe and explicit failure for conflicting payloads. Identical
 duplicates neither emit nor refresh the dedupe retention. A processing-time timer per event ID enforces the retention.
@@ -325,7 +418,8 @@ windows, leaves identical values unchanged, accepts increasing same-window
 corrections and rejects decreasing ones. These rules apply to the append-only
 play-count contract and are not a general policy. The write result `stale`
 describes rejection under an ordering policy and is distinct from the read
-interface's freshness class.
+interface's freshness class. The spec-driven store applies the same ordering to
+any count vector and adds the TTL.
 
 Skip-rate access through the unified interface is not yet implemented.
 
@@ -346,8 +440,11 @@ Skip-rate access through the unified interface is not yet implemented.
 | Zero emission for inactive users | **Not established.** A newer window can replace a value with zero, but no window job emits zero merely because time advances |
 | Historical streaming publication and published-as-of retrieval | **Not implemented.** No `published_at` is fabricated |
 | Atomic mixed batch and stream reads | **Not provided** (`atomic: false`) |
-| Spec-driven execution in Flink | Verified for count and ratio features: the generic job is the only implementation of both streaming features |
-| Spec-driven stores, materializers and Spark features | **Not implemented.** Store policies and materializers are hand-written per feature |
+| Spec-driven execution in Flink | Verified for count and ratio features: the generic job is the only implementation of all three streaming features |
+| Spec-driven store and materializer for count and ratio specs | Verified end to end for `content_play_count_1h` (events to Redis: hand-calculated windows, redelivered event, TTL, rerun, replay). Verified for the skip-rate spec by unit tests and Redis integration tests. The two original features still use hand-written stores and materializers |
+| `online.ttl` as a Redis expiry | Verified for the spec-driven store: set by written updates, not extended by unchanged or stale updates, measured in wall-clock time. The hand-written stores write without expiry |
+| `WATCH` retry of the spec-driven store | Verified with a mocked pipeline only. **Not verified** with a real concurrent writer |
+| `window_replace` store policy and Spark features from a spec | **Not implemented** |
 
 Fresh bounded reprocessing is not recovery. Cancelling a test job during cleanup
 is not a recovery test. Passing replay, routing and correction tests must not be
@@ -361,8 +458,9 @@ impression or complete) do not imply separate streaming features for them.
 The online-serving tests are not marked `integration`. They can run under
 `-m "not integration"` when their availability check passes, which verifies
 offline files and Redis connectivity but not that expected online values are
-materialized. The unified, routing, late-event, savepoint, crash-recovery, dedupe-expiry and
-skip-rate tests are marked `integration`.
+materialized. The unified, routing, late-event, savepoint, crash-recovery,
+dedupe-expiry, skip-rate, spec-driven store, spec-driven materializer and
+end-to-end tests are marked `integration`.
 
 ### Open test-maintenance items
 
@@ -383,12 +481,16 @@ FeatureForge has an integrated, tested streaming path with event validation,
 event-time windows, bounded replay idempotency, identity-conflict detection,
 guarded Redis materialization, rejected-event routing, continuous late
 correction, savepoint stop and resume, recovery from a TaskManager crash, dedupe expiry after a shortened TTL, and
-two streaming features. Unified batch and stream online access covers the play
-count. Both features run on one generic spec-driven Flink job. Store policies,
-materializers and Spark features are not spec-driven.
+three streaming features. Unified batch and stream online access covers the play
+count. All three features run on one generic spec-driven Flink job. A
+spec-driven store and materializer serve count and ratio features, and a
+feature defined by a YAML spec alone (`content_play_count_1h`) is proven from
+events to Redis. The two original features still use hand-written stores and
+materializers, and Spark features are not spec-driven.
 
 Remaining before the streaming phase can be called complete: JobManager-failure
-recovery verification, verification at the production TTL values, versioned streaming history,
-skip-rate access through the unified client and a reproducible completion
-demonstration. These must be completed or explicitly scoped. For current test
-and CI results see the README badge and the Actions page, not this document.
+recovery verification, verification at the production TTL values, thin wrappers
+for the hand-written stores and materializers, versioned streaming history, skip-rate access through the
+unified client and a reproducible completion demonstration. These must be
+completed or explicitly scoped. For current test and CI results see the README
+badge and the Actions page, not this document.

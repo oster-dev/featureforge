@@ -1,9 +1,12 @@
 # FeatureForge Platform Blueprint
 
-**Status:** target design, updated 2026-11-13.
+**Status:** target design, updated 2026-11-15.
 **Baseline:** v0.1.0 released. Streaming core delivered. Feature spec model,
 exact reference and a generic Flink job are delivered. The generic job runs both
-streaming features. Store policies and materializers are still hand-written.
+original streaming features and a third feature defined by a YAML spec alone. A
+spec-driven store and materializer serve count and ratio features (ADR-009),
+proven from events to Redis for that third feature. The two original features
+still use hand-written stores and materializers.
 
 This document describes the **target** system. Implemented behavior is in
 [ARCHITECTURE.md](../ARCHITECTURE.md). Delivery status is in [STATUS.md](../STATUS.md).
@@ -41,7 +44,7 @@ deployment lifecycle.
 
 ```mermaid
 flowchart LR
-    SPEC["Feature specs<br/>model, reference and generic<br/>job for both features done"]:::wip
+    SPEC["Feature specs<br/>model, reference, generic job,<br/>store and materializer done"]:::wip
 
     subgraph Compute
         BATCH[Pandas reference<br/>PySpark backfill]:::done
@@ -98,7 +101,9 @@ stores, unified online client, a validated declarative feature spec with an exac
 Python reference (ADR-008), hand-calculated golden fixtures for both streaming
 features, and one generic Flink job that is the only implementation of both
 streaming features. It is verified on the golden fixtures, late corrections,
-replay and the Redis path.
+replay and the Redis path. A spec-driven Redis store and materializer (ADR-009)
+serve count and ratio features. `content_play_count_1h`, a feature defined by a
+YAML spec alone, is proven from events to Redis without a new Python file.
 
 **First integrated feature set:** seven-day user engagement, seven-day content
 popularity, `user_play_count_1h`, `user_skip_rate_24h`. Prove this slice before
@@ -120,9 +125,9 @@ the source actually generates.
 
 | Component | Owns | Rule |
 |---|---|---|
-| Contracts and catalog | Feature identity, entity, schema, version, window semantics, quality and freshness rules | Small typed spec with a **bounded operator set**. No universal SQL-to-Flink compiler. Today: spec model, validation, an exact reference and a generic Flink job for count and ratio features, running both streaming features. No catalog. The store policies and materializers are still hand-written |
+| Contracts and catalog | Feature identity, entity, schema, version, window semantics, quality and freshness rules | Small typed spec with a **bounded operator set**. No universal SQL-to-Flink compiler. Today: spec model, validation, an exact reference and a generic Flink job for count and ratio features, running all streaming features, plus a spec-driven store and materializer for count and ratio features. No catalog. The two original features still use hand-written stores and materializers |
 | Batch computation | Pandas references, PySpark, backfills, offline publication | A later backfill must not rewrite the recorded availability of an earlier online value |
-| Streaming computation | Validation, Flink jobs, late routing, finite-horizon dedupe, output contracts | Keep feature-specific correction policies. Append-only ordering is not general revision support |
+| Streaming computation | Validation, Flink jobs, late routing, finite-horizon dedupe, output contracts | Correction policies are declared per feature in the spec. Append-only and componentwise ordering are not general revision support |
 | Storage | Offline tables, versioned streaming history | Online stores hold current accepted values. History retains the versions needed for declared retrieval. Neither is assumed to update atomically with the other |
 | Access | Discovery, training retrieval, online retrieval, freshness status | Python API and CLI first, serving service later. Use Feast for supported batch operations. Never write into Feast's internal Redis encoding |
 | ML workflow | Dataset identity, feature versions, label, splits, code revision, model, metrics | Inference loads the trained model with the same declared input schema. The deterministic ranking stays a separate baseline |
@@ -178,7 +183,13 @@ Preserved and tested:
 - Same-window skip-rate updates compare the underlying counts. A decreasing
   rate can be a valid correction.
 - Incomparable count vectors fail explicitly.
-- Independent computations use separate generations or namespaces.
+- Independent computations use separate generations or namespaces. A new spec
+  version opens a new key namespace.
+- The spec-driven store applies the same ordering to any count vector. It is
+  checked against the hand-written skip-rate policy on 768 combinations.
+- `online.ttl` is enforced by the spec-driven store as a Redis expiry from the
+  last accepted write. Unchanged and stale updates do not extend it, and an
+  expired key reads as missing, never as zero.
 
 Feast 0.66.0's default Redis path was observed to skip equal-timestamp writes,
 so an unchanged Feast push is not assumed to support provisional same-window
@@ -268,7 +279,7 @@ flowchart LR
 |---|---|---|
 | A | Preserve released batch behavior, inventory dependencies, record import provenance | Done |
 | B | Integrate play-count slice, validation-to-online behavior, common read interface | Done |
-| C | Skip-rate and late corrections done. Feature spec model, exact reference and one generic Flink job running both features done, the hand-written jobs are removed. Open: spec-driven stores, recovery evidence, streaming history, published-as-of retrieval, availability boundaries | In progress |
+| C | Skip-rate and late corrections done. Feature spec model, exact reference and one generic Flink job running both features done, the hand-written jobs are removed. A spec-driven store and materializer are done and proven end to end for a YAML-only feature. Open: thin wrappers for the hand-written stores, JobManager-failure recovery evidence, streaming history, published-as-of retrieval, availability boundaries | In progress |
 | D | Label audit, mixed datasets, batch-only vs batch-plus-stream comparison, model-backed inference | Planned |
 | E | Metrics, recovery drills, benchmarks, clean-clone demo, notebook, reproducible release | Planned |
 

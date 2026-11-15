@@ -116,11 +116,14 @@ language is bounded on purpose, see [ADR-008](docs/adr/ADR-008-feature-spec-desi
 | The skip-rate golden fixture has hand-calculated values that the Python reference and the spec reference both reproduce | [`test_streaming_user_skip_rate_golden.py`](tests/unit/test_streaming_user_skip_rate_golden.py), [`test_spec_golden_parity.py`](tests/unit/test_spec_golden_parity.py) |
 | A generic Flink job built from a spec reproduces the golden fixtures of both features: every emitted window matches the spec reference and the Python reference | [`test_feature_from_spec_job.py`](tests/integration/test_feature_from_spec_job.py), [`test_spec_flink_plan.py`](tests/unit/test_spec_flink_plan.py) |
 | A feature defined only by a YAML spec with another entity key (`content_id`) runs on the generic job and matches hand-calculated windows | [`test_generic_job_content_play_count.py`](tests/integration/test_generic_job_content_play_count.py) |
+| A feature defined only by a YAML spec reaches Redis from events without a new Python file: the generic Flink job, the generic materializer and the spec-driven store give hand-calculated windows, ignore a redelivered event, apply the TTL and survive a replay | [`test_content_play_count_end_to_end.py`](tests/integration/test_content_play_count_end_to_end.py), [`test_materialize_spec_kafka_to_redis.py`](tests/integration/test_materialize_spec_kafka_to_redis.py) |
+| The spec-driven store orders updates exactly like the hand-written skip-rate policy (compared on 768 combinations), refuses incomparable counts, and enforces `online.ttl` as a Redis expiry that only a written update refreshes | [`test_count_vector_update.py`](tests/unit/test_count_vector_update.py), [`test_spec_store.py`](tests/unit/test_spec_store.py), [`test_spec_store_redis.py`](tests/integration/test_spec_store_redis.py) |
+| `validate-spec` and `test-spec` check and try a spec without Docker, with documented exit codes | [`test_cli_validate_spec.py`](tests/unit/test_cli_validate_spec.py), [`test_cli_test_spec.py`](tests/unit/test_cli_test_spec.py) |
 
 The generic job is the only implementation of both streaming features. It is
 verified on the golden fixtures, late corrections, replay, the Redis path, a
 savepoint stop and resume, and recovery from a TaskManager crash. The Redis
-store policies and the materializers are still written by hand per feature. See
+store policies and the materializers of the two original features are still written by hand. A spec-driven store and materializer serve a YAML-only feature end to end. See
 [STATUS.md](STATUS.md) for what is not yet proven.
 
 ### Online access
@@ -145,7 +148,7 @@ All of the above run in CI on every pull request and push to `main`, plus a nigh
 Prerequisites: Python 3.11–3.13, Docker, GNU Make.
 
 ```bash
-git clone https://github.com/oster-dev/featureforge.git
+git clone [https://github.com/oster-dev/featureforge.git](https://github.com/oster-dev/featureforge.git)
 cd featureforge
 python3 -m venv .venv && source .venv/bin/activate
 python -m pip install -e ".[dev,feature-store,spark,streaming]"
@@ -191,11 +194,11 @@ Expected output, troubleshooting, and cleanup: [Demo Guide](docs/demo.md).
 | `content_popularity` (8 values) | Batch | `content_id` | Views, unique viewers, watch time, recency |
 | `user_play_count_1h` | Streaming | `user_id` | Play events in `(t − 1h, t]`, sliding |
 | `user_skip_rate_24h` | Streaming | `user_id` | `skips / (plays + skips)` in `(t − 24h, t]`, 1-minute slide, explicit zero-denominator behavior |
-| `content_play_count_1h` | Streaming (spec only) | `content_id` | Play events of a content item in `(t − 1h, t]`, sliding. Computed by the generic job from a YAML spec alone, not yet materialized to Redis |
+| `content_play_count_1h` | Streaming (spec only) | `content_id` | Play events of a content item in `(t − 1h, t]`, sliding. Computed by the generic job from a YAML spec alone and served from Redis by the spec-driven store and materializer |
 
 All three streaming features are defined as specs in
 [`feature_repo/specs/`](feature_repo/specs/) and computed by one generic Flink job.
-Only the first two have a materializer and Redis store.
+The first two use hand-written materializers and Redis stores. `content_play_count_1h` uses the spec-driven store and materializer.
 
 ---
 
@@ -204,7 +207,7 @@ Only the first two have a materializer and Redis store.
 | Phase | Status |
 |---|---|
 | 1 · Feature store foundation | **Released** as [v0.1.0](https://github.com/oster-dev/featureforge/releases/tag/v0.1.0) |
-| 2 · Streaming feature platform | **Core delivered.** Declarative feature specs: spec model, reference and one generic Flink job running both streaming features are done, including savepoint resume and recovery from a TaskManager crash. Open: JobManager failure, spec-driven stores, streaming history, and the final demo |
+| 2 · Streaming feature platform | **Core delivered.** Declarative feature specs: spec model, reference and one generic Flink job running both streaming features are done, including savepoint resume and recovery from a TaskManager crash. A spec-driven Redis store and materializer serve a YAML-only feature end to end. Open: JobManager failure, thin wrappers for the hand-written stores, streaming history, and the final demo |
 | 3 · End-to-end ML workflow | **Planned** |
 
 Details, open items, and known limitations: **[STATUS.md](STATUS.md)**.
@@ -219,7 +222,7 @@ Details, open items, and known limitations: **[STATUS.md](STATUS.md)**.
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Component design and data flow |
 | [docs/REFERENCE.md](docs/REFERENCE.md) | Full technical reference: contracts, semantics, CLI, CI details |
 | [docs/PLATFORM_BLUEPRINT.md](docs/PLATFORM_BLUEPRINT.md) | Target platform design |
-| [docs/adr/](docs/adr/) | Architecture decision records (ADR-001 to ADR-008) |
+| [docs/adr/](docs/adr/) | Architecture decision records (ADR-001 to ADR-009) |
 | [docs/streaming-migration.md](docs/streaming-migration.md) | Streaming provenance and verification boundaries |
 | [docs/demo.md](docs/demo.md) | Reviewer walkthrough |
 | [docs/runbooks/](docs/runbooks/) | Stale features, failed backfill, failed materialization |

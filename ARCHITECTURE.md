@@ -39,7 +39,7 @@ flowchart LR
 | Retrieval and materialization | Feast, point-in-time joins |
 | Streaming | Kafka, Flink (PyFlink), Pydantic contracts |
 | Feature definitions as data | YAML specs, Pydantic validation, exact reference, one generic Flink job for all spec-defined streaming features |
-| Online store | Redis, feature-specific write policies |
+| Online store | Redis. A spec-driven store and materializer for count and ratio specs, hand-written stores for the two original features |
 | Quality | pytest, Ruff, four CI layers |
 
 ---
@@ -89,21 +89,25 @@ flowchart LR
     J -->|user_play_count_1h| PL[(play-count late topic)]
     J -->|user_skip_rate_24h| SF[(features.user-skip-rate-24h.v1)]
     J -->|user_skip_rate_24h| SL[(skip-rate late topic)]
+    J -->|content_play_count_1h| CF[(features.content-play-count-1h.v1)]
+    J -->|content_play_count_1h| CL[(content late topic)]
 
     PF --> M1[Play-count<br/>materializer]
     SF --> M2[Skip-rate<br/>materializer]
+    CF --> M3[Spec-driven<br/>materializer]
     M1 --> R[(Redis)]
     M2 --> R
+    M3 --> R
 ```
 
-| Parameter | `user_play_count_1h` | `user_skip_rate_24h` |
-|---|---|---|
-| Window | 1 h, 1 min slide | 24 h, 1 min slide |
-| Dedupe TTL | 24 h | 48 h |
-| Watermark delay | 10 min | 10 min |
-| Allowed lateness | 30 min | 30 min |
-| Checkpoint interval | 10 s | 10 s |
-| Emits | play count | play count, skip count, skip rate |
+| Parameter | `user_play_count_1h` | `user_skip_rate_24h` | `content_play_count_1h` |
+|---|---|---|---|
+| Window | 1 h, 1 min slide | 24 h, 1 min slide | 1 h, 1 min slide |
+| Dedupe TTL | 24 h | 48 h | 24 h |
+| Watermark delay | 10 min | 10 min | 10 min |
+| Allowed lateness | 30 min | 30 min | 30 min |
+| Checkpoint interval | 10 s | 10 s | 10 s |
+| Emits | play count | play count, skip count, skip rate | play count |
 
 The generic job runs once per spec and takes these parameters from the spec.
 For each feature it assigns event time, deduplicates by the spec's dedupe key
@@ -124,8 +128,10 @@ redelivered after expiry is counted again.
 **Spec-only feature.** `content_play_count_1h` has entity `content_id` and is
 defined by a YAML spec alone. It runs on the same job without code changes, and
 its integration test checks every window of two contents against
-hand-calculated values. It has no materializer or Redis store yet, because
-those are written by hand per feature.
+hand-calculated values. Its feature topic is materialized into Redis by the
+spec-driven store and materializer, also without feature-specific code (see
+[Spec-driven online path](#4-declarative-feature-specs)). An end-to-end test
+runs it from events through the validation job, the generic job and that path.
 
 **Savepoint resume.** The generic job can be stopped with a savepoint and
 resumed by a new job from it. The Compose stack shares one savepoint volume
@@ -154,7 +160,9 @@ It never blocks the valid events behind it.
 
 ### Online write policies
 
-Each feature has its own store policy. They are deliberately not generic.
+The update policy is part of the spec (`online.update_policy`). The two
+original features have hand-written stores. The spec-driven store implements
+the same ordering for any count or ratio spec.
 
 ```mermaid
 flowchart TD
@@ -165,12 +173,24 @@ flowchart TD
     SAME -->|identical| NOOP[Leave unchanged]
     SAME -->|increase| ACCEPT[Accept correction]
     SAME -->|decrease| DISCARD
-    SAME -->|incomparable| ERR[SkipRateUpdateConflictError]
+    SAME -->|incomparable| ERR[UpdateConflictError<br/>SkipRateUpdateConflictError in the hand-written store]
 ```
 
 - **Play count** is append-only. Within one window the count may only grow.
 - **Skip rate** compares `(play_count, skip_count)` componentwise, never the
   rate itself. An extra play lowers the rate and is a valid correction.
+- **Spec-driven store.** One decision function orders count vectors: a vector
+  with one component is the append-only rule, a vector with several components
+  the componentwise rule. It is checked against the hand-written skip-rate
+  policy on 768 combinations. `window_replace` is not implemented and the store
+  refuses it at construction.
+- **TTL.** The spec-driven store sets `online.ttl` as a Redis expiry with every
+  written update. The expiry runs in wall-clock time from the last accepted
+  write, and unchanged or stale updates do not extend it. An expired key reads
+  as missing, never as zero. The hand-written stores write keys without expiry.
+- **Keys.** `featureforge-stream:online:v{spec.version}:{spec.name}:{entity}`,
+  identical to the keys of the two original features. A new spec version opens a
+  new namespace.
 - **Concurrency.** Writers use Redis `WATCH`/`MULTI` with bounded retries.
 
 ### Materializers
@@ -193,6 +213,14 @@ sequenceDiagram
 Offsets are committed only after the Redis write. A materializer refuses an
 empty Kafka range instead of silently completing without work.
 
+The spec-driven materializer (`materialize_spec`) takes a spec instead of a
+feature-specific module. It derives the feature topic from the spec
+(`features.{name with hyphens}.v{version}`, which equals the topics of the two
+original features), validates every record against the spec with
+`parse_feature_record`, including the derived values, and writes it through the
+spec-driven store. It reads single-partition topics only and rejects
+tombstones. An invalid record stops the run without committing its offset.
+
 ---
 
 ## 4. Declarative feature specs
@@ -207,6 +235,10 @@ flowchart LR
     L --> R[Spec reference<br/>exact oracle]
     L --> P[Job plan<br/>count and ratio only]
     P --> G[Generic Flink job]
+    G --> T[(Feature topic)]
+    T --> MS[Spec-driven<br/>materializer]
+    L --> MS
+    MS --> RS[(Redis<br/>spec-driven store)]
     FX[(Golden fixture<br/>hand-calculated)] --> R
     FX --> G
     R -.->|compared with| G
@@ -239,10 +271,17 @@ flowchart LR
   tests cover late corrections, too-late routing, replay, savepoint resume,
   crash recovery and the Redis path. A third spec, `content_play_count_1h` with
   entity `content_id`, runs on it without code changes.
-- **Still hand-written.** The Redis store policies and the materializers are
-  written by hand per feature. `online.ttl` and `offline.store` in the specs
-  are declarative only: the Redis stores write keys without expiry and no
-  Iceberg store exists.
+- **Spec-driven online path.** `parse_feature_record` validates the record the
+  job emits against the spec: field set, entity id, window length, counts and
+  recomputed derived values. `RedisSpecStore` writes it with the policy of the
+  spec, and `materialize_spec` moves a feature topic into Redis. For
+  `content_play_count_1h` the whole path from events to Redis is covered by an
+  end-to-end test with hand-calculated windows, a redelivered event, the TTL, an
+  idempotent rerun and a replay that cannot undo the stored state (ADR-009).
+- **Still hand-written.** The stores and materializers of the two original
+  features, until they become thin wrappers. `offline.store` in the specs is
+  declarative only: no Iceberg store exists. `online.ttl` is enforced by the
+  spec-driven store only.
 
 ---
 
@@ -310,10 +349,10 @@ flowchart LR
     classDef plan fill:#e2e3e5,stroke:#6c757d,color:#000
 ```
 
-Planned and **not implemented**: spec-driven store policies, further operators
-in Flink, Iceberg history, Cassandra backend, serving service with load tests,
-observability and recovery drills, ML workflow with registry and rollback.
-Scope and order: [STATUS.md](STATUS.md) and
+Planned and **not implemented**: a `window_replace` store policy, further
+operators in Flink, Iceberg history, Cassandra backend, serving service with
+load tests, observability and recovery drills, ML workflow with registry and
+rollback. Scope and order: [STATUS.md](STATUS.md) and
 [docs/PLATFORM_BLUEPRINT.md](docs/PLATFORM_BLUEPRINT.md).
 
 ---
@@ -335,9 +374,10 @@ Scope and order: [STATUS.md](STATUS.md) and
   implemented.
 - The event-identity conflict failure is tested for the play count only. The
   skip-rate spec runs the same code path.
-- A feature defined only by a spec (`content_play_count_1h`) is computed by the
-  generic job but cannot be served online yet: store policies and materializers
-  are hand-written per feature.
+- The spec-driven store is proven end to end for `content_play_count_1h` only,
+  and its `WATCH` retry is tested with a mocked pipeline, not with a real
+  concurrent writer. The two original features still use hand-written stores
+  that write keys without expiry.
 - The TaskManager instability seen in CI is isolated, not explained.
 
 ## Decisions
@@ -352,10 +392,11 @@ Scope and order: [STATUS.md](STATUS.md) and
 | 006 | Streaming platform integration |
 | 007 | User skip rate 24h integration |
 | 008 | Declarative feature specification |
+| 009 | Spec-driven online stores and materializer |
 
 ## Principles
 
 Event time, never ingestion time. Explicit time boundaries. Executable data
 contracts. Deterministic output paths. Fail before bad data reaches consumers.
-Commit offsets only after successful writes. Keep store policies feature-specific.
-Every guarantee links to a test.
+Commit offsets only after successful writes. Declare store policies in the
+feature spec and test each one. Every guarantee links to a test.

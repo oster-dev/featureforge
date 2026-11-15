@@ -1,6 +1,6 @@
 # ADR-009 Spec-driven online stores and materializer
 
-- Status: Proposed
+- Status: Accepted. Implemented and proven end to end for a feature without own code. Open: the alias and exception subclass of decision 1 and the thin wrappers of decision 10.
 - Date: 2026-11-15
 - Author: Nico Ostermann
 - Deciders: Nico Ostermann

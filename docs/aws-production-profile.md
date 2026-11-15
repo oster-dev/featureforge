@@ -7,7 +7,8 @@ system without requiring a cloud deployment.
 
 Related: [ARCHITECTURE.md](../ARCHITECTURE.md) ·
 [ADR-002](adr/ADR-002-canonical-offline-store-contract.md) ·
-[ADR-005](adr/ADR-005-aws-s3-offline-store-profile.md)
+[ADR-005](adr/ADR-005-aws-s3-offline-store-profile.md) ·
+[ADR-009](adr/ADR-009-spec-driven-online-stores.md)
 
 ---
 
@@ -153,13 +154,30 @@ DynamoDB with on-demand capacity replaces Redis for production serving. It is
 multi-AZ by default and avoids capacity planning at this scale. Redis stays the
 local and CI online store.
 
-> **Contract caveat.** The local streaming stores enforce their write policies
-> with Redis `WATCH`/`MULTI`. That mechanism does not carry over. A DynamoDB
-> implementation needs its own guarded writes, for example conditional writes,
-> and **must pass the same contract tests** (older windows rejected, identical
+> **Contract caveat.** The ordering rules (older windows rejected, identical
 > deliveries unchanged, same-window corrections, incomparable vectors raising an
-> error, concurrent writers). Until then the Redis guarantees do not apply to
-> DynamoDB.
+> error) live in one store-independent decision function,
+> `decide_count_vector_update`, which a DynamoDB store can reuse unchanged. What
+> does not carry over is the guarded write: the local stores use Redis
+> `WATCH`/`MULTI`. DynamoDB offers conditional writes, where a condition
+> expression fails the write with a `ConditionalCheckFailedException` if the
+> stored item changed
+> ([DynamoDB conditional operations](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/example_dynamodb_Scenario_ConditionalOperations_section.html)).
+> A DynamoDB implementation **must pass the same contract tests**: the unit
+> tests of the decision function, the Redis integration tests of the
+> spec-driven store (correction policy, TTL) and a concurrent-writer test. A
+> real concurrent-writer test exists only for the hand-written stores today.
+> Until a DynamoDB store passes them, the Redis guarantees do not apply to it.
+
+> **TTL caveat.** `online.ttl` is a Redis expiry: an expired key reads as
+> missing. DynamoDB's TTL deletes expired items in the background, typically
+> within a few days of expiry, and expired items keep appearing in reads until
+> then ([TTL](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/TTL.html),
+> [expired items](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/ttl-expired-items.html)).
+> A DynamoDB store must therefore compare the expiry attribute with the current
+> time on every read and treat an expired item as missing, and it must use a
+> condition expression when it updates an item that may be expired. An item past
+> its TTL is never served as live and never replaced by zero.
 
 ## 8. Streaming profile
 
@@ -174,9 +192,17 @@ What stays unverified:
 
 - Supported Flink and Python versions on the managed service versus the local
   runtime (Flink 1.20.3, Python 3.11). Pin and test before committing to it.
-- Checkpoint and recovery behavior of the managed runtime. The local suite does
-  not yet verify checkpoint recovery at all (see
-  [ARCHITECTURE.md](../ARCHITECTURE.md#known-limits)).
+- Checkpoint and recovery behavior of the managed runtime. The service enables
+  checkpointing by default (every 60 s), stores checkpoints and savepoints in a
+  service-owned S3 bucket, keeps one checkpoint and retains it on failure, and
+  creates a system snapshot when an application is stopped or updated
+  ([fault tolerance](https://docs.aws.amazon.com/managed-flink/latest/java/how-fault.html),
+  [settings](https://docs.aws.amazon.com/managed-flink/latest/java/reference-flink-settings.title.html)).
+  The local suite verifies a savepoint stop and resume and recovery from a
+  TaskManager crash for the play-count spec, but not JobManager failure and not
+  checkpoints on shared storage (see
+  [ARCHITECTURE.md](../ARCHITECTURE.md#known-limits)). The managed runtime itself
+  is not tested.
 - Whether to adopt Glue Schema Registry. The current contracts are Pydantic
   models, not registry-backed schemas.
 
@@ -186,8 +212,9 @@ What stays unverified:
   overwrite and deletion.
 - Cross-region replication is **not** included at this stage.
 - DynamoDB on-demand capacity provides multi-AZ durability by default.
-- Local failure simulations do not cover Redis, Kafka, object-store or network
-  faults. Cloud resilience claims are therefore design intent, not tested behavior.
+- Local failure simulations cover a Flink TaskManager crash and a planned stop
+  with resume, but not Redis, Kafka, object-store or network faults. Cloud
+  resilience claims are therefore design intent, not tested behavior.
 
 ## 10. Lineage
 

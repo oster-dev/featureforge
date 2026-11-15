@@ -13,7 +13,7 @@ Read first: [README](README.md) · [ARCHITECTURE](ARCHITECTURE.md) ·
 Prerequisites: Python 3.11–3.13, Docker, GNU Make, Git.
 
 ```bash
-git clone https://github.com/oster-dev/featureforge.git
+git clone [https://github.com/oster-dev/featureforge.git](https://github.com/oster-dev/featureforge.git)
 cd featureforge
 python3 -m venv .venv && source .venv/bin/activate
 python -m pip install --upgrade pip
@@ -77,6 +77,7 @@ unformatted. CI fails on both checks, and it is the cheapest failure to avoid.
 | Batch features, backfill, Spark | `pytest tests/unit/test_spark_features.py tests/unit/test_spark_parquet_features.py` |
 | Feast, materialization, online serving | `docker compose up -d`, `feast apply`, then `pytest tests/integration/test_online_serving.py tests/integration/test_unified_online.py` |
 | Redis store policies | `pytest -m integration tests/integration/test_streaming_redis_online_store*.py tests/integration/test_redis_skip_rate_store.py` |
+| The spec-driven store, record parser, decision function or materializer (`spec_store.py`, `contracts/feature_record.py`, `contracts/count_vector.py`, `materialize_spec.py`) | `pytest tests/unit/test_count_vector_update.py tests/unit/test_feature_record.py tests/unit/test_spec_store.py tests/unit/test_materialize_spec.py`, then `docker compose up -d kafka redis` and `pytest -m integration tests/integration/test_spec_store_redis.py tests/integration/test_materialize_spec_kafka_to_redis.py`. A change to the end-to-end path also needs `tests/integration/test_content_play_count_end_to_end.py` on the full stack |
 | A feature spec, the spec model, reference or job plan | `python -m featureforge.cli validate-spec`, then `pytest tests/unit/test_spec_model.py tests/unit/test_spec_reference.py tests/unit/test_spec_golden_parity.py tests/unit/test_spec_flink_plan.py` |
 | The generic Flink job (`jobs/feature_from_spec.py`), `src/`, `docker/flink/Dockerfile`, or `docker-compose.yml` | `docker compose up -d --build`, then the full streaming selection below: the generic job is the only implementation of both streaming features |
 | Flink jobs, contracts, routing, materializers, savepoint or crash recovery | The full streaming selection below |
@@ -97,7 +98,10 @@ pytest -v -ra -m integration \
   tests/integration/test_generic_job_dedupe_ttl.py \
   tests/integration/test_generic_job_content_play_count.py \
   tests/integration/test_skip_rate_materialization.py \
-  tests/integration/test_redis_skip_rate_store.py
+  tests/integration/test_redis_skip_rate_store.py \
+  tests/integration/test_spec_store_redis.py \
+  tests/integration/test_materialize_spec_kafka_to_redis.py \
+  tests/integration/test_content_play_count_end_to_end.py
 ```
 
 Streaming tests are slow. Each Flink test recreates the TaskManager first, so
@@ -126,7 +130,7 @@ flowchart TD
     subgraph Streaming
         S1[Identity is event_id]
         S2[Conflicting payloads fail loudly]
-        S3[Store policy is feature-specific]
+        S3[Store policy is declared in the spec]
         S4[Offset committed after Redis write]
     end
     subgraph Specs
@@ -161,8 +165,15 @@ flowchart TD
   Never keep the first delivery silently or merge payloads.
 - Play count is append-only. Skip rate compares `(play_count, skip_count)`
   componentwise. Never compare rates by magnitude and never merge by maxima.
-- A new streaming feature needs its own update policy, dedupe horizon,
-  late-event behavior and materialization boundary, documented in an ADR.
+- A new streaming feature declares its update policy, dedupe horizon,
+  late-event behavior and online TTL in its spec. The spec-driven store
+  implements `append_only` and `componentwise_monotonic`. A policy outside
+  these, such as `window_replace`, needs a store implementation and an ADR.
+- `online.ttl` is a Redis expiry that the spec-driven store sets with every
+  written update. Unchanged and stale updates must not extend it.
+- Keys of a spec-driven feature are
+  `featureforge-stream:online:v{spec.version}:{spec.name}:{entity}`. A new spec
+  version opens a new namespace.
 - Kafka topic names must not contain colons. Redis key prefixes may.
 
 **Feature specs**
@@ -172,9 +183,12 @@ flowchart TD
   the only implementation of both streaming features. A capability the job
   lacks is added to the generic job and the spec language, with an ADR, not
   worked around in a new job. Further hand-written single features without the
-  spec engine are out of scope, see [STATUS.md](STATUS.md). Store policies are
-  not spec-driven yet, so a new feature still needs its policy tested and
-  documented.
+  spec engine are out of scope, see [STATUS.md](STATUS.md). A count or ratio
+  feature with one entity key needs no store or materializer code: the
+  spec-driven store and `materialize_spec` serve it (ADR-009), and an
+  end-to-end test like `test_content_play_count_end_to_end.py` proves it. The
+  hand-written stores of the two original features remain until they become
+  thin wrappers.
 - A spec must pass `python -m featureforge.cli validate-spec` before anything runs it.
   Do not weaken the model validation or the event-field check to make a spec
   pass. Fix the spec.
@@ -277,7 +291,8 @@ Background: [ADR-004](docs/adr/ADR-004-github-actions-ci.md).
 | `ModuleNotFoundError` inside a Flink job | A dependency is missing in `docker/flink/Dockerfile`. Check with `docker compose exec -T jobmanager /opt/pyflink/bin/python -c "import featureforge.spec.loader"` |
 | Savepoint cannot be written or read | Both `jobmanager` and `taskmanager` must mount the `flink-savepoints` volume at `/opt/flink/savepoints`, owned by `flink`. A volume created before this setup keeps old permissions: `docker compose down`, `docker volume rm featureforge-stream_flink-savepoints`, then `docker compose up -d --build` |
 | A spec is rejected | `python -m featureforge.cli validate-spec <spec.yaml>` prints each violated rule and the available names |
-| `SkipRateUpdateConflictError` | Compare stored and incoming count vectors, find the upstream producer, fix or replay upstream. Never edit Redis by hand or weaken the policy |
+| `SkipRateUpdateConflictError` or `UpdateConflictError` | Compare stored and incoming count vectors, find the upstream producer, fix or replay upstream. Never edit Redis by hand or weaken the policy |
+| `materialize_spec` fails with `record fields do not match` | The record on the feature topic does not match the spec: compare the topic payload with the spec fields and the spec version, then fix the producer or the spec. Never edit Redis by hand |
 
 Useful commands:
 
@@ -314,10 +329,12 @@ Small, focused commits that describe the behavior or contract changed:
 ```text
 feat: add user skip rate 24h streaming feature
 feat: add generic spec-driven Flink job for count and ratio features
+feat: add spec-driven Redis store and feature record parser
 refactor: remove the hand-written feature jobs
 test: verify streaming routing and late-event behavior
 test: resume the generic job from a savepoint with its state intact
 test: recover the generic job from a TaskManager crash via checkpoint
+test: run a YAML-only feature from events to Redis on the generic stack
 test: add skip-rate golden fixture with hand-calculated values
 ci: expand Flink integration selection
 fix: preserve UTC timestamp semantics in Spark features

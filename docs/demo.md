@@ -4,11 +4,11 @@ Three reviewer walkthroughs, each runnable from a clean checkout:
 
 1. **Batch path:** synthetic data to Feast-materialized online features.
 2. **Streaming path:** Kafka to Flink to Redis, verified end to end.
-3. **Feature spec:** a declarative spec validated, evaluated against golden fixtures and run as a generic Flink job.
+3. **Feature spec:** a declarative spec validated, evaluated against golden fixtures, run as a generic Flink job and served from Redis without feature-specific code.
 
 Expected local runtime: batch about 2 minutes, the spec evaluation a few seconds,
-the generic job about a minute, streaming several minutes. In CI each Flink test
-module starts from a fresh TaskManager, and the skip-rate suites recreate it per test.
+the generic job about a minute, the YAML-only end-to-end test about ten seconds on a warm stack,
+streaming several minutes. In CI each Flink test module starts from a fresh TaskManager, and the skip-rate suites recreate it per test.
 
 ```mermaid
 flowchart LR
@@ -20,7 +20,8 @@ flowchart LR
     end
     subgraph C["Demo C: feature spec"]
         C1[YAML spec] --> C2[Validate<br/>and field check] --> C3[Exact reference<br/>evaluation] --> C4[Golden fixtures<br/>and Python<br/>references]
-        C2 --> C5[Generic Flink job<br/>for both features] --> C4
+        C2 --> C5[Generic Flink job<br/>for all features] --> C4
+        C5 --> C6[Spec-driven<br/>materializer<br/>and store] --> C7[(Redis)]
     end
 ```
 
@@ -31,7 +32,7 @@ flowchart LR
 - GNU Make
 
 ```bash
-git clone https://github.com/oster-dev/featureforge.git
+git clone [https://github.com/oster-dev/featureforge.git](https://github.com/oster-dev/featureforge.git)
 cd featureforge
 python3 -m venv .venv && source .venv/bin/activate
 python -m pip install --upgrade pip
@@ -163,7 +164,7 @@ See [Known limits](../ARCHITECTURE.md#known-limits).
 
 Features can be described declaratively (see
 [ADR-008](adr/ADR-008-feature-spec-design.md)). Parts 1 to 3 need no
-infrastructure. Parts 4 to 6 need the streaming stack from Demo B.
+infrastructure. Parts 4 to 7 need the streaming stack from Demo B.
 
 ### 1. Validate the specs
 
@@ -177,9 +178,14 @@ python -m featureforge.spec.loader feature_repo/specs/*.yaml
 Expected output:
 
 ```text
+✓ feature_repo/specs/content_play_count_1h.yaml: content_play_count_1h v1
 ✓ feature_repo/specs/user_play_count_1h.yaml: user_play_count_1h v1
 ✓ feature_repo/specs/user_skip_rate_24h.yaml: user_skip_rate_24h v1
 ```
+
+`python -m featureforge.cli validate-spec` does the same for every spec in
+`feature_repo/specs` and exits `0` when all are valid, `1` when a spec is invalid
+(each violated field is listed) and `2` when a file is missing.
 
 ### 2. Evaluate the play-count spec on its golden fixture
 
@@ -211,6 +217,34 @@ user_000001 {'play_count': 3}
 user_000002 {'play_count': 1}
 user_unknown {'play_count': 0}
 ```
+
+The `test-spec` command evaluates one entity at one time without writing any
+code and can check an expected value. It runs the spec reference, not the Flink
+job:
+
+```bash
+python -m featureforge.cli test-spec feature_repo/specs/user_play_count_1h.yaml \
+  --events fixtures/streaming/user_play_count_1h_v1.jsonl \
+  --entity user_id=user_000001 --at 2026-01-01T11:30:00+00:00 \
+  --expect play_count=3
+```
+
+Expected output, exit code `0`:
+
+```text
+user_play_count_1h · user_id=user_000001
+Window (2026-01-01T10:30:00+00:00, 2026-01-01T11:30:00+00:00] · 8 events read
+┏━━━━━━━━━━━━┳━━━━━━━━┓
+┃ value      ┃ result ┃
+┡━━━━━━━━━━━━╇━━━━━━━━┩
+│ play_count │ 3      │
+└────────────┴────────┘
+✓ play_count = 3
+```
+
+With a wrong expectation such as `--expect play_count=99` the same command prints
+`✗ play_count: expected 99, got 3` and exits with `1`. Exit code `2` means a file
+is missing.
 
 The same values come from the Python reference. The test suite checks
 that agreement on randomized inputs placed exactly on window boundaries:
@@ -321,16 +355,65 @@ The test restarts the TaskManager in its cleanup. The JobManager keeps running
 and holds the checkpoints in memory, so this does not show recovery from a
 JobManager failure.
 
+### 7. Run a feature defined by YAML alone from events to Redis
+
+`content_play_count_1h` has no job, store, materializer or record type of its
+own. The test sends plays for two contents through the validation job, the
+generic Flink job on `feature_repo/specs/content_play_count_1h.yaml`, the
+spec-driven materializer and the spec-driven store, and reads the values back:
+
+```bash
+docker compose up -d --build
+pytest -v -m integration tests/integration/test_content_play_count_end_to_end.py   # 1 passed
+```
+
+The expected values are hand-calculated. One content has plays at 11:30 and
+11:40, and the second event is delivered twice. It gives 70 windows ending 11:30
+to 12:39. The other content has one play at 11:30 and gives 60 windows ending
+11:30 to 12:29. All 130 records pass through the store. The final windows 12:39
+and 12:29 hold a count of 1 (a counted duplicate would show 2), the stored value
+has an expiry within `online.ttl`, a second run does nothing, and a replay with
+a new consumer group yields 128 `stale` and 2 `unchanged` results, so a replay
+cannot undo the stored state.
+
+The two halves can be run on their own:
+
+```bash
+docker compose up -d kafka redis
+pytest -v -m integration \
+  tests/integration/test_spec_store_redis.py \
+  tests/integration/test_materialize_spec_kafka_to_redis.py   # 10 passed
+```
+
+The first checks the store against a real Redis: round trips for three specs,
+window and correction policy, incomparable counts and the TTL. The second
+publishes six records for `content_play_count_1h` to a Kafka topic and runs the
+materializer as a subprocess.
+
+The materializer also runs by hand. It derives the topic from the spec
+(`features.content-play-count-1h.v1`), validates every record against the spec
+and prints a JSON summary such as `{"store_results": {"written": 4}}`:
+
+```bash
+python -m featureforge.streaming.materialize_spec \
+  --spec feature_repo/specs/content_play_count_1h.yaml \
+  --group-id my-group --bounded
+```
+
 ### What this demo does not prove
 
 - The generic job is verified on the golden fixtures, late corrections, replay
-  and the Redis path for both features, and resumes from a savepoint and
-  recovers from a TaskManager crash for the play-count spec, and its dedupe state
-  expires after a shortened TTL. JobManager failure and the production TTL values
-  are not proven for it.
-- The Redis stores and the materializers are still written by hand per feature.
-  No Spark feature or store is driven by a spec.
-- `online.ttl` in a spec is declarative. The current stores write without expiry.
+  and the Redis path for both original features, and resumes from a savepoint
+  and recovers from a TaskManager crash for the play-count spec, and its dedupe
+  state expires after a shortened TTL. JobManager failure and the production TTL
+  values are not proven for it.
+- The two original features still use hand-written stores and materializers. The
+  spec-driven store and materializer are proven end to end for
+  `content_play_count_1h` only. No Spark feature is driven by a spec.
+- `online.ttl` is a Redis expiry in the spec-driven store only. The hand-written
+  stores write without expiry.
+- The `WATCH` retry of the spec-driven store is tested with a mocked pipeline,
+  not with a real concurrent writer.
 
 ---
 
@@ -373,6 +456,8 @@ runs them with zero skips.
 | Changed code under `src/` not picked up by Flink | `jobs/` and `feature_repo/specs/` are mounted, `src/` is copied into the image. Rebuild with `docker compose up -d --build` |
 | Savepoint cannot be written or read | JobManager and TaskManager must both mount the `flink-savepoints` volume. A volume with old permissions: `docker compose down`, `docker volume rm featureforge-stream_flink-savepoints`, `docker compose up -d --build` |
 | Spec validation fails | Read the printed field path and message. An unknown event field is reported with the available fields |
+| `materialize_spec` stops with `Topic is not available` or `Refusing to materialize an empty Kafka range` | Run the Flink job for that spec first. The feature topic must exist and contain records |
+| `materialize_spec` stops with `record fields do not match` | The record on the topic and the spec disagree. Compare the payload with the spec fields and version. Never edit Redis by hand |
 
 Prepare serving explicitly if tests skip:
 
