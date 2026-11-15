@@ -20,6 +20,9 @@ MODULES=(
   tests/integration/test_generic_job_content_play_count.py
   tests/integration/test_skip_rate_materialization.py
   tests/integration/test_redis_skip_rate_store.py
+  tests/integration/test_spec_store_redis.py
+  tests/integration/test_materialize_spec_kafka_to_redis.py
+  tests/integration/test_content_play_count_end_to_end.py
 )
 
 wait_for_slots() {
