@@ -53,7 +53,7 @@ Goal: record publication evidence for every accepted online update so that ADR-0
 
 ## Verification
 
-The table, the update identity and the idempotent append are implemented and tested in `tests/unit/test_history.py` and `tests/integration/test_history_spark_read.py`. The evidence append in `materialize_spec` is tested in `tests/unit/test_materialize_spec_history.py` and `tests/integration/test_materialize_spec_history.py`. The tests of ADR-010 apply, plus the following.
+The table, the update identity and the idempotent append are implemented and tested in `tests/unit/test_history.py` and `tests/integration/test_history_spark_read.py`. The evidence append in `materialize_spec` is tested in `tests/unit/test_materialize_spec_history.py` and `tests/integration/test_materialize_spec_kafka_to_history.py`. The tests of ADR-010 apply, plus the following.
 
 - PyIceberg writes a spec-derived table and Spark reads the same rows (the feasibility check as a test).
 - `update_id` is stable across a replay and differs for a higher count.
