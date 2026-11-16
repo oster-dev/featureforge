@@ -398,6 +398,7 @@ rollback. Scope and order: [STATUS.md](STATUS.md) and
 | 008 | Declarative feature specification |
 | 009 | Spec-driven online stores and materializer |
 | 010 | Time and availability model for streaming history |
+| 011 | History table layout and evidence append |
 
 ## Principles
 

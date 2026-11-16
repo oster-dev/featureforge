@@ -65,7 +65,7 @@ Nothing here is implemented. WP2 has to add tests for the following.
 
 ## Open items
 
-- The history table layout (WP2, next ADR).
-- Who runs the evidence append: the materializer itself or a second consumer.
+- The history table layout: decided in ADR-011.
+- Who runs the evidence append: decided in ADR-011, the materializer itself.
 - Behaviour with several partitions and several materializer processes.
 - Whether `computed_at` is added for lag diagnosis.
