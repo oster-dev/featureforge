@@ -15,7 +15,7 @@ from featureforge.streaming.online_store import (
 
 
 @pytest.fixture
-def online_store() -> Iterator[RedisUserPlayCountStore]:
+def redis_case() -> Iterator[tuple[Redis, str]]:
     redis_url = os.environ.get(
         "FEATUREFORGE_REDIS_URL",
         "redis://127.0.0.1:6379/0",
@@ -29,14 +29,19 @@ def online_store() -> Iterator[RedisUserPlayCountStore]:
         socket_timeout=3,
     ) as client:
         assert client.ping() is True
-        store = RedisUserPlayCountStore(client, key_prefix=key_prefix)
 
         try:
-            yield store
+            yield client, key_prefix
         finally:
             keys = list(client.scan_iter(match=f"{key_prefix}:*"))
             if keys:
                 client.delete(*keys)
+
+
+@pytest.fixture
+def online_store(redis_case: tuple[Redis, str]) -> RedisUserPlayCountStore:
+    client, key_prefix = redis_case
+    return RedisUserPlayCountStore(client, key_prefix=key_prefix)
 
 
 def make_feature(
@@ -197,3 +202,40 @@ def test_replayed_previous_value_cannot_undo_late_correction(
     assert online_store.write(initial) == "stale"
     assert online_store.write(corrected) == "unchanged"
     assert online_store.read(user_id) == corrected
+
+
+@pytest.mark.integration
+def test_written_update_sets_online_ttl_and_other_outcomes_keep_it(
+    redis_case: tuple[Redis, str],
+) -> None:
+    client, key_prefix = redis_case
+    store = RedisUserPlayCountStore(client, key_prefix=key_prefix)
+    user_id = f"integration_user_{uuid4().hex}"
+    observation_time = datetime(2026, 1, 1, 12, tzinfo=UTC)
+    feature = make_feature(
+        user_id=user_id,
+        play_count=3,
+        observation_time=observation_time,
+    )
+    older = make_feature(
+        user_id=user_id,
+        play_count=2,
+        observation_time=observation_time,
+    )
+    corrected = make_feature(
+        user_id=user_id,
+        play_count=4,
+        observation_time=observation_time,
+    )
+    key = store.key_for(user_id)
+
+    assert store.write(feature) == "written"
+    assert 0 < client.ttl(key) <= 2 * 3600
+
+    client.expire(key, 100)
+    assert store.write(feature) == "unchanged"
+    assert store.write(older) == "stale"
+    assert 0 < client.ttl(key) <= 100
+
+    assert store.write(corrected) == "written"
+    assert client.ttl(key) > 100
