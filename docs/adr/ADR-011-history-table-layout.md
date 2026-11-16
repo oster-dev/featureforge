@@ -65,5 +65,5 @@ The table, the update identity and the idempotent append are implemented and tes
 
 - Several appender processes and several partitions.
 - Compaction and retention of the history table.
-- The published-as-of read function and its CLI.
+- A CLI for the published-as-of read. The read function exists in `src/featureforge/streaming/published_as_of.py`.
 - Whether `computed_at` is added for lag diagnosis (ADR-010).
