@@ -131,3 +131,21 @@ def test_cli_requires_explicit_age_limits(monkeypatch, capsys):
 
     assert error.value.code == 2
     assert capsys.readouterr().out == ""
+
+
+def test_cli_forwards_the_skip_rate_key_prefix(monkeypatch, capsys):
+    captured = {}
+    client = FakeClient(
+        response=OnlineFeatureResponse(reference_time=REFERENCE, features=()),
+    )
+
+    def from_local(cls, **kwargs):
+        captured.update(kwargs)
+        return client
+
+    monkeypatch.setattr(OnlineFeatureClient, "from_local", classmethod(from_local))
+    set_arguments(monkeypatch, "--skip-rate-key-prefix", "custom:skip-rate")
+
+    assert main() == 0
+    assert captured["skip_rate_key_prefix"] == "custom:skip-rate"
+    capsys.readouterr()

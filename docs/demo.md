@@ -144,8 +144,11 @@ python -m featureforge.online \
 ```
 
 Every value reports its backend, availability, observation time and freshness.
-A missing value is shown as missing, never as `0`. Exit codes: `0` success,
-`1` feature errors, `2` invalid request.
+A missing value is shown as missing, never as `0`. The streaming play count
+and skip rate are read from Redis, an expired key shows as missing. The skip-rate
+key prefix defaults to the key of its spec and can be set with
+`--skip-rate-key-prefix`. Exit codes: `0` success, `1` feature errors, `2` invalid
+request.
 
 ### What this demo does not prove
 
