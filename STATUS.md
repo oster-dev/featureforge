@@ -44,7 +44,7 @@ Related: [README](README.md) · [Architecture](ARCHITECTURE.md) ·
 | Item | State |
 |---|---|
 | WP1: declarative spec and generic engine | Stages 1 to 3 delivered for both features. Stage 4 delivered except JobManager failure: every integration test runs on the generic job, the hand-written jobs are deleted, and the stores and materializers of the two original features are thin wrappers over the spec-driven code. Stages 5 and 6 below. |
-| Streaming history and published-as-of retrieval (WP2) | Not started. The time model is decided in [ADR-010](docs/adr/ADR-010-time-and-availability-model.md) (Accepted): availability is `published_at` of the online sink, assigned by the materializer after a `written` result. No `published_at` exists in code yet. |
+| Streaming history and published-as-of retrieval (WP2) | In progress: the history table and an idempotent append exist ([ADR-011](docs/adr/ADR-011-history-table-layout.md)), the materializer does not write evidence yet. The time model is decided in [ADR-010](docs/adr/ADR-010-time-and-availability-model.md) (Accepted): availability is `published_at` of the online sink, assigned by the materializer after a `written` result. No `published_at` exists in code yet. |
 
 ### WP1 stages
 
@@ -84,7 +84,7 @@ workflow (Metaflow, MLflow, registry, rollback).
 | The wrappers locate their spec relative to the source tree | `RedisUserPlayCountStore`, `RedisUserSkipRateStore` and the two materializer entry points load `feature_repo/specs/*.yaml` from the repository checkout. An installed package without the repository raises `FileNotFoundError`. |
 | The Flink image installs `pydantic` and `PyYAML` explicitly | Any new runtime dependency of the job path must be added to `docker/flink/Dockerfile`. The image build checks the project imports. |
 | `online.ttl` expires keys in wall-clock time from the last accepted write | All three streaming features expire (2 h for the play counts, 25 h for the skip rate). A replayed historical value lives for `online.ttl` from the time of the write. Keys written before stage 4l have no expiry until their next written update. |
-| Published-as-of retrieval is decided but not implemented | ADR-010 is Accepted. No publication evidence is recorded and no `published_at` exists. All three streaming features run through the spec-driven store, so the evidence can be added in one place. |
+| Published-as-of retrieval is decided but not implemented | ADR-010 and ADR-011 are Accepted. The history table and an idempotent append exist, but the materializer does not record publication evidence yet and there is no published-as-of read. All three streaming features run through the spec-driven store, so the evidence can be added in one place. |
 | `window_replace` update policy has no store | Non-count operators cannot be served online yet. |
 | `approx_distinct` is exact in the reference | The accepted error bound of an engine implementation is not defined yet. |
 | No latency or throughput numbers | No benchmark exists yet. |

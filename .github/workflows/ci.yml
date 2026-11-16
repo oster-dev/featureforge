@@ -219,6 +219,7 @@ jobs:
             tests/integration/test_streaming_redis_online_store.py \
             tests/integration/test_streaming_redis_online_store_concurrency.py \
             tests/integration/test_unified_online.py \
+            tests/integration/test_history_spark_read.py \
             --junitxml=/tmp/featureforge-streaming-redis.xml
 
           python - <<'PYTEST_REPORT'
@@ -233,6 +234,7 @@ jobs:
               "test_streaming_redis_online_store",
               "test_streaming_redis_online_store_concurrency",
               "test_unified_online",
+              "test_history_spark_read",
           )
           for suite in required_suites:
               if not any(
