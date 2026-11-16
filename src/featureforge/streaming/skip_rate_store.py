@@ -1,13 +1,34 @@
-"""Guarded Redis writes for append-only user skip-rate count vectors."""
+"""Guarded Redis writes for user skip-rate count vectors.
+
+A thin wrapper over RedisSpecStore (ADR-009, decision 10). The constructor, the
+methods and the typed model are unchanged. The ordering, the WATCH/MULTI retries
+and the online.ttl expiry come from the generic store and the spec.
+"""
+
+from functools import cache
+from pathlib import Path
 
 from redis import Redis
-from redis.exceptions import WatchError
 
+from featureforge.spec.loader import load_spec
+from featureforge.spec.model import FeatureSpec
+from featureforge.streaming.contracts.count_vector import UpdateConflictError
+from featureforge.streaming.contracts.feature_record import FeatureRecord, record_fields
 from featureforge.streaming.contracts.user_skip_rate import (
+    SkipRateUpdateConflictError,
     UpdateDecision,
     UserSkipRateFeatureV1,
-    decide_skip_rate_update,
 )
+from featureforge.streaming.spec_store import RedisSpecStore
+
+SPEC_PATH = (
+    Path(__file__).resolve().parents[3] / "feature_repo" / "specs" / "user_skip_rate_24h.yaml"
+)
+
+
+@cache
+def skip_rate_spec() -> FeatureSpec:
+    return load_spec(SPEC_PATH)
 
 
 class RedisUserSkipRateStore:
@@ -18,47 +39,20 @@ class RedisUserSkipRateStore:
     The caller owns the Redis connection lifecycle.
     """
 
-    def __init__(
-        self,
-        client: Redis,
-        *,
-        key_prefix: str = ("featureforge-stream:online:v1:user_skip_rate_24h"),
-    ) -> None:
-        if not isinstance(key_prefix, str):
-            raise TypeError("key_prefix must be a string")
-        if not key_prefix or any(character.isspace() for character in key_prefix):
-            raise ValueError("key_prefix must be non-empty and contain no whitespace")
-
-        self._client = client
-        self._key_prefix = key_prefix
+    def __init__(self, client: Redis, *, key_prefix: str | None = None) -> None:
+        spec = skip_rate_spec()
+        self._store = RedisSpecStore(client, spec, key_prefix=key_prefix)
+        self._name = spec.name
+        self._entity_key, self._counters, self._derived = record_fields(spec)
 
     def key_for(self, user_id: str) -> str:
         """Return the Redis key used for this user."""
-        if not isinstance(user_id, str):
-            raise TypeError("user_id must be a string")
-        if not user_id or any(character.isspace() for character in user_id):
-            raise ValueError("user_id must be non-empty and contain no whitespace")
-
-        return f"{self._key_prefix}:{user_id}"
-
-    @staticmethod
-    def _decode(
-        payload: str | bytes,
-        *,
-        user_id: str,
-    ) -> UserSkipRateFeatureV1:
-        feature = UserSkipRateFeatureV1.model_validate_json(payload)
-        if feature.user_id != user_id:
-            raise ValueError("stored feature user_id does not match requested user_id")
-        return feature
+        return self._store.key_for(user_id)
 
     def read(self, user_id: str) -> UserSkipRateFeatureV1 | None:
         """Read a validated feature, or return None when no key exists."""
-        payload = self._client.get(self.key_for(user_id))
-        if payload is None:
-            return None
-
-        return self._decode(payload, user_id=user_id)
+        record = self._store.read(user_id)
+        return None if record is None else self._to_feature(record)
 
     def write(self, feature: UserSkipRateFeatureV1) -> UpdateDecision:
         """Apply window ordering and componentwise same-window count ordering.
@@ -68,30 +62,27 @@ class RedisUserSkipRateStore:
         """
         if not isinstance(feature, UserSkipRateFeatureV1):
             raise TypeError("feature must be a UserSkipRateFeatureV1 instance")
+        try:
+            return self._store.write(self._to_record(feature))
+        except UpdateConflictError as exc:
+            raise SkipRateUpdateConflictError(str(exc)) from exc
 
-        key = self.key_for(feature.user_id)
-        payload = feature.model_dump_json()
+    def _to_record(self, feature: UserSkipRateFeatureV1) -> FeatureRecord:
+        return FeatureRecord(
+            feature_name=self._name,
+            entity_key=self._entity_key,
+            entity_value=getattr(feature, self._entity_key),
+            observation_time=feature.observation_time,
+            window_start_exclusive=feature.window_start_exclusive,
+            counts={name: getattr(feature, name) for name in self._counters},
+            derived={name: getattr(feature, name) for name in self._derived},
+        )
 
-        for _ in range(16):
-            with self._client.pipeline() as pipeline:
-                try:
-                    pipeline.watch(key)
-                    stored_payload = pipeline.get(key)
-                    stored = (
-                        self._decode(stored_payload, user_id=feature.user_id)
-                        if stored_payload is not None
-                        else None
-                    )
-                    decision = decide_skip_rate_update(stored, feature)
-                    if decision != "written":
-                        pipeline.unwatch()
-                        return decision
-
-                    pipeline.multi()
-                    pipeline.set(key, payload)
-                    pipeline.execute()
-                    return "written"
-                except WatchError:
-                    continue
-
-        raise WatchError("Feature write aborted after 16 concurrent modification retries")
+    def _to_feature(self, record: FeatureRecord) -> UserSkipRateFeatureV1:
+        return UserSkipRateFeatureV1(
+            **{self._entity_key: record.entity_value},
+            observation_time=record.observation_time,
+            window_start_exclusive=record.window_start_exclusive,
+            **record.counts,
+            **record.derived,
+        )

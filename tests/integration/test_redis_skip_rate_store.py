@@ -165,3 +165,20 @@ def test_real_watch_conflict_rechecks_same_window_counts(redis_case, monkeypatch
 
     assert counters == {"pipelines": 2, "executes": 1, "watch_errors": 1}
     assert store.read(initial.user_id) == competing
+
+
+def test_written_update_sets_online_ttl_and_other_outcomes_keep_it(redis_case):
+    client, store, _ = redis_case
+    feature = make_feature()
+    key = store.key_for(feature.user_id)
+
+    assert store.write(feature) == "written"
+    assert 0 < client.ttl(key) <= 25 * 3600
+
+    client.expire(key, 100)
+    assert store.write(feature) == "unchanged"
+    assert store.write(make_feature(0, 0)) == "stale"
+    assert 0 < client.ttl(key) <= 100
+
+    assert store.write(make_feature(2, 1)) == "written"
+    assert client.ttl(key) > 100
