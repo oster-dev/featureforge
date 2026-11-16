@@ -287,7 +287,24 @@ def test_bounded_run_stops_at_snapshot_end(harness):
     results = module.materialize(make_arguments(), PLAY)
 
     assert dict(results) == {"written": 2}
+    assert len(state.store.records) == 2
+    assert state.consumer.assignments[0].offset == 10
     assert state.consumer.commits == [12]
+    assert state.consumer.closed is True
+
+
+def test_starts_at_low_watermark_without_committed_offset(harness):
+    state = harness(
+        low=20,
+        high=21,
+        committed=-1001,
+        messages=[play_message(20)],
+    )
+
+    module.materialize(make_arguments(), PLAY)
+
+    assert state.consumer.assignments[0].offset == 20
+    assert state.consumer.commits == [21]
 
 
 def test_resumes_from_the_committed_offset(harness):
@@ -304,6 +321,23 @@ def test_resumes_from_the_committed_offset(harness):
     assert dict(results) == {"written": 2}
     assert state.consumer.assignments[0].offset == 11
     assert state.consumer.commits == [13]
+
+
+def test_counts_all_store_outcomes_and_commits_final_partial_batch(harness):
+    state = harness(
+        high=3,
+        messages=[play_message(0), play_message(1), play_message(2)],
+        outcomes=["written", "unchanged", "stale"],
+    )
+
+    results = module.materialize(make_arguments(commit_every=2), PLAY)
+
+    assert dict(results) == {
+        "written": 1,
+        "unchanged": 1,
+        "stale": 1,
+    }
+    assert state.consumer.commits == [2, 3]
 
 
 def test_nothing_pending_returns_without_polling(harness):
@@ -323,6 +357,9 @@ def test_empty_range_is_refused(harness):
     with pytest.raises(RuntimeError, match="empty Kafka range"):
         module.materialize(make_arguments(), PLAY)
 
+    assert state.consumer.assignments == []
+    assert state.consumer.commits == []
+    assert state.store.records == []
     assert state.consumer.closed is True
 
 
@@ -346,6 +383,17 @@ def test_invalid_record_is_rejected_and_not_committed(harness):
     assert state.consumer.closed is True
 
 
+def test_non_json_payload_is_rejected_and_not_committed(harness):
+    state = harness(messages=[FakeMessage(0, b"not-json")], outcomes=[])
+
+    with pytest.raises(ValueError):
+        module.materialize(make_arguments(commit_every=1), PLAY)
+
+    assert state.consumer.commits == []
+    assert state.store.records == []
+    assert state.consumer.closed is True
+
+
 def test_multi_partition_topic_is_refused(harness):
     state = harness(messages=[], outcomes=[])
     state.consumer.list_topics = lambda topic, timeout: Mock(
@@ -358,9 +406,29 @@ def test_multi_partition_topic_is_refused(harness):
     assert state.consumer.closed is True
 
 
-def test_commit_every_must_be_positive():
+def test_commit_every_must_be_positive_and_fails_before_connections(harness):
+    state = harness()
+
     with pytest.raises(ValueError, match="positive"):
         module.materialize(make_arguments(commit_every=0), PLAY)
+
+    state.redis_factory.assert_not_called()
+    state.consumer_factory.assert_not_called()
+
+
+def test_commit_offset_uses_next_offset_and_synchronous_commit():
+    consumer = Mock()
+    consumer.commit.return_value = []
+    partition = module.TopicPartition("features.test.v1", 0)
+
+    module.commit_offset(consumer, partition, 42)
+
+    arguments = consumer.commit.call_args.kwargs
+    assert arguments["asynchronous"] is False
+    assert len(arguments["offsets"]) == 1
+    assert arguments["offsets"][0].topic == "features.test.v1"
+    assert arguments["offsets"][0].partition == 0
+    assert arguments["offsets"][0].offset == 42
 
 
 def test_parse_arguments_defaults():
