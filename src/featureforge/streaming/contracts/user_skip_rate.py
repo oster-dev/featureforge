@@ -13,10 +13,15 @@ from pydantic import (
     model_validator,
 )
 
-UpdateDecision = Literal["written", "unchanged", "stale"]
+from featureforge.streaming.contracts.count_vector import (
+    UpdateConflictError,
+    WriteOutcome,
+)
+
+UpdateDecision = WriteOutcome
 
 
-class SkipRateUpdateConflictError(ValueError):
+class SkipRateUpdateConflictError(UpdateConflictError):
     """Same-window count vectors cannot be ordered componentwise."""
 
 

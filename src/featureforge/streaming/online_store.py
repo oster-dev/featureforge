@@ -1,6 +1,13 @@
-"""Redis storage for append-only user play counts with guarded writes."""
+"""Redis storage for append-only user play counts with guarded writes.
+
+A thin wrapper over RedisSpecStore (ADR-009, decision 10). The constructor, the
+methods and the typed model are unchanged. The ordering, the WATCH/MULTI retries
+and the online.ttl expiry come from the generic store and the spec.
+"""
 
 from datetime import UTC, timedelta
+from functools import cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import (
@@ -12,9 +19,23 @@ from pydantic import (
     model_validator,
 )
 from redis import Redis
-from redis.exceptions import WatchError
 
-WriteResult = Literal["written", "unchanged", "stale"]
+from featureforge.spec.loader import load_spec
+from featureforge.spec.model import FeatureSpec
+from featureforge.streaming.contracts.count_vector import WriteOutcome
+from featureforge.streaming.contracts.feature_record import FeatureRecord, record_fields
+from featureforge.streaming.spec_store import RedisSpecStore
+
+WriteResult = WriteOutcome
+
+SPEC_PATH = (
+    Path(__file__).resolve().parents[3] / "feature_repo" / "specs" / "user_play_count_1h.yaml"
+)
+
+
+@cache
+def play_count_spec() -> FeatureSpec:
+    return load_spec(SPEC_PATH)
 
 
 class UserPlayCountFeatureV1(BaseModel):
@@ -61,36 +82,15 @@ class RedisUserPlayCountStore:
     The caller owns the Redis client's connection lifecycle.
     """
 
-    def __init__(
-        self,
-        client: Redis,
-        *,
-        key_prefix: str = "featureforge-stream:online:v1:user_play_count_1h",
-    ) -> None:
-        if not key_prefix.strip():
-            raise ValueError("key_prefix must not be blank")
-
-        self._client = client
-        self._key_prefix = key_prefix
+    def __init__(self, client: Redis, *, key_prefix: str | None = None) -> None:
+        spec = play_count_spec()
+        self._store = RedisSpecStore(client, spec, key_prefix=key_prefix)
+        self._name = spec.name
+        self._entity_key, self._counters, self._derived = record_fields(spec)
 
     def key_for(self, user_id: str) -> str:
         """Return the Redis key used for this user."""
-        if not user_id.strip():
-            raise ValueError("user_id must not be blank")
-
-        return f"{self._key_prefix}:{user_id}"
-
-    @staticmethod
-    def _decode(
-        payload: str | bytes,
-        *,
-        user_id: str,
-    ) -> UserPlayCountFeatureV1:
-        feature = UserPlayCountFeatureV1.model_validate_json(payload)
-        if feature.user_id != user_id:
-            raise ValueError("stored feature user_id does not match requested user_id")
-
-        return feature
+        return self._store.key_for(user_id)
 
     def write(self, feature: UserPlayCountFeatureV1) -> WriteResult:
         """Apply window ordering and monotone same-window corrections.
@@ -98,47 +98,31 @@ class RedisUserPlayCountStore:
         Retry at most 16 times when concurrent writers change the key.
         Connection errors and exhausted retries propagate to the caller.
         """
-        key = self.key_for(feature.user_id)
-        payload = feature.model_dump_json()
-
-        for _ in range(16):
-            with self._client.pipeline() as pipeline:
-                try:
-                    pipeline.watch(key)
-                    stored_payload = pipeline.get(key)
-
-                    if stored_payload is not None:
-                        stored = self._decode(
-                            stored_payload,
-                            user_id=feature.user_id,
-                        )
-
-                        if feature.observation_time < stored.observation_time:
-                            pipeline.unwatch()
-                            return "stale"
-
-                        if feature.observation_time == stored.observation_time:
-                            if feature.play_count < stored.play_count:
-                                pipeline.unwatch()
-                                return "stale"
-
-                            if feature.play_count == stored.play_count:
-                                pipeline.unwatch()
-                                return "unchanged"
-
-                    pipeline.multi()
-                    pipeline.set(key, payload)
-                    pipeline.execute()
-                    return "written"
-                except WatchError:
-                    continue
-
-        raise WatchError("Feature write aborted after 16 concurrent modification retries")
+        if not isinstance(feature, UserPlayCountFeatureV1):
+            raise TypeError("feature must be a UserPlayCountFeatureV1 instance")
+        return self._store.write(self._to_record(feature))
 
     def read(self, user_id: str) -> UserPlayCountFeatureV1 | None:
         """Read a validated feature, or return None when no key exists."""
-        payload = self._client.get(self.key_for(user_id))
-        if payload is None:
-            return None
+        record = self._store.read(user_id)
+        return None if record is None else self._to_feature(record)
 
-        return self._decode(payload, user_id=user_id)
+    def _to_record(self, feature: UserPlayCountFeatureV1) -> FeatureRecord:
+        return FeatureRecord(
+            feature_name=self._name,
+            entity_key=self._entity_key,
+            entity_value=getattr(feature, self._entity_key),
+            observation_time=feature.observation_time,
+            window_start_exclusive=feature.window_start_exclusive,
+            counts={name: getattr(feature, name) for name in self._counters},
+            derived={name: getattr(feature, name) for name in self._derived},
+        )
+
+    def _to_feature(self, record: FeatureRecord) -> UserPlayCountFeatureV1:
+        return UserPlayCountFeatureV1(
+            **{self._entity_key: record.entity_value},
+            observation_time=record.observation_time,
+            window_start_exclusive=record.window_start_exclusive,
+            **record.counts,
+            **record.derived,
+        )

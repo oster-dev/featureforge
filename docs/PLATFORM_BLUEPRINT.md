@@ -5,8 +5,8 @@
 exact reference and a generic Flink job are delivered. The generic job runs both
 original streaming features and a third feature defined by a YAML spec alone. A
 spec-driven store and materializer serve count and ratio features (ADR-009),
-proven from events to Redis for that third feature. The two original features
-still use hand-written stores and materializers.
+proven from events to Redis for that third feature. The stores and
+materializers of the two original features are thin wrappers over them.
 
 This document describes the **target** system. Implemented behavior is in
 [ARCHITECTURE.md](../ARCHITECTURE.md). Delivery status is in [STATUS.md](../STATUS.md).
@@ -125,7 +125,7 @@ the source actually generates.
 
 | Component | Owns | Rule |
 |---|---|---|
-| Contracts and catalog | Feature identity, entity, schema, version, window semantics, quality and freshness rules | Small typed spec with a **bounded operator set**. No universal SQL-to-Flink compiler. Today: spec model, validation, an exact reference and a generic Flink job for count and ratio features, running all streaming features, plus a spec-driven store and materializer for count and ratio features. No catalog. The two original features still use hand-written stores and materializers |
+| Contracts and catalog | Feature identity, entity, schema, version, window semantics, quality and freshness rules | Small typed spec with a **bounded operator set**. No universal SQL-to-Flink compiler. Today: spec model, validation, an exact reference and a generic Flink job for count and ratio features, running all streaming features, plus a spec-driven store and materializer for count and ratio features. No catalog. The stores and materializers of the two original features are thin wrappers over the spec-driven ones |
 | Batch computation | Pandas references, PySpark, backfills, offline publication | A later backfill must not rewrite the recorded availability of an earlier online value |
 | Streaming computation | Validation, Flink jobs, late routing, finite-horizon dedupe, output contracts | Correction policies are declared per feature in the spec. Append-only and componentwise ordering are not general revision support |
 | Storage | Offline tables, versioned streaming history | Online stores hold current accepted values. History retains the versions needed for declared retrieval. Neither is assumed to update atomically with the other |
@@ -188,8 +188,9 @@ Preserved and tested:
 - The spec-driven store applies the same ordering to any count vector. It is
   checked against the hand-written skip-rate policy on 768 combinations.
 - `online.ttl` is enforced by the spec-driven store as a Redis expiry from the
-  last accepted write. Unchanged and stale updates do not extend it, and an
-  expired key reads as missing, never as zero.
+  last accepted write, for all three streaming features (the wrappers of the two
+  original features delegate to it). Unchanged and stale updates do not extend
+  it, and an expired key reads as missing, never as zero.
 
 Feast 0.66.0's default Redis path was observed to skip equal-timestamp writes,
 so an unchanged Feast push is not assumed to support provisional same-window
@@ -279,7 +280,7 @@ flowchart LR
 |---|---|---|
 | A | Preserve released batch behavior, inventory dependencies, record import provenance | Done |
 | B | Integrate play-count slice, validation-to-online behavior, common read interface | Done |
-| C | Skip-rate and late corrections done. Feature spec model, exact reference and one generic Flink job running both features done, the hand-written jobs are removed. A spec-driven store and materializer are done and proven end to end for a YAML-only feature. Open: thin wrappers for the hand-written stores, JobManager-failure recovery evidence, streaming history, published-as-of retrieval, availability boundaries | In progress |
+| C | Skip-rate and late corrections done. Feature spec model, exact reference and one generic Flink job running both features done, the hand-written jobs are removed. A spec-driven store and materializer are done and proven end to end for a YAML-only feature. The stores and materializers of the two original features are thin wrappers over them. Open: JobManager-failure recovery evidence, streaming history, published-as-of retrieval, availability boundaries | In progress |
 | D | Label audit, mixed datasets, batch-only vs batch-plus-stream comparison, model-backed inference | Planned |
 | E | Metrics, recovery drills, benchmarks, clean-clone demo, notebook, reproducible release | Planned |
 

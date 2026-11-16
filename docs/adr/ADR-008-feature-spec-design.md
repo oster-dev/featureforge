@@ -72,8 +72,8 @@ Sources:
 - Negative: aggregations other than `count` need `window_replace`, which offers no
   online corrections within a window. A store for it must be built and tested
   before such a feature can be served online.
-- Negative: `online.ttl` is not enforced yet. The current Redis stores write
-  without expiry.
+- Negative: `online.ttl` was not enforced when this ADR was written. ADR-009 and
+  the thin wrappers enforce it for all three streaming features.
 
 ## Migration
 
@@ -84,8 +84,9 @@ jobs and passed, and the golden fixtures matched the spec reference and the
 Python references. The last version of the hand-written jobs is the tag
 `hand-written-jobs-final`.
 
-The Redis store policies, the materializers and Spark features are still
-hand-written per feature. Spec-driven stores are the remaining part of the
-migration and need their own decision, because `online.ttl` enforcement and the
-`window_replace` policy change store behavior. Provenance of the migration
+Spark features are still hand-written per feature. The Redis store policies and
+the materializers followed in ADR-009: the original ones are thin wrappers over
+a spec-driven store and materializer. That change needed its own decision,
+because `online.ttl` enforcement and the `window_replace` policy change store
+behavior. Provenance of the migration
 stages: [streaming-migration.md](../streaming-migration.md).

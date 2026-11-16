@@ -407,13 +407,14 @@ python -m featureforge.streaming.materialize_spec \
   and recovers from a TaskManager crash for the play-count spec, and its dedupe
   state expires after a shortened TTL. JobManager failure and the production TTL
   values are not proven for it.
-- The two original features still use hand-written stores and materializers. The
-  spec-driven store and materializer are proven end to end for
-  `content_play_count_1h` only. No Spark feature is driven by a spec.
-- `online.ttl` is a Redis expiry in the spec-driven store only. The hand-written
-  stores write without expiry.
-- The `WATCH` retry of the spec-driven store is tested with a mocked pipeline,
-  not with a real concurrent writer.
+- The two original features run on the spec-driven store and materializer
+  through thin wrappers. The path is proven end to end from events to Redis by
+  its own test for `content_play_count_1h`. No Spark feature is driven by a spec.
+- `online.ttl` is a Redis expiry from the last accepted write for all three
+  streaming features. Keys written before the wrappers have no expiry until
+  their next written update.
+- The `WATCH` retry of the spec-driven store has unit tests with a mocked
+  pipeline and runs against a real concurrent writer through the two wrappers.
 
 ---
 

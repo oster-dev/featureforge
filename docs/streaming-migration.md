@@ -231,8 +231,8 @@ and `user_skip_rate_24h`. The specs are validated, evaluated by an exact
 reference, and drive the generic Flink job `jobs/feature_from_spec.py`, which
 runs both features (see the next section). Stores and materializers became
 spec-driven in stage 4k, Spark features are not spec-driven yet. `online.ttl`
-in a spec is enforced by the spec-driven store. The hand-written Redis stores
-write without expiry.
+in a spec is enforced by the spec-driven store. Since stage 4l the stores of
+the two original features delegate to it, so all three features expire.
 
 ### Generic job consolidation (WP1 stage 4)
 
@@ -340,8 +340,9 @@ without Docker. `test-spec` runs the reference, not the Flink job.
 
 Stores and materializers were hand-written per feature. ADR-009 replaces them
 with one decision function, one store and one materializer that take the spec.
-The hand-written stores, models, materializers and their tests are unchanged.
-Thin wrappers are planned.
+In stage 4l the hand-written stores and materializers of the two original
+features became thin wrappers over this code. Their typed models, constructors
+and command lines are unchanged.
 
 - **Decision function (PR #36).** `contracts/count_vector.py` orders windows
   first and compares same-window count vectors componentwise. A vector with one
@@ -401,9 +402,9 @@ replay cannot undo the stored state.
 | Play count 1h | `jobs/feature_from_spec.py` with `feature_repo/specs/user_play_count_1h.yaml` | 1 h windows, 1 min slide, 24 h dedupe TTL |
 | Skip rate 24h | `jobs/feature_from_spec.py` with `feature_repo/specs/user_skip_rate_24h.yaml` | 24 h windows, 1 min slide, 48 h dedupe TTL |
 | Content play count 1h | `jobs/feature_from_spec.py` with `feature_repo/specs/content_play_count_1h.yaml` | 1 h windows, 1 min slide, 24 h dedupe TTL, entity `content_id` |
-| Materializers | `src/featureforge/streaming/materialize.py`, `materialize_skip_rate.py` | The two original features. Single-partition topics, reject empty ranges and tombstones, commit offsets only after Redis succeeds |
-| Online stores | `online_store.py`, `skip_rate_store.py` | The two original features. Feature-specific guarded Redis writes, no key expiry |
-| Spec-driven materializer | `src/featureforge/streaming/materialize_spec.py` | Any count or ratio spec. Topic derived from the spec, records validated against the spec, same guarantees as the hand-written materializers |
+| Materializers | `src/featureforge/streaming/materialize.py`, `materialize_skip_rate.py` | The two original features. Thin entry points over `materialize_spec` that keep the original command lines. Single-partition topics, empty ranges and tombstones rejected, offsets committed only after Redis succeeds, all from the generic code |
+| Online stores | `online_store.py`, `skip_rate_store.py` | The two original features. Thin wrappers over `RedisSpecStore` that keep the typed models and constructors. Guarded Redis writes with `online.ttl` expiry |
+| Spec-driven materializer | `src/featureforge/streaming/materialize_spec.py` | Any count or ratio spec. Topic derived from the spec, records validated against the spec, same guarantees as the original materializers |
 | Spec-driven store | `src/featureforge/streaming/spec_store.py`, `contracts/feature_record.py`, `contracts/count_vector.py` | Any count or ratio spec with one entity key. Guarded writes with `WATCH`/`MULTI`, `append_only` and `componentwise_monotonic`, `online.ttl` as Redis expiry |
 | Unified access | `src/featureforge/online.py` | Batch features and streaming play count |
 | Feature specs | `src/featureforge/spec/`, `feature_repo/specs/` | Drive the generic Flink job for all three features |
@@ -441,9 +442,9 @@ Skip-rate access through the unified interface is not yet implemented.
 | Historical streaming publication and published-as-of retrieval | **Not implemented.** No `published_at` is fabricated |
 | Atomic mixed batch and stream reads | **Not provided** (`atomic: false`) |
 | Spec-driven execution in Flink | Verified for count and ratio features: the generic job is the only implementation of all three streaming features |
-| Spec-driven store and materializer for count and ratio specs | Verified end to end for `content_play_count_1h` (events to Redis: hand-calculated windows, redelivered event, TTL, rerun, replay). Verified for the skip-rate spec by unit tests and Redis integration tests. The two original features still use hand-written stores and materializers |
-| `online.ttl` as a Redis expiry | Verified for the spec-driven store: set by written updates, not extended by unchanged or stale updates, measured in wall-clock time. The hand-written stores write without expiry |
-| `WATCH` retry of the spec-driven store | Verified with a mocked pipeline only. **Not verified** with a real concurrent writer |
+| Spec-driven store and materializer for count and ratio specs | Verified end to end for `content_play_count_1h` (events to Redis: hand-calculated windows, redelivered event, TTL, rerun, replay). Verified for the skip-rate spec by unit tests and Redis integration tests. The two original features run on the same code through thin wrappers |
+| `online.ttl` as a Redis expiry | Verified for the spec-driven store: set by written updates, not extended by unchanged or stale updates, measured in wall-clock time. The two original features get the same expiry through their wrappers |
+| `WATCH` retry of the spec-driven store | Verified with a mocked pipeline and, through the two wrappers, with a real concurrent writer on Redis |
 | `window_replace` store policy and Spark features from a spec | **Not implemented** |
 
 Fresh bounded reprocessing is not recovery. Cancelling a test job during cleanup
@@ -485,12 +486,11 @@ three streaming features. Unified batch and stream online access covers the play
 count. All three features run on one generic spec-driven Flink job. A
 spec-driven store and materializer serve count and ratio features, and a
 feature defined by a YAML spec alone (`content_play_count_1h`) is proven from
-events to Redis. The two original features still use hand-written stores and
-materializers, and Spark features are not spec-driven.
+events to Redis. The stores and materializers of the two original features are thin wrappers
+over the spec-driven ones, and Spark features are not spec-driven.
 
 Remaining before the streaming phase can be called complete: JobManager-failure
-recovery verification, verification at the production TTL values, thin wrappers
-for the hand-written stores and materializers, versioned streaming history, skip-rate access through the
+recovery verification, verification at the production TTL values, versioned streaming history, skip-rate access through the
 unified client and a reproducible completion demonstration. These must be
 completed or explicitly scoped. For current test and CI results see the README
 badge and the Actions page, not this document.

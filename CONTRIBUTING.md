@@ -170,7 +170,8 @@ flowchart TD
   implements `append_only` and `componentwise_monotonic`. A policy outside
   these, such as `window_replace`, needs a store implementation and an ADR.
 - `online.ttl` is a Redis expiry that the spec-driven store sets with every
-  written update. Unchanged and stale updates must not extend it.
+  written update, for all three streaming features (the wrappers delegate to
+  it). Unchanged and stale updates must not extend it.
 - Keys of a spec-driven feature are
   `featureforge-stream:online:v{spec.version}:{spec.name}:{entity}`. A new spec
   version opens a new namespace.
@@ -187,8 +188,10 @@ flowchart TD
   feature with one entity key needs no store or materializer code: the
   spec-driven store and `materialize_spec` serve it (ADR-009), and an
   end-to-end test like `test_content_play_count_end_to_end.py` proves it. The
-  hand-written stores of the two original features remain until they become
-  thin wrappers.
+  stores and materializers of the two original features are thin wrappers over
+  that code and keep their typed models and command lines. The wrappers load
+  `feature_repo/specs/user_play_count_1h.yaml` and `user_skip_rate_24h.yaml`
+  relative to the source tree, so those files must stay where they are.
 - A spec must pass `python -m featureforge.cli validate-spec` before anything runs it.
   Do not weaken the model validation or the event-field check to make a spec
   pass. Fix the spec.
