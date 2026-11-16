@@ -291,10 +291,12 @@ flowchart LR
 ## 5. Serving
 
 `OnlineFeatureClient` reads batch features (via Feast) and streaming features
-(via the Redis streaming store) through one interface. Every value carries its
+(play count and skip rate, via the Redis streaming store) through one
+interface. Every value carries its
 backend, availability, observation time, age and freshness class.
 
-- A missing value is never converted to `0`.
+- A missing value is never converted to `0`. An expired streaming key reads as
+  missing.
 - Availability and freshness are separate dimensions.
 - Multi-feature reads are explicitly reported as non-atomic.
 - Exit codes of `python -m featureforge.online`: `0` success including explicit
@@ -375,8 +377,6 @@ rollback. Scope and order: [STATUS.md](STATUS.md) and
   guarded Redis writes, not from end-to-end exactly-once.
 - Streaming history and point-in-time retrieval of streaming features are not
   implemented. The time model for them is decided in ADR-010.
-- The event-identity conflict failure is tested for the play count only. The
-  skip-rate spec runs the same code path.
 - The spec-driven store is proven end to end from events to Redis by its own
   test for `content_play_count_1h`. The two original features run on the same
   code through their wrappers and are covered by their joined tests and Redis

@@ -411,7 +411,7 @@ replay cannot undo the stored state.
 | Online stores | `online_store.py`, `skip_rate_store.py` | The two original features. Thin wrappers over `RedisSpecStore` that keep the typed models and constructors. Guarded Redis writes with `online.ttl` expiry |
 | Spec-driven materializer | `src/featureforge/streaming/materialize_spec.py` | Any count or ratio spec. Topic derived from the spec, records validated against the spec, same guarantees as the original materializers |
 | Spec-driven store | `src/featureforge/streaming/spec_store.py`, `contracts/feature_record.py`, `contracts/count_vector.py` | Any count or ratio spec with one entity key. Guarded writes with `WATCH`/`MULTI`, `append_only` and `componentwise_monotonic`, `online.ttl` as Redis expiry |
-| Unified access | `src/featureforge/online.py` | Batch features and streaming play count |
+| Unified access | `src/featureforge/online.py` | Batch features, streaming play count and skip rate. The skip-rate reader is optional in the constructor and always set by `from_local` |
 | Feature specs | `src/featureforge/spec/`, `feature_repo/specs/` | Drive the generic Flink job for all three features |
 
 All three features run on the generic job and share watermark delay (10 min),
@@ -427,7 +427,7 @@ describes rejection under an ordering policy and is distinct from the read
 interface's freshness class. The spec-driven store applies the same ordering to
 any count vector and adds the TTL.
 
-Skip-rate access through the unified interface is not yet implemented.
+The unified interface reads the skip rate next to the play count. A missing key, including an expired one, is reported as missing, never as zero.
 
 ---
 
@@ -488,14 +488,13 @@ event-time windows, bounded replay idempotency, identity-conflict detection,
 guarded Redis materialization, rejected-event routing, continuous late
 correction, savepoint stop and resume, recovery from a TaskManager crash, dedupe expiry after a shortened TTL, and
 three streaming features. Unified batch and stream online access covers the play
-count. All three features run on one generic spec-driven Flink job. A
+count and the skip rate. All three features run on one generic spec-driven Flink job. A
 spec-driven store and materializer serve count and ratio features, and a
 feature defined by a YAML spec alone (`content_play_count_1h`) is proven from
 events to Redis. The stores and materializers of the two original features are thin wrappers
 over the spec-driven ones, and Spark features are not spec-driven.
 
 Remaining before the streaming phase can be called complete: JobManager-failure
-recovery verification, verification at the production TTL values, versioned streaming history, skip-rate access through the
-unified client and a reproducible completion demonstration. These must be
+recovery verification, verification at the production TTL values, versioned streaming history and a reproducible completion demonstration. These must be
 completed or explicitly scoped. For current test and CI results see the README
 badge and the Actions page, not this document.

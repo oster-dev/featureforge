@@ -46,6 +46,7 @@ BATCH_FEATURES = {
 }
 
 STREAM_FEATURE = "user_play_count_1h"
+SKIP_RATE_FEATURE = "user_skip_rate_24h"
 
 FeastReader = Callable[[str, Mapping[str, str]], Mapping[str, Any]]
 StreamReader = Callable[[str], Any]
@@ -178,9 +179,11 @@ class OnlineFeatureClient:
         *,
         feast_reader: FeastReader,
         stream_reader: StreamReader,
+        skip_rate_reader: StreamReader | None = None,
     ) -> None:
         self._feast_reader = feast_reader
         self._stream_reader = stream_reader
+        self._skip_rate_reader = skip_rate_reader
 
     @classmethod
     def from_local(
@@ -189,6 +192,7 @@ class OnlineFeatureClient:
         repo_path: Path,
         redis_url: str,
         stream_key_prefix: str = "featureforge-stream:online:v1:user_play_count_1h",
+        skip_rate_key_prefix: str | None = None,
     ) -> OnlineFeatureClient:
         """Build lazy adapters; each read owns its backend connection lifetime."""
 
@@ -221,7 +225,28 @@ class OnlineFeatureClient:
                 )
                 return store.read(user_id)
 
-        return cls(feast_reader=read_feast, stream_reader=read_stream)
+        def read_skip_rate(user_id: str) -> Any:
+            from redis import Redis
+
+            from featureforge.streaming.skip_rate_store import RedisUserSkipRateStore
+
+            with Redis.from_url(
+                redis_url,
+                decode_responses=True,
+                socket_connect_timeout=3,
+                socket_timeout=3,
+            ) as redis_client:
+                store = RedisUserSkipRateStore(
+                    redis_client,
+                    key_prefix=skip_rate_key_prefix,
+                )
+                return store.read(user_id)
+
+        return cls(
+            feast_reader=read_feast,
+            stream_reader=read_stream,
+            skip_rate_reader=read_skip_rate,
+        )
 
     def _read_batch(
         self,
@@ -289,15 +314,19 @@ class OnlineFeatureClient:
 
     def _read_stream(
         self,
+        *,
+        reader: StreamReader,
+        name: str,
+        extract: Callable[[Any], FeatureValue],
         user_id: str,
         reference_time: datetime,
         max_age: timedelta,
     ) -> OnlineFeature:
         try:
-            feature = self._stream_reader(user_id)
+            feature = reader(user_id)
             if feature is None:
                 return OnlineFeature(
-                    name=STREAM_FEATURE,
+                    name=name,
                     entity_id=user_id,
                     backend="streaming_redis",
                     value=None,
@@ -308,10 +337,10 @@ class OnlineFeatureClient:
                 raise ValueError("Streaming feature entity does not match request.")
 
             return _present_feature(
-                name=STREAM_FEATURE,
+                name=name,
                 entity_id=user_id,
                 backend="streaming_redis",
-                value=feature.play_count,
+                value=extract(feature),
                 observation_time=feature.observation_time,
                 reference_time=reference_time,
                 max_age=max_age,
@@ -319,7 +348,7 @@ class OnlineFeatureClient:
             )
         except Exception as error:
             return OnlineFeature(
-                name=STREAM_FEATURE,
+                name=name,
                 entity_id=user_id,
                 backend="streaming_redis",
                 value=None,
@@ -352,7 +381,27 @@ class OnlineFeatureClient:
             features.extend(
                 self._read_batch("user_engagement", user_id, reference_time, batch_max_age)
             )
-            features.append(self._read_stream(user_id, reference_time, stream_max_age))
+            features.append(
+                self._read_stream(
+                    reader=self._stream_reader,
+                    name=STREAM_FEATURE,
+                    extract=lambda feature: feature.play_count,
+                    user_id=user_id,
+                    reference_time=reference_time,
+                    max_age=stream_max_age,
+                )
+            )
+            if self._skip_rate_reader is not None:
+                features.append(
+                    self._read_stream(
+                        reader=self._skip_rate_reader,
+                        name=SKIP_RATE_FEATURE,
+                        extract=lambda feature: feature.skip_rate,
+                        user_id=user_id,
+                        reference_time=reference_time,
+                        max_age=stream_max_age,
+                    )
+                )
         if content_id is not None:
             features.extend(
                 self._read_batch("content_popularity", content_id, reference_time, batch_max_age)
@@ -374,6 +423,7 @@ def main() -> int:
         "--stream-key-prefix",
         default="featureforge-stream:online:v1:user_play_count_1h",
     )
+    parser.add_argument("--skip-rate-key-prefix")
     parser.add_argument("--reference-time", type=datetime.fromisoformat)
     parser.add_argument("--batch-max-age-seconds", type=int, required=True)
     parser.add_argument("--stream-max-age-seconds", type=int, required=True)
@@ -383,6 +433,7 @@ def main() -> int:
         repo_path=args.repo,
         redis_url=args.redis_url,
         stream_key_prefix=args.stream_key_prefix,
+        skip_rate_key_prefix=args.skip_rate_key_prefix,
     )
     try:
         response = client.get_online_features(
