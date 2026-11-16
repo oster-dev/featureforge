@@ -222,7 +222,7 @@ Details, open items, and known limitations: **[STATUS.md](STATUS.md)**.
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Component design and data flow |
 | [docs/REFERENCE.md](docs/REFERENCE.md) | Full technical reference: contracts, semantics, CLI, CI details |
 | [docs/PLATFORM_BLUEPRINT.md](docs/PLATFORM_BLUEPRINT.md) | Target platform design |
-| [docs/adr/](docs/adr/) | Architecture decision records (ADR-001 to ADR-009) |
+| [docs/adr/](docs/adr/) | Architecture decision records (ADR-001 to ADR-010) |
 | [docs/streaming-migration.md](docs/streaming-migration.md) | Streaming provenance and verification boundaries |
 | [docs/demo.md](docs/demo.md) | Reviewer walkthrough |
 | [docs/runbooks/](docs/runbooks/) | Stale features, failed backfill, failed materialization |
