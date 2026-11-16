@@ -378,8 +378,8 @@ rollback. Scope and order: [STATUS.md](STATUS.md) and
 - Streaming history and point-in-time retrieval of streaming features are not
   implemented. The time model is decided in ADR-010 and the table layout in
   ADR-011. The history table and an idempotent append exist in
-  `src/featureforge/streaming/history.py`, but the materializer does not call
-  them yet.
+  `src/featureforge/streaming/history.py`, and `materialize_spec` appends
+  evidence when `--history-root` is set. There is no published-as-of read yet.
 - The spec-driven store is proven end to end from events to Redis by its own
   test for `content_play_count_1h`. The two original features run on the same
   code through their wrappers and are covered by their joined tests and Redis

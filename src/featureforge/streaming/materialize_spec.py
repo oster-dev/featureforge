@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 from collections import Counter
+from datetime import UTC, datetime
 from pathlib import Path
 
 from confluent_kafka import Consumer, KafkaException, TopicPartition
@@ -12,6 +13,7 @@ from redis import Redis
 from featureforge.spec.loader import load_spec
 from featureforge.spec.model import FeatureSpec
 from featureforge.streaming.contracts.feature_record import parse_feature_record
+from featureforge.streaming.history import Evidence, HistoryTable, open_local_catalog
 from featureforge.streaming.spec_store import RedisSpecStore
 
 LOGGER = logging.getLogger(__name__)
@@ -20,6 +22,14 @@ LOGGER = logging.getLogger(__name__)
 def default_topic(spec: FeatureSpec) -> str:
     """Return the feature topic name derived from the spec."""
     return f"features.{spec.name.replace('_', '-')}.v{spec.version}"
+
+
+def open_history(arguments: argparse.Namespace, spec: FeatureSpec) -> HistoryTable | None:
+    """Open the history table when --history-root is set (ADR-011), else record no evidence."""
+    root = getattr(arguments, "history_root", None)
+    if root is None:
+        return None
+    return HistoryTable(open_local_catalog(Path(root)), spec)
 
 
 def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
@@ -34,6 +44,12 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--key-prefix", default=None)
     parser.add_argument("--commit-every", type=int, default=1000)
     parser.add_argument("--bounded", action="store_true")
+    parser.add_argument(
+        "--history-root",
+        type=Path,
+        default=None,
+        help="Directory of the local Iceberg history catalog. Omit to record no evidence.",
+    )
     return parser.parse_args(argv)
 
 
@@ -58,6 +74,21 @@ def commit_offset(
             raise KafkaException(committed.error)
 
 
+def settle(
+    consumer: Consumer,
+    partition: TopicPartition,
+    next_offset: int,
+    history: HistoryTable | None,
+    pending: list[Evidence],
+) -> None:
+    """Append the pending evidence, then commit the offset (failure order of ADR-010)."""
+    if history is not None and pending:
+        added = history.append(pending)
+        LOGGER.info("History: %s of %s evidence rows added", added, len(pending))
+        pending.clear()
+    commit_offset(consumer, partition, next_offset)
+
+
 def materialize(arguments: argparse.Namespace, spec: FeatureSpec) -> Counter:
     if arguments.commit_every < 1:
         raise ValueError("--commit-every must be positive")
@@ -79,6 +110,8 @@ def materialize(arguments: argparse.Namespace, spec: FeatureSpec) -> Counter:
             spec,
             key_prefix=arguments.key_prefix,
         )
+        history = open_history(arguments, spec)
+        pending: list[Evidence] = []
 
         consumer = Consumer(
             {
@@ -171,7 +204,10 @@ def materialize(arguments: argparse.Namespace, spec: FeatureSpec) -> Counter:
                         raise ValueError("Feature tombstones are not supported")
 
                     record = parse_feature_record(payload, spec)
-                    results[store.write(record)] += 1
+                    outcome = store.write(record)
+                    results[outcome] += 1
+                    if history is not None and outcome != "stale":
+                        pending.append(Evidence(record=record, published_at=datetime.now(UTC)))
                 except Exception:
                     LOGGER.exception(
                         "Materialization failed at partition=%s offset=%s",
@@ -184,14 +220,14 @@ def materialize(arguments: argparse.Namespace, spec: FeatureSpec) -> Counter:
                 since_commit += 1
 
                 if since_commit >= arguments.commit_every:
-                    commit_offset(consumer, partition, last_offset + 1)
+                    settle(consumer, partition, last_offset + 1, history, pending)
                     since_commit = 0
 
                 if arguments.bounded and last_offset + 1 >= high:
                     break
 
             if since_commit:
-                commit_offset(consumer, partition, last_offset + 1)
+                settle(consumer, partition, last_offset + 1, history, pending)
 
             return results
         finally:
