@@ -44,7 +44,7 @@ Related: [README](README.md) · [Architecture](ARCHITECTURE.md) ·
 | Item | State |
 |---|---|
 | WP1: declarative spec and generic engine | Stages 1 to 3 delivered for both features. Stage 4 delivered except JobManager failure and the thin wrappers for the hand-written stores and materializers of the two original features: every integration test runs on the generic job, the hand-written jobs are deleted, and a spec-driven store and materializer exist. Stages 5 and 6 below. |
-| Streaming history and published-as-of retrieval (WP2) | Not started. The time model is decided in [ADR-010](docs/adr/ADR-010-time-and-availability-model.md) (Proposed): availability is `published_at` of the online sink, assigned by the materializer after a `written` result. No `published_at` exists in code yet. |
+| Streaming history and published-as-of retrieval (WP2) | Not started. The time model is decided in [ADR-010](docs/adr/ADR-010-time-and-availability-model.md) (Accepted): availability is `published_at` of the online sink, assigned by the materializer after a `written` result. No `published_at` exists in code yet. |
 
 ### WP1 stages
 
@@ -84,7 +84,7 @@ workflow (Metaflow, MLflow, registry, rollback).
 | The spec-driven path is proven end to end for `content_play_count_1h` only, and its `WATCH` retry is tested with a mocked pipeline | `user_play_count_1h` and `user_skip_rate_24h` use their hand-written stores in the joined tests. The spec-driven store is covered for the skip-rate spec by unit tests and Redis integration tests. No test runs a real concurrent writer against it. |
 | The Flink image installs `pydantic` and `PyYAML` explicitly | Any new runtime dependency of the job path must be added to `docker/flink/Dockerfile`. The image build checks the project imports. |
 | `online.ttl` is enforced by the spec-driven store only | The hand-written stores of the two original features still write keys without expiry. The expiry runs in wall-clock time from the last accepted write, so a replayed historical value lives for `online.ttl` from the time of the write. |
-| Published-as-of retrieval is decided but not implemented | ADR-010 is Proposed. No publication evidence is recorded and no `published_at` exists. The hand-written stores of the two original features write without expiry and without evidence, so they cannot take part until the thin wrappers exist. |
+| Published-as-of retrieval is decided but not implemented | ADR-010 is Accepted. No publication evidence is recorded and no `published_at` exists. The hand-written stores of the two original features write without expiry and without evidence, so they cannot take part until the thin wrappers exist. |
 | `window_replace` update policy has no store | Non-count operators cannot be served online yet. |
 | `approx_distinct` is exact in the reference | The accepted error bound of an engine implementation is not defined yet. |
 | Unified client does not read `user_skip_rate_24h` | Skip rate is verified through its own pipeline tests. |

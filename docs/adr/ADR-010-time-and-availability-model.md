@@ -1,6 +1,6 @@
 # ADR-010 Time and availability model for streaming history
 
-- Status: Proposed. Decides the time model of WP2. Nothing is implemented, and no `published_at` is fabricated.
+- Status: Accepted. Decides the time model of WP2. Nothing is implemented, and no `published_at` is fabricated.
 - Date: 2026-11-16
 - Author: Nico Ostermann
 - Deciders: Nico Ostermann

@@ -371,7 +371,7 @@ rollback. Scope and order: [STATUS.md](STATUS.md) and
 - Flink Kafka sinks use `AT_LEAST_ONCE`. Idempotency comes from dedupe and
   guarded Redis writes, not from end-to-end exactly-once.
 - Streaming history and point-in-time retrieval of streaming features are not
-  implemented. The time model for them is proposed in ADR-010.
+  implemented. The time model for them is decided in ADR-010.
 - The event-identity conflict failure is tested for the play count only. The
   skip-rate spec runs the same code path.
 - The spec-driven store is proven end to end for `content_play_count_1h` only,
@@ -393,7 +393,7 @@ rollback. Scope and order: [STATUS.md](STATUS.md) and
 | 007 | User skip rate 24h integration |
 | 008 | Declarative feature specification |
 | 009 | Spec-driven online stores and materializer |
-| 010 | Time and availability model for streaming history (proposed) |
+| 010 | Time and availability model for streaming history |
 
 ## Principles
 
