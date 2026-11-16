@@ -39,6 +39,8 @@ flowchart LR
     D14 --> D15[ADR-009<br/>spec-driven<br/>online stores]:::dev
     D15 --> D16[Stage 4k<br/>spec-driven store<br/>and materializer]:::dev
     D16 --> D17[Stage 6b<br/>YAML-only feature<br/>from events to Redis]:::dev
+    D17 --> D18[ADR-010<br/>time and availability<br/>model]:::dev
+    D18 --> D19[Stage 4l<br/>thin wrappers for the<br/>original features]:::dev
 
     classDef imp fill:#cfe2ff,stroke:#0d6efd,color:#000
     classDef dev fill:#d4edda,stroke:#28a745,color:#000
@@ -79,6 +81,9 @@ inside FeatureForge.
 | Stage 4k (PR #37) | `d42230f` | Feature record parser and spec-driven Redis store with `online.ttl` expiry |
 | Stage 4k (PR #38) | `9711627` | Spec-driven Kafka-to-Redis materializer |
 | Stage 6b (PR #39) | `7513240` | `content_play_count_1h` runs from events to Redis through the validation job, the generic job, the spec-driven materializer and store, without a new Python file |
+| PR #40 | `764f779` | The spec-driven online path is recorded across README, STATUS and the design documents |
+| PR #42 | `a02a378` | ADR-010: time and availability model of the streaming features |
+| Stage 4l (PR #43) | `a780341` | The stores and materializers of the two original features are thin wrappers over the spec-driven store and materializer, `online.ttl` now applies to all three features, ADR-010 accepted |
 
 ---
 
