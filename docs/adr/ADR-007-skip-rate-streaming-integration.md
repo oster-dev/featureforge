@@ -12,7 +12,9 @@
 > watermark, lateness, deduplication, conflict handling and output records are
 > the same, and the same integration tests verify them on the generic job. The
 > Redis update policy, the materializer and the guarded store described here
-> are unchanged and still hand-written. The hand-written job is preserved in
+> are unchanged in behavior, and since 2026-11-16 the store and the materializer
+> are thin wrappers over the spec-driven code (ADR-009). The hand-written job is
+> preserved in
 > the tag `hand-written-jobs-final`. The verification results below record the
 > state of 2026-11-11.
 

@@ -41,7 +41,7 @@ Goal: a stream feature can be retrieved as it was visible to serving at a given 
 - Positive: the history can hold several versions per entity and `observation_time`, keyed by update identity and `published_at`.
 - Positive: published-as-of retrieval never reports a value earlier than serving had it. The failure direction is late, not early.
 - Positive: the Flink job, the feature record and the Redis value format stay unchanged.
-- Negative: only the spec-driven store records evidence. The hand-written stores of `user_play_count_1h` and `user_skip_rate_24h` write without expiry and without evidence. They qualify after the thin wrappers (open item of WP1).
+- Negative: the evidence is recorded in the spec-driven store path only. The stores of `user_play_count_1h` and `user_skip_rate_24h` are thin wrappers over it (ADR-009), so all three streaming features qualify. Their keys have an expiry only since the wrappers, and no history exists from before that.
 - Negative: `published_at` is one materializer clock reading. Clock skew between several materializer processes is not handled. Topics are single-partition today.
 - Negative: after a crash between Redis and the history append, `published_at` is later than the real publication. Training sees such a value later than serving did, never earlier.
 - Negative: the offline uniqueness checks (`unique_entity_observation_time`) do not apply to the streaming history. It needs its own contract.

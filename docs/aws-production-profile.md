@@ -166,7 +166,8 @@ local and CI online store.
 > A DynamoDB implementation **must pass the same contract tests**: the unit
 > tests of the decision function, the Redis integration tests of the
 > spec-driven store (correction policy, TTL) and a concurrent-writer test. A
-> real concurrent-writer test exists only for the hand-written stores today.
+> real concurrent-writer test runs against Redis through the stores of the two
+> original features today (they delegate to the spec-driven store).
 > Until a DynamoDB store passes them, the Redis guarantees do not apply to it.
 
 > **TTL caveat.** `online.ttl` is a Redis expiry: an expired key reads as

@@ -39,7 +39,7 @@ flowchart LR
 | Retrieval and materialization | Feast, point-in-time joins |
 | Streaming | Kafka, Flink (PyFlink), Pydantic contracts |
 | Feature definitions as data | YAML specs, Pydantic validation, exact reference, one generic Flink job for all spec-defined streaming features |
-| Online store | Redis. A spec-driven store and materializer for count and ratio specs, hand-written stores for the two original features |
+| Online store | Redis. One spec-driven store and materializer for count and ratio specs. The two original features keep their typed models and command lines as thin wrappers over it |
 | Quality | pytest, Ruff, four CI layers |
 
 ---
@@ -160,9 +160,9 @@ It never blocks the valid events behind it.
 
 ### Online write policies
 
-The update policy is part of the spec (`online.update_policy`). The two
-original features have hand-written stores. The spec-driven store implements
-the same ordering for any count or ratio spec.
+The update policy is part of the spec (`online.update_policy`). The stores of
+the two original features are thin wrappers over the spec-driven store, which
+implements the ordering for any count or ratio spec.
 
 ```mermaid
 flowchart TD
@@ -173,7 +173,7 @@ flowchart TD
     SAME -->|identical| NOOP[Leave unchanged]
     SAME -->|increase| ACCEPT[Accept correction]
     SAME -->|decrease| DISCARD
-    SAME -->|incomparable| ERR[UpdateConflictError<br/>SkipRateUpdateConflictError in the hand-written store]
+    SAME -->|incomparable| ERR[UpdateConflictError<br/>SkipRateUpdateConflictError in the skip-rate wrapper]
 ```
 
 - **Play count** is append-only. Within one window the count may only grow.
@@ -187,7 +187,8 @@ flowchart TD
 - **TTL.** The spec-driven store sets `online.ttl` as a Redis expiry with every
   written update. The expiry runs in wall-clock time from the last accepted
   write, and unchanged or stale updates do not extend it. An expired key reads
-  as missing, never as zero. The hand-written stores write keys without expiry.
+  as missing, never as zero. The wrappers of the two original features use the
+  same store, so their keys expire too.
 - **Keys.** `featureforge-stream:online:v{spec.version}:{spec.name}:{entity}`,
   identical to the keys of the two original features. A new spec version opens a
   new namespace.
@@ -278,10 +279,12 @@ flowchart LR
   `content_play_count_1h` the whole path from events to Redis is covered by an
   end-to-end test with hand-calculated windows, a redelivered event, the TTL, an
   idempotent rerun and a replay that cannot undo the stored state (ADR-009).
-- **Still hand-written.** The stores and materializers of the two original
-  features, until they become thin wrappers. `offline.store` in the specs is
-  declarative only: no Iceberg store exists. `online.ttl` is enforced by the
-  spec-driven store only.
+- **Thin wrappers.** The stores and materializers of the two original features
+  (`online_store.py`, `skip_rate_store.py`, `materialize.py`,
+  `materialize_skip_rate.py`) keep their typed models, constructors and command
+  lines and delegate to the spec-driven store and materializer. They load their
+  spec from `feature_repo/specs/` next to the source tree. `offline.store` in
+  the specs is declarative only: no Iceberg store exists.
 
 ---
 
@@ -374,10 +377,11 @@ rollback. Scope and order: [STATUS.md](STATUS.md) and
   implemented. The time model for them is decided in ADR-010.
 - The event-identity conflict failure is tested for the play count only. The
   skip-rate spec runs the same code path.
-- The spec-driven store is proven end to end for `content_play_count_1h` only,
-  and its `WATCH` retry is tested with a mocked pipeline, not with a real
-  concurrent writer. The two original features still use hand-written stores
-  that write keys without expiry.
+- The spec-driven store is proven end to end from events to Redis by its own
+  test for `content_play_count_1h`. The two original features run on the same
+  code through their wrappers and are covered by their joined tests and Redis
+  integration tests, including a real concurrent writer. Wrappers locate their
+  spec relative to the source tree and need a repository checkout.
 - The TaskManager instability seen in CI is isolated, not explained.
 
 ## Decisions

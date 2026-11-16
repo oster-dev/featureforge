@@ -123,7 +123,7 @@ language is bounded on purpose, see [ADR-008](docs/adr/ADR-008-feature-spec-desi
 The generic job is the only implementation of both streaming features. It is
 verified on the golden fixtures, late corrections, replay, the Redis path, a
 savepoint stop and resume, and recovery from a TaskManager crash. The Redis
-store policies and the materializers of the two original features are still written by hand. A spec-driven store and materializer serve a YAML-only feature end to end. See
+stores and materializers of the two original features are thin wrappers over the spec-driven store and materializer, which also serve a YAML-only feature end to end. See
 [STATUS.md](STATUS.md) for what is not yet proven.
 
 ### Online access
@@ -198,7 +198,7 @@ Expected output, troubleshooting, and cleanup: [Demo Guide](docs/demo.md).
 
 All three streaming features are defined as specs in
 [`feature_repo/specs/`](feature_repo/specs/) and computed by one generic Flink job.
-The first two use hand-written materializers and Redis stores. `content_play_count_1h` uses the spec-driven store and materializer.
+All three use the spec-driven store and materializer. The first two keep their typed models and command lines as thin wrappers over it.
 
 ---
 
@@ -207,7 +207,7 @@ The first two use hand-written materializers and Redis stores. `content_play_cou
 | Phase | Status |
 |---|---|
 | 1 · Feature store foundation | **Released** as [v0.1.0](https://github.com/oster-dev/featureforge/releases/tag/v0.1.0) |
-| 2 · Streaming feature platform | **Core delivered.** Declarative feature specs: spec model, reference and one generic Flink job running both streaming features are done, including savepoint resume and recovery from a TaskManager crash. A spec-driven Redis store and materializer serve a YAML-only feature end to end. Open: JobManager failure, thin wrappers for the hand-written stores, streaming history, and the final demo |
+| 2 · Streaming feature platform | **Core delivered.** Declarative feature specs: spec model, reference and one generic Flink job running both streaming features are done, including savepoint resume and recovery from a TaskManager crash. A spec-driven Redis store and materializer serve a YAML-only feature end to end. Open: JobManager failure, streaming history, and the final demo |
 | 3 · End-to-end ML workflow | **Planned** |
 
 Details, open items, and known limitations: **[STATUS.md](STATUS.md)**.
