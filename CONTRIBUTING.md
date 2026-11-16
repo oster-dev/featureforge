@@ -77,7 +77,7 @@ unformatted. CI fails on both checks, and it is the cheapest failure to avoid.
 | Batch features, backfill, Spark | `pytest tests/unit/test_spark_features.py tests/unit/test_spark_parquet_features.py` |
 | Feast, materialization, online serving | `docker compose up -d`, `feast apply`, then `pytest tests/integration/test_online_serving.py tests/integration/test_unified_online.py` |
 | Redis store policies | `pytest -m integration tests/integration/test_streaming_redis_online_store*.py tests/integration/test_redis_skip_rate_store.py` |
-| The spec-driven store, record parser, decision function or materializer (`spec_store.py`, `contracts/feature_record.py`, `contracts/count_vector.py`, `materialize_spec.py`) | `pytest tests/unit/test_count_vector_update.py tests/unit/test_feature_record.py tests/unit/test_spec_store.py tests/unit/test_materialize_spec.py`, then `docker compose up -d kafka redis` and `pytest -m integration tests/integration/test_spec_store_redis.py tests/integration/test_materialize_spec_kafka_to_redis.py`. A change to the end-to-end path also needs `tests/integration/test_content_play_count_end_to_end.py` on the full stack |
+| The spec-driven store, record parser, decision function or materializer (`spec_store.py`, `contracts/feature_record.py`, `contracts/count_vector.py`, `materialize_spec.py`) | `pytest tests/unit/test_count_vector_update.py tests/unit/test_feature_record.py tests/unit/test_spec_store.py tests/unit/test_materialize_spec.py tests/unit/test_materialize_spec_history.py`, then `docker compose up -d kafka redis` and `pytest -m integration tests/integration/test_spec_store_redis.py tests/integration/test_materialize_spec_kafka_to_redis.py tests/integration/test_materialize_spec_history.py`. A change to the end-to-end path also needs `tests/integration/test_content_play_count_end_to_end.py` on the full stack |
 | A feature spec, the spec model, reference or job plan | `python -m featureforge.cli validate-spec`, then `pytest tests/unit/test_spec_model.py tests/unit/test_spec_reference.py tests/unit/test_spec_golden_parity.py tests/unit/test_spec_flink_plan.py` |
 | The generic Flink job (`jobs/feature_from_spec.py`), `src/`, `docker/flink/Dockerfile`, or `docker-compose.yml` | `docker compose up -d --build`, then the full streaming selection below: the generic job is the only implementation of both streaming features |
 | Flink jobs, contracts, routing, materializers, savepoint or crash recovery | The full streaming selection below |
@@ -101,6 +101,7 @@ pytest -v -ra -m integration \
   tests/integration/test_redis_skip_rate_store.py \
   tests/integration/test_spec_store_redis.py \
   tests/integration/test_materialize_spec_kafka_to_redis.py \
+  tests/integration/test_materialize_spec_history.py \
   tests/integration/test_content_play_count_end_to_end.py
 ```
 
