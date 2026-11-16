@@ -213,6 +213,10 @@ class HistoryTable:
     def table(self):
         return self._table
 
+    @property
+    def spec(self) -> FeatureSpec:
+        return self._spec
+
     def append(self, evidence: Sequence[Evidence]) -> int:
         """Append the evidence that the table does not hold yet. Return the rows added."""
         rows: dict[str, dict] = {}

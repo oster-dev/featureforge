@@ -375,11 +375,12 @@ rollback. Scope and order: [STATUS.md](STATUS.md) and
   48 h, multi-partition Kafka.
 - Flink Kafka sinks use `AT_LEAST_ONCE`. Idempotency comes from dedupe and
   guarded Redis writes, not from end-to-end exactly-once.
-- Streaming history and point-in-time retrieval of streaming features are not
-  implemented. The time model is decided in ADR-010 and the table layout in
+- Streaming history and point-in-time retrieval of streaming features are only
+  partly implemented. The time model is decided in ADR-010 and the table layout in
   ADR-011. The history table and an idempotent append exist in
   `src/featureforge/streaming/history.py`, and `materialize_spec` appends
-  evidence when `--history-root` is set. There is no published-as-of read yet.
+  evidence when `--history-root` is set. `published_as_of` reads the history by
+  the rule of ADR-010. There is no training dataset API yet.
 - The spec-driven store is proven end to end from events to Redis by its own
   test for `content_play_count_1h`. The two original features run on the same
   code through their wrappers and are covered by their joined tests and Redis
