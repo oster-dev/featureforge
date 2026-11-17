@@ -49,6 +49,9 @@ dev = [
   "pytest-cov>=5.0,<7.0",
   "ruff>=0.6,<1.0",
   "pre-commit>=3.8,<5.0",
+  "mypy>=1.13,<3.0",
+  "types-PyYAML>=6.0,<7.0",
+  "pandas-stubs>=2.2",
 ]
 
 feature-store = [
@@ -64,6 +67,13 @@ streaming = [
   "redis>=4.2.2,<6",
   "pyiceberg[pyarrow,sql-sqlite,sql-postgres,pyiceberg-core]>=0.12,<0.13",
 ]
+
+[tool.mypy]
+files = ["src"]
+
+[[tool.mypy.overrides]]
+module = ["pyarrow", "pyarrow.*"]
+ignore_missing_imports = true
 
 [tool.setuptools.packages.find]
 where = ["src"]
