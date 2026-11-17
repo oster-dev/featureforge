@@ -32,7 +32,7 @@ Goal: record publication evidence for every accepted online update so that ADR-0
 | Partitioning | `day(published_at)`. Published-as-of queries filter on `published_at`. Entity-based partitions are rejected. |
 | Schema check | If the schema derived from the spec differs from the existing table, the materializer fails with a clear error. It never alters a schema silently. |
 | Spec versions | A new spec version writes to the same table with its own `spec_version` value. A spec change that alters the column set needs a new table name. |
-| Backfill | A backfill never writes to this table (ADR-010). |
+| Backfill | A backfill never writes to this table (ADR-010). `featureforge.spec.spark_backfill` has no access to it, and a test shows that a backfill leaves snapshot, rows and files unchanged. |
 
 ## Consequences
 
@@ -60,6 +60,7 @@ The table, the update identity and the idempotent append are implemented and tes
 - A duplicate update identity, in the table or in one batch, adds no row.
 - A schema derived from a changed spec fails loudly against the existing table.
 - `published_at` of a replayed `unchanged` record is later than the original, never earlier.
+- A Spark backfill leaves the snapshot, the rows and the warehouse files of the history table unchanged (`tests/unit/test_spec_spark_backfill.py`).
 
 ## Open items
 
