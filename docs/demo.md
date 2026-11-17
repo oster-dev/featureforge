@@ -256,6 +256,38 @@ that agreement on randomized inputs placed exactly on window boundaries:
 pytest -v tests/unit/test_spec_reference.py
 ```
 
+The `backfill-spec` command evaluates a spec for many entities and observation
+times at once with Spark and writes the values as Parquet. It needs the `spark`
+extra, supports count aggregations only and never overwrites an existing
+output. The observations are a JSONL file with the spec keys and
+`observation_time`:
+
+```bash
+printf '%s\n' \
+  '{"user_id": "user_000001", "observation_time": "2026-01-01T11:30:00+00:00"}' \
+  '{"user_id": "user_unknown", "observation_time": "2026-01-01T11:30:00+00:00"}' \
+  > /tmp/backfill_observations.jsonl
+rm -rf /tmp/backfill_demo
+python -m featureforge.cli backfill-spec feature_repo/specs/user_play_count_1h.yaml \
+  --events fixtures/streaming/user_play_count_1h_v1.jsonl \
+  --observations /tmp/backfill_observations.jsonl \
+  --output /tmp/backfill_demo
+python -c "import pandas as pd; print(pd.read_parquet('/tmp/backfill_demo').sort_values('user_id')[['user_id', 'play_count']].to_string(index=False))"
+```
+
+The command prints `✓ user_play_count_1h: 2 rows written to /tmp/backfill_demo` and
+exits with `0`. The result has one row per observation: `play_count` is 3 for
+`user_000001` and 0 for `user_unknown`, the same values as `test-spec`. The
+timestamps are UTC with microsecond precision, and the command never reads or
+writes publication time. Exit code `1` means invalid input, an identity
+conflict, an unsupported operator or an existing output path, and `2` means a
+file is missing or PySpark is not installed. The test suite checks the agreement
+with the reference at every window boundary:
+
+```bash
+pytest -v tests/unit/test_spec_spark_backfill.py tests/unit/test_cli_backfill_spec.py
+```
+
 ### 3. Evaluate the skip-rate spec on its golden fixture
 
 The skip-rate fixture holds ten events with hand-calculated expected values:
