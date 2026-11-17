@@ -195,6 +195,37 @@ def build_parser() -> argparse.ArgumentParser:
         help="Expected value of a spec output. Exit code 1 if it differs. Repeatable.",
     )
 
+    backfill_spec_parser = subparsers.add_parser(
+        "backfill-spec",
+        help="Evaluate a feature spec for many entities and times with Spark and write Parquet.",
+    )
+    backfill_spec_parser.add_argument(
+        "spec",
+        type=Path,
+        help="Path to the feature spec YAML file.",
+    )
+    backfill_spec_parser.add_argument(
+        "--events",
+        type=Path,
+        required=True,
+        help="JSONL file with interaction events.",
+    )
+    backfill_spec_parser.add_argument(
+        "--observations",
+        type=Path,
+        required=True,
+        help=(
+            "JSONL file with one object per observation: the spec keys and "
+            "observation_time in UTC, ISO 8601."
+        ),
+    )
+    backfill_spec_parser.add_argument(
+        "--output",
+        type=Path,
+        required=True,
+        help="New directory for the Parquet result. An existing path is never overwritten.",
+    )
+
     materialize_parser = subparsers.add_parser(
         "materialize",
         help="Materialize Feast offline feature values into the online store.",
@@ -606,6 +637,121 @@ def run_test_spec_command(
     return 1 if failed else 0
 
 
+def _read_observations(path: Path, keys: list[str]) -> list[tuple[dict[str, str], datetime]]:
+    import json
+
+    allowed = {*keys, "observation_time"}
+    pairs: list[tuple[dict[str, str], datetime]] = []
+    with open(path, encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            if not line.strip():
+                continue
+            where = f"{path.name}, line {line_number}"
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"{where}: invalid JSON, {exc.msg}") from exc
+            if not isinstance(record, dict) or set(record) != allowed:
+                raise ValueError(f"{where}: expected exactly the keys {sorted(allowed)}")
+            entity = {key: record[key] for key in keys}
+            for key, value in entity.items():
+                if not isinstance(value, str) or not value or any(c.isspace() for c in value):
+                    raise ValueError(
+                        f"{where}: {key} must be a non-empty string without whitespace"
+                    )
+            moment = record["observation_time"]
+            if not isinstance(moment, str):
+                raise ValueError(f"{where}: observation_time must be a string")
+            try:
+                pairs.append((entity, parse_utc_datetime(moment)))
+            except ValueError as exc:
+                raise ValueError(f"{where}: {exc}") from exc
+    if not pairs:
+        raise ValueError(f"{path.name}: no observations")
+    return pairs
+
+
+def run_backfill_spec_command(
+    spec_path: Path,
+    events_path: Path,
+    observations_path: Path,
+    output_path: Path,
+    spark: object | None = None,
+) -> int:
+    """Evaluate a spec for many entities and times with Spark and write Parquet.
+
+    Exit codes: 0 ok, 1 invalid input, identity conflict, unsupported operator or an
+    existing output path, 2 a file is missing or PySpark is not installed.
+    """
+    from pydantic import ValidationError
+    from rich.markup import escape
+
+    from featureforge.spec.loader import format_errors, load_spec
+    from featureforge.spec.reference import EventIdentityConflictError
+
+    console = Console()
+    try:
+        spec = load_spec(spec_path)
+        events = _read_events(events_path)
+        pairs = _read_observations(observations_path, spec.keys)
+    except FileNotFoundError as exc:
+        console.print(f"[red]✗[/red] file not found: {exc.filename}", soft_wrap=True)
+        return 2
+    except ValidationError as exc:
+        console.print(f"[red]✗[/red] {spec_path.name}", soft_wrap=True)
+        for line in format_errors(exc):
+            console.print(f"    {escape(line)}", soft_wrap=True)
+        return 1
+    except (ValueError, TypeError) as exc:
+        console.print(f"[red]✗[/red] {escape(str(exc))}", soft_wrap=True)
+        return 1
+
+    if output_path.exists():
+        console.print(
+            f"[red]✗[/red] output already exists: {escape(str(output_path))}", soft_wrap=True
+        )
+        return 1
+
+    try:
+        from featureforge.spec.spark_backfill import (
+            backfill_spec,
+            create_local_session,
+            events_to_frame,
+            observations_to_frame,
+        )
+    except ImportError:
+        console.print(
+            "[red]✗[/red] PySpark is not installed. Run: "
+            + escape("pip install 'featureforge[spark]'"),
+            soft_wrap=True,
+        )
+        return 2
+
+    owns_session = spark is None
+    session = create_local_session() if spark is None else spark
+    try:
+        result = backfill_spec(
+            spec,
+            events_to_frame(session, events),
+            observations_to_frame(session, spec, pairs),
+        )
+        session.conf.set("spark.sql.parquet.outputTimestampType", "TIMESTAMP_MICROS")
+        result.write.mode("error").parquet(str(output_path))
+        rows = session.read.parquet(str(output_path)).count()
+    except (ValueError, TypeError, NotImplementedError, EventIdentityConflictError) as exc:
+        console.print(f"[red]✗[/red] {escape(str(exc))}", soft_wrap=True)
+        return 1
+    finally:
+        if owns_session:
+            session.stop()
+
+    console.print(
+        f"[green]✓[/green] {escape(spec.name)}: {rows} rows written to {escape(str(output_path))}",
+        soft_wrap=True,
+    )
+    return 0
+
+
 def main() -> None:
     """Parse command-line arguments and run the selected command."""
     parser = build_parser()
@@ -633,6 +779,10 @@ def main() -> None:
         run_check_freshness_command(
             reference_time=args.reference_time,
             max_lag_hours=args.max_lag_hours,
+        )
+    elif args.command == "backfill-spec":
+        raise SystemExit(
+            run_backfill_spec_command(args.spec, args.events, args.observations, args.output)
         )
     elif args.command == "validate-spec":
         raise SystemExit(run_validate_spec_command(args.paths))

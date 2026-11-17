@@ -13,11 +13,13 @@ from __future__ import annotations
 
 import ast
 import operator
-from datetime import timedelta
+from collections.abc import Iterable, Mapping
+from datetime import UTC, datetime, timedelta
 from functools import reduce
 
-from pyspark.sql import Column, DataFrame
+from pyspark.sql import Column, DataFrame, SparkSession
 from pyspark.sql import functions as F
+from pyspark.sql.types import LongType, StringType, StructField, StructType
 
 from featureforge.spec.model import FeatureSpec, Op
 from featureforge.spec.reference import names_in, validate_event_fields
@@ -171,4 +173,78 @@ def backfill_spec(spec: FeatureSpec, events: DataFrame, observations: DataFrame)
         window_start.alias("window_start_exclusive"),
         *[agg.name for agg in spec.aggregations],
         *spec.derived,
+    )
+
+
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+_EVENT_SCHEMA = StructType(
+    [
+        StructField("event_id", StringType(), nullable=False),
+        StructField("event_time_us", LongType(), nullable=False),
+        StructField("ingested_at_us", LongType(), nullable=False),
+        StructField("user_id", StringType(), nullable=False),
+        StructField("content_id", StringType(), nullable=False),
+        StructField("event_type", StringType(), nullable=False),
+        StructField("play_seconds", LongType(), nullable=False),
+        StructField("source", StringType(), nullable=False),
+        StructField("schema_version", StringType(), nullable=False),
+    ]
+)
+
+
+def _micros(moment: datetime) -> int:
+    return (moment - _EPOCH) // _ONE_MICROSECOND
+
+
+def create_local_session(app_name: str = "featureforge-spec-backfill") -> SparkSession:
+    """Create or reuse a local Spark session pinned to UTC."""
+    return (
+        SparkSession.builder.master("local[*]")
+        .appName(app_name)
+        .config("spark.sql.shuffle.partitions", "4")
+        .config("spark.ui.enabled", "false")
+        .config("spark.sql.session.timeZone", "UTC")
+        .getOrCreate()
+    )
+
+
+def events_to_frame(spark: SparkSession, events: Iterable[InteractionEventV1]) -> DataFrame:
+    """Build the events frame of backfill_spec from validated events, in exact microseconds."""
+    rows = [
+        (
+            str(event.event_id),
+            _micros(event.event_time),
+            _micros(event.ingested_at),
+            event.user_id,
+            event.content_id,
+            event.event_type,
+            event.play_seconds,
+            event.source,
+            event.schema_version,
+        )
+        for event in events
+    ]
+    return (
+        spark.createDataFrame(rows, _EVENT_SCHEMA)
+        .withColumn("event_time", F.timestamp_micros("event_time_us"))
+        .withColumn("ingested_at", F.timestamp_micros("ingested_at_us"))
+        .drop("event_time_us", "ingested_at_us")
+    )
+
+
+def observations_to_frame(
+    spark: SparkSession,
+    spec: FeatureSpec,
+    pairs: Iterable[tuple[Mapping[str, str], datetime]],
+) -> DataFrame:
+    """Build the observations frame of backfill_spec from entity and time pairs."""
+    schema = StructType(
+        [StructField(key, StringType(), nullable=False) for key in spec.keys]
+        + [StructField("observation_us", LongType(), nullable=False)]
+    )
+    rows = [(*(entity[key] for key in spec.keys), _micros(moment)) for entity, moment in pairs]
+    return (
+        spark.createDataFrame(rows, schema)
+        .withColumn("observation_time", F.timestamp_micros("observation_us"))
+        .drop("observation_us")
     )
