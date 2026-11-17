@@ -13,7 +13,7 @@ from redis import Redis
 from featureforge.spec.loader import load_spec
 from featureforge.spec.model import FeatureSpec
 from featureforge.streaming.contracts.feature_record import parse_feature_record
-from featureforge.streaming.history import Evidence, HistoryTable, open_local_catalog
+from featureforge.streaming.history import Evidence, HistoryTable, open_catalog
 from featureforge.streaming.spec_store import RedisSpecStore
 
 LOGGER = logging.getLogger(__name__)
@@ -29,7 +29,8 @@ def open_history(arguments: argparse.Namespace, spec: FeatureSpec) -> HistoryTab
     root = getattr(arguments, "history_root", None)
     if root is None:
         return None
-    return HistoryTable(open_local_catalog(Path(root)), spec)
+    catalog_url = getattr(arguments, "history_catalog_url", None)
+    return HistoryTable(open_catalog(Path(root), catalog_url), spec)
 
 
 def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
@@ -49,6 +50,12 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         default=None,
         help="Directory of the local Iceberg history catalog. Omit to record no evidence.",
+    )
+    parser.add_argument(
+        "--history-catalog-url",
+        default=None,
+        help="SQL catalog URL of the history, for example the PostgreSQL profile. "
+        "Omit to use the SQLite file under --history-root.",
     )
     return parser.parse_args(argv)
 
