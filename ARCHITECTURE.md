@@ -35,6 +35,7 @@ flowchart LR
 | Concern | Implementation |
 |---|---|
 | Batch features | Pandas (reference), PySpark (parity-tested) |
+| Spec-driven backfill | PySpark, count specs: values at explicit observation times, equal to the spec reference, no availability time |
 | Offline store | One canonical Parquet root, Hive-style `observation_date` partitions |
 | Retrieval and materialization | Feast, point-in-time joins |
 | Streaming | Kafka, Flink (PyFlink), Pydantic contracts |
