@@ -24,6 +24,7 @@ Goal: record publication evidence for every accepted online update so that ADR-0
 | Which outcomes | `written` appends evidence. `unchanged` appends evidence only if the history has none for that update identity. `stale` appends nothing (ADR-010). |
 | `published_at` | Read from the UTC wall clock right after the store returns, per record, and kept with the buffered row. The append happens once per batch before the offset commit, so batching does not blur the time. |
 | Catalog, local profile | PyIceberg SQL catalog on a SQLite file with a local filesystem warehouse. Spark reads it through the Iceberg JDBC catalog. This profile has one writer process per catalog. A production catalog (REST or Glue) is a separate decision. |
+| Catalog, compose profile | PostgreSQL as SQL catalog in Docker Compose (service `iceberg-catalog`, profile `catalog`, port 55432 on localhost), selected with `--history-catalog-url`. The warehouse stays a local filesystem directory. PyIceberg connects through psycopg2 and Spark through the Iceberg JDBC catalog with the PostgreSQL driver. Connections and processes share the catalog, but the check and the append of the idempotent append are still not atomic, so one appender per table remains the rule. |
 | Table | One table per spec. The name is `offline.table` of the spec, split at the first dot into namespace and table. The materializer creates the table from the spec on first use and never by hand. |
 | Columns | `update_id` (string), `spec_version` (int), the entity column named by the spec entity key (string), `observation_time` and `window_start_exclusive` (timestamp with time zone, UTC), one long per count aggregation named as in the spec, one nullable double per derived value named as in the spec, and `published_at` (timestamp with time zone, UTC). |
 | Not stored | `computed_at`, Kafka offsets and `ingested_at`. They are not part of update identity (ADR-010). |
@@ -56,6 +57,7 @@ Goal: record publication evidence for every accepted online update so that ADR-0
 The table, the update identity and the idempotent append are implemented and tested in `tests/unit/test_history.py` and `tests/integration/test_history_spark_read.py`. The evidence append in `materialize_spec` is tested in `tests/unit/test_materialize_spec_history.py` and `tests/integration/test_materialize_spec_kafka_to_history.py`. The tests of ADR-010 apply, plus the following.
 
 - PyIceberg writes a spec-derived table and Spark reads the same rows (the feasibility check as a test).
+- The same append and the same Spark read run against the PostgreSQL catalog profile (`tests/integration/test_history_postgres_catalog.py`).
 - `update_id` is stable across a replay and differs for a higher count.
 - A duplicate update identity, in the table or in one batch, adds no row.
 - A schema derived from a changed spec fails loudly against the existing table.
