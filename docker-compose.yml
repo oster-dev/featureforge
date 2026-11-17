@@ -103,7 +103,26 @@ services:
       retries: 12
       start_period: 5s
 
+  iceberg-catalog:
+    image: postgres:16-alpine
+    profiles: ["catalog"]
+    environment:
+      POSTGRES_USER: featureforge
+      POSTGRES_PASSWORD: featureforge
+      POSTGRES_DB: iceberg
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - iceberg-catalog-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U featureforge -d iceberg"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
 volumes:
   kafka-data:
   redis-data:
+  iceberg-catalog-data:
   flink-savepoints:

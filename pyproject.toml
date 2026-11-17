@@ -62,7 +62,7 @@ spark = [
 streaming = [
   "confluent-kafka>=2.6,<3",
   "redis>=4.2.2,<6",
-  "pyiceberg[pyarrow,sql-sqlite,pyiceberg-core]>=0.12,<0.13",
+  "pyiceberg[pyarrow,sql-sqlite,sql-postgres,pyiceberg-core]>=0.12,<0.13",
 ]
 
 [tool.setuptools.packages.find]

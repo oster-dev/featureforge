@@ -31,11 +31,13 @@ from pyiceberg.types import (
     StringType,
     TimestamptzType,
 )
+from sqlalchemy.engine import make_url
 
 from featureforge.spec.model import FeatureSpec
 from featureforge.streaming.contracts.feature_record import FeatureRecord, record_fields
 
 CATALOG_NAME = "history"
+DEFAULT_CATALOG_URL = "postgresql+psycopg2://featureforge:featureforge@127.0.0.1:55432/iceberg"
 RESERVED_COLUMNS = ("update_id", "spec_version", "published_at")
 PARTITION_NAME = "published_at_day"
 PARTITION_FIELD_ID = 1000
@@ -156,6 +158,53 @@ def open_local_catalog(root: Path, name: str = CATALOG_NAME) -> SqlCatalog:
         uri=f"sqlite:///{catalog_db_path(root)}",
         warehouse=f"file://{warehouse_path(root)}",
     )
+
+
+def open_sql_catalog(root: Path, url: str, name: str = CATALOG_NAME) -> SqlCatalog:
+    """Open an SQL catalog on a database server with a filesystem warehouse under root.
+
+    The compose profile of ADR-011 uses PostgreSQL. Several processes and connections share
+    the catalog. This does not make the idempotent append atomic: one appender per table
+    remains the rule.
+    """
+    root = Path(root).resolve()
+    warehouse_path(root).mkdir(parents=True, exist_ok=True)
+    return SqlCatalog(name, uri=url, warehouse=f"file://{warehouse_path(root)}")
+
+
+def open_catalog(
+    root: Path, catalog_url: str | None = None, name: str = CATALOG_NAME
+) -> SqlCatalog:
+    """Open the local SQLite profile, or the SQL catalog at catalog_url."""
+    if catalog_url is None:
+        return open_local_catalog(root, name)
+    return open_sql_catalog(root, catalog_url, name)
+
+
+def spark_catalog_config(
+    root: Path, catalog_url: str | None = None, name: str = CATALOG_NAME
+) -> dict[str, str]:
+    """Spark settings that read the history through the Iceberg JDBC catalog.
+
+    The catalog name must equal the one PyIceberg used to write the table.
+    """
+    root = Path(root).resolve()
+    prefix = f"spark.sql.catalog.{name}"
+    config = {
+        prefix: "org.apache.iceberg.spark.SparkCatalog",
+        f"{prefix}.catalog-impl": "org.apache.iceberg.jdbc.JdbcCatalog",
+        f"{prefix}.warehouse": f"file://{warehouse_path(root)}",
+    }
+    if catalog_url is None:
+        config[f"{prefix}.uri"] = f"jdbc:sqlite:{catalog_db_path(root)}"
+        return config
+    url = make_url(catalog_url)
+    if url.get_backend_name() != "postgresql":
+        raise ValueError(f"only postgresql catalog URLs are supported, got {url.drivername}")
+    config[f"{prefix}.uri"] = f"jdbc:postgresql://{url.host}:{url.port or 5432}/{url.database}"
+    config[f"{prefix}.jdbc.user"] = url.username or ""
+    config[f"{prefix}.jdbc.password"] = url.password or ""
+    return config
 
 
 def _expected_signature(spec: FeatureSpec) -> list[tuple[str, str, bool]]:
