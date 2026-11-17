@@ -163,6 +163,17 @@ def build_parser() -> argparse.ArgumentParser:
         help=("Spec files to validate. Defaults to every YAML file in feature_repo/specs."),
     )
 
+    validate_label_spec_parser = subparsers.add_parser(
+        "validate-label-spec",
+        help="Validate label spec YAML files against the label model and event contract.",
+    )
+    validate_label_spec_parser.add_argument(
+        "paths",
+        nargs="*",
+        type=Path,
+        help=("Label specs to validate. Defaults to every YAML file in feature_repo/labels."),
+    )
+
     test_spec_parser = subparsers.add_parser(
         "test-spec",
         help="Evaluate a feature spec on an event file with the reference implementation.",
@@ -523,6 +534,25 @@ def run_validate_spec_command(paths: list[Path]) -> int:
     return validate_specs([str(spec_path) for spec_path in spec_paths])
 
 
+_DEFAULT_LABEL_DIR = Path("feature_repo/labels")
+
+
+def run_validate_label_spec_command(paths: list[Path]) -> int:
+    """Validate label specs and return a process status.
+
+    Label specs are not feature specs (ADR-012): this command never reads
+    feature_repo/specs, and validate-spec never reads feature_repo/labels.
+    Exit codes follow the loader: 0 valid, 1 invalid, 2 usage or missing file.
+    """
+    from featureforge.spec.label_loader import main as validate_labels
+
+    label_paths = paths or sorted(_DEFAULT_LABEL_DIR.glob("*.yaml"))
+    if not label_paths:
+        Console().print(f"[red]✗[/red] No label specs found in {_DEFAULT_LABEL_DIR}")
+        return 2
+    return validate_labels([str(label_path) for label_path in label_paths])
+
+
 def _parse_pairs(items: list[str], flag: str) -> dict[str, str]:
     pairs: dict[str, str] = {}
     for item in items:
@@ -790,6 +820,8 @@ def main() -> None:
         )
     elif args.command == "validate-spec":
         raise SystemExit(run_validate_spec_command(args.paths))
+    elif args.command == "validate-label-spec":
+        raise SystemExit(run_validate_label_spec_command(args.paths))
     elif args.command == "test-spec":
         raise SystemExit(
             run_test_spec_command(
