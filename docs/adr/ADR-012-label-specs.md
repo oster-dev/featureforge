@@ -1,6 +1,6 @@
 # ADR-012 Label specs for training data
 
-- Status: Proposed. Decides what a label is, how its window and its observability work and which events it may use. Nothing is implemented yet.
+- Status: Accepted. Decides what a label is, how its window and its observability work and which events it may use. Nothing is implemented yet, the implementation follows in separate changes.
 - Date: 2026-11-17
 - Author: Nico Ostermann
 - Deciders: Nico Ostermann
