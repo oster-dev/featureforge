@@ -11,7 +11,7 @@
 The readiness plan asks practitioners to define features and labels in the same declarative way. ADR-008 covers features only and has no section on labels. The code holds two facts that shape this decision.
 
 - The batch generator `generate_observation_labels` builds `is_active_next_7d` from real events in the window after the observation time. The window is `(t, t + horizon]`, and the latest observation time is `end_time - horizon`, so no label is built from an incomplete window. A user counts as active when an event of that user falls into the window, whatever its type.
-- The streaming event contract `InteractionEventV1` allows `impression`, `play`, `skip` and `complete`. The batch generator knows `search`, `play`, `watch` and `browse`. `synthetic_data.py` produces neither `skip` nor `complete`, and `complete` appears in `src` only in the contract. Skip and complete events exist only in hand-written fixtures.
+- The streaming event contract `InteractionEventV1` allows `impression`, `play`, `skip` and `complete`. The batch generator knows `impression`, `click`, `play`, `watch`, `like` and `search`. `synthetic_data.py` produces neither `skip` nor `complete`, and `complete` appears in `src` only in the contract. Skip and complete events exist only in hand-written fixtures.
 
 ## Decision
 
@@ -82,5 +82,5 @@ Planned, and written before the implementation:
 
 - The training dataset API and its two modes.
 - Outcomes over sequences of events, for example the next play after an impression.
-- The behaviour model of the simulator, for example when a play counts as `complete` against the duration of the content.
+- Tuning the behaviour model of the simulator. The first version is implemented: a play ends as `skip` below a fraction of the content duration, as `complete` at the full duration, and otherwise without an end event, which is unknown and not negative.
 - Labels on the batch event contract.
