@@ -18,6 +18,13 @@ from featureforge.spec.model import Aggregation, Op
 from featureforge.spec.reference import evaluate_spec
 from featureforge.spec.spark_backfill import backfill_spec
 from featureforge.streaming.contracts.events import InteractionEventV1
+from featureforge.streaming.contracts.feature_record import FeatureRecord
+from featureforge.streaming.history import (
+    Evidence,
+    HistoryTable,
+    open_local_catalog,
+    warehouse_path,
+)
 from featureforge.streaming.reference.user_play_count import EventIdentityConflictError
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -221,3 +228,42 @@ def test_backfill_module_never_touches_history_or_publication_time():
     imported += [a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names]
     assert not [name for name in imported if "history" in name]
     assert "published_at" not in source
+
+
+def warehouse_files(root):
+    return sorted(
+        (str(item.relative_to(root)), item.stat().st_size)
+        for item in warehouse_path(root).rglob("*")
+        if item.is_file()
+    )
+
+
+def history_state(root):
+    table = open_local_catalog(root).load_table(SKIP_RATE.offline.table)
+    rows = sorted(table.scan().to_arrow().to_pylist(), key=repr)
+    return table.current_snapshot().snapshot_id, rows, warehouse_files(root)
+
+
+def test_backfill_leaves_recorded_evidence_untouched(spark, tmp_path):
+    history = HistoryTable(open_local_catalog(tmp_path), SKIP_RATE)
+    record = FeatureRecord(
+        feature_name=SKIP_RATE.name,
+        entity_key="user_id",
+        entity_value="user_000001",
+        observation_time=T0,
+        window_start_exclusive=T0 - timedelta(hours=24),
+        counts={"play_count": 1, "skip_count": 0},
+        derived={"skip_rate": 0.0},
+    )
+    history.append([Evidence(record, T0 + timedelta(seconds=5))])
+    before = history_state(tmp_path)
+
+    events = [make_event(1, T0 - timedelta(minutes=10), "user_000001", "content_000001")]
+    rows = backfill_spec(
+        SKIP_RATE,
+        events_frame(spark, events),
+        observations_frame(spark, SKIP_RATE, [({"user_id": "user_000001"}, T0)]),
+    ).collect()
+
+    assert rows[0]["play_count"] == 1
+    assert history_state(tmp_path) == before
