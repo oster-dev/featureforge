@@ -223,7 +223,10 @@ def materialize(arguments: argparse.Namespace, spec: FeatureSpec) -> Counter:
                     )
                     raise
 
-                last_offset = message.offset()
+                message_offset = message.offset()
+                if message_offset is None:
+                    raise ValueError("Kafka message carries no offset")
+                last_offset = message_offset
                 since_commit += 1
 
                 if since_commit >= arguments.commit_every:
@@ -233,7 +236,7 @@ def materialize(arguments: argparse.Namespace, spec: FeatureSpec) -> Counter:
                 if arguments.bounded and last_offset + 1 >= high:
                     break
 
-            if since_commit:
+            if since_commit and last_offset is not None:
                 settle(consumer, partition, last_offset + 1, history, pending)
 
             return results

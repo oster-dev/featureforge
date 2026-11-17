@@ -79,10 +79,12 @@ class RedisUserSkipRateStore:
         )
 
     def _to_feature(self, record: FeatureRecord) -> UserSkipRateFeatureV1:
-        return UserSkipRateFeatureV1(
-            **{self._entity_key: record.entity_value},
-            observation_time=record.observation_time,
-            window_start_exclusive=record.window_start_exclusive,
-            **record.counts,
-            **record.derived,
+        return UserSkipRateFeatureV1.model_validate(
+            {
+                self._entity_key: record.entity_value,
+                "observation_time": record.observation_time,
+                "window_start_exclusive": record.window_start_exclusive,
+                **record.counts,
+                **record.derived,
+            }
         )

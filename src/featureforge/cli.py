@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import pandas as pd
 from rich.console import Console
@@ -29,6 +29,9 @@ from featureforge.synthetic_data import generate_synthetic_dataset
 # Opt-in to future pandas behavior to silence Dask/Feast downcasting warnings.
 pd.set_option("future.no_silent_downcasting", True)
 
+
+if TYPE_CHECKING:
+    from pyspark.sql import SparkSession
 
 BackfillEngine = Literal["pandas", "spark"]
 
@@ -471,7 +474,8 @@ def run_materialize_command(
     console = Console()
     console.print("[green]✓[/green] Feast full materialization completed")
     console.print(f"Repository: {result.repo_path}")
-    console.print(f"Start time: {result.start_time.isoformat()}")
+    start_text = result.start_time.isoformat() if result.start_time else "n/a"
+    console.print(f"Start time: {start_text}")
     console.print(f"End time: {result.end_time.isoformat()}")
     console.print(f"Run manifest: {result.manifest_path}")
 
@@ -676,7 +680,7 @@ def run_backfill_spec_command(
     events_path: Path,
     observations_path: Path,
     output_path: Path,
-    spark: object | None = None,
+    spark: SparkSession | None = None,
 ) -> int:
     """Evaluate a spec for many entities and times with Spark and write Parquet.
 

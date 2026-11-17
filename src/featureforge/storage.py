@@ -65,10 +65,10 @@ def read_synthetic_dataset(input_dir: Path) -> SyntheticDataset:
     events_df = pd.read_parquet(input_dir / "events.parquet")
     labels_df = pd.read_parquet(input_dir / "labels.parquet")
 
-    users = [User(**row) for row in users_df.to_dict("records")]
-    content_items = [Content(**row) for row in content_df.to_dict("records")]
-    events = [Event(**row) for row in events_df.to_dict("records")]
-    labels = [ObservationLabel(**row) for row in labels_df.to_dict("records")]
+    users = [User.model_validate(row) for row in users_df.to_dict("records")]
+    content_items = [Content.model_validate(row) for row in content_df.to_dict("records")]
+    events = [Event.model_validate(row) for row in events_df.to_dict("records")]
+    labels = [ObservationLabel.model_validate(row) for row in labels_df.to_dict("records")]
 
     return SyntheticDataset(
         users=users,

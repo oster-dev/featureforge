@@ -1,5 +1,7 @@
 """Guarded Redis writes for spec-driven count-vector features (ADR-009)."""
 
+from typing import cast
+
 from redis import Redis
 from redis.exceptions import WatchError
 
@@ -83,7 +85,7 @@ class RedisSpecStore:
 
     def read(self, entity_value: str) -> FeatureRecord | None:
         """Read a validated record, or return None when no key exists."""
-        payload = self._client.get(self.key_for(entity_value))
+        payload = cast("str | bytes | None", self._client.get(self.key_for(entity_value)))
         if payload is None:
             return None
         return self._decode(payload, entity_value=entity_value)
@@ -102,7 +104,7 @@ class RedisSpecStore:
             with self._client.pipeline() as pipeline:
                 try:
                     pipeline.watch(key)
-                    stored_payload = pipeline.get(key)
+                    stored_payload = cast("str | bytes | None", pipeline.get(key))
                     stored = (
                         self._decode(stored_payload, entity_value=incoming.entity_value)
                         if stored_payload is not None

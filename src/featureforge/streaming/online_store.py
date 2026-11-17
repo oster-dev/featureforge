@@ -119,10 +119,12 @@ class RedisUserPlayCountStore:
         )
 
     def _to_feature(self, record: FeatureRecord) -> UserPlayCountFeatureV1:
-        return UserPlayCountFeatureV1(
-            **{self._entity_key: record.entity_value},
-            observation_time=record.observation_time,
-            window_start_exclusive=record.window_start_exclusive,
-            **record.counts,
-            **record.derived,
+        return UserPlayCountFeatureV1.model_validate(
+            {
+                self._entity_key: record.entity_value,
+                "observation_time": record.observation_time,
+                "window_start_exclusive": record.window_start_exclusive,
+                **record.counts,
+                **record.derived,
+            }
         )
