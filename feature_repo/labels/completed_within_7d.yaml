@@ -1,0 +1,9 @@
+name: completed_within_7d
+version: 1
+owner: personalization-team
+description: Whether the user completed a play in the 7 days after the observation time
+entity: user_id
+source: interaction-events.validated.v1
+outcome: {op: exists, filter: "event_type == 'complete'"}
+horizon: 7d
+dedupe: {key: event_id}

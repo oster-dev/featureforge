@@ -1,0 +1,9 @@
+name: active_within_7d
+version: 1
+owner: personalization-team
+description: Whether the user had any event in the 7 days after the observation time
+entity: user_id
+source: interaction-events.validated.v1
+outcome: {op: exists}
+horizon: 7d
+dedupe: {key: event_id}
