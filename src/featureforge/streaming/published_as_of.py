@@ -65,7 +65,8 @@ def published_as_of(
 
     table = history.table
     table.refresh()
-    rows = table.scan(row_filter=In(entity_key, wanted)).to_arrow().to_pylist()
+    row_filter = In(entity_key, wanted)  # type: ignore[call-arg,arg-type]
+    rows = table.scan(row_filter=row_filter).to_arrow().to_pylist()
 
     latest: dict[str, dict] = {}
     for row in rows:

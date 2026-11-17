@@ -303,7 +303,7 @@ class HistoryTable:
 
     def _known(self, identities: list[str]) -> set[str]:
         scan = self._table.scan(
-            row_filter=In("update_id", identities),
+            row_filter=In("update_id", identities),  # type: ignore[call-arg,arg-type]
             selected_fields=("update_id",),
         )
         return set(scan.to_arrow().column("update_id").to_pylist())

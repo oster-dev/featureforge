@@ -150,6 +150,8 @@ def run_backfill(
                     window_days,
                 )
             else:
+                if input_dir is None:
+                    raise ValueError("input_dir is required for the spark engine")
                 user_batch, content_batch = _compute_feature_batches_spark(
                     spark,
                     input_dir,

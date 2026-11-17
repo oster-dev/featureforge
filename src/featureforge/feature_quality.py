@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 import pandas as pd
 
@@ -14,7 +14,7 @@ from .models import (
     OfflineFeatureQualityReport,
 )
 
-FEATURE_VIEW_SPECS: Final = {
+FEATURE_VIEW_SPECS: Final[dict[str, dict[str, Any]]] = {
     "user_engagement_features": {
         "entity_column": "user_id",
         "recency_column": "days_since_last_activity",

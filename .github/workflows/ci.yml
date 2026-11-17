@@ -60,6 +60,9 @@ jobs:
       - name: Run Ruff lint
         run: ruff check .
 
+      - name: Run mypy
+        run: mypy
+
       - name: Run baseline test suite
         run: pytest -v -m "not integration" --durations=10
 

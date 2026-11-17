@@ -124,6 +124,8 @@ def _check_entity(spec: FeatureSpec, entity: Mapping[str, str]) -> None:
 def _aggregate(agg: Aggregation, matched: list[tuple[InteractionEventV1, dict[str, Any]]]) -> Any:
     if agg.op is Op.COUNT:
         return len(matched)
+    if agg.column is None:
+        raise ValueError(f"aggregation {agg.op} requires a column")
     values = [fields[agg.column] for _, fields in matched]
     if agg.op is Op.SUM:
         return sum(values)
@@ -135,6 +137,8 @@ def _aggregate(agg: Aggregation, matched: list[tuple[InteractionEventV1, dict[st
         return max(values) if values else None
     if agg.op is Op.APPROX_DISTINCT:
         return len(set(values))
+    if agg.k is None:
+        raise ValueError(f"aggregation {agg.op} requires k")
     ordered = sorted(matched, key=lambda pair: (pair[0].event_time, str(pair[0].event_id)))
     return [fields[agg.column] for _, fields in ordered][-agg.k :]
 
