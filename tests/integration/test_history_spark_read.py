@@ -10,6 +10,7 @@ from featureforge.spec.loader import load_spec
 from featureforge.streaming.contracts.feature_record import FeatureRecord
 from featureforge.streaming.history import (
     CATALOG_NAME,
+    SPARK_PACKAGES,
     Evidence,
     HistoryTable,
     catalog_db_path,
@@ -20,9 +21,7 @@ from featureforge.streaming.history import (
 pytestmark = pytest.mark.integration
 
 SPEC = load_spec(Path(__file__).parents[2] / "feature_repo" / "specs" / "user_skip_rate_24h.yaml")
-PACKAGES = (
-    "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.12.0,org.xerial:sqlite-jdbc:3.46.1.3"
-)
+PACKAGES = SPARK_PACKAGES
 EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 OBSERVATION = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
 PUBLISHED = datetime(2026, 1, 1, 12, 0, 5, tzinfo=UTC)

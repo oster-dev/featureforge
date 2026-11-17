@@ -9,6 +9,7 @@ import pytest
 from featureforge.streaming.history import (
     CATALOG_NAME,
     DEFAULT_CATALOG_URL,
+    SPARK_PACKAGES,
     catalog_db_path,
     spark_catalog_config,
     warehouse_path,
@@ -49,6 +50,12 @@ def test_default_url_matches_the_compose_file():
 
     assert "127.0.0.1:55432:5432" in compose
     assert ":55432/" in DEFAULT_CATALOG_URL
+
+
+def test_spark_packages_cover_both_catalog_drivers():
+    assert "iceberg-spark-runtime" in SPARK_PACKAGES
+    assert "sqlite-jdbc" in SPARK_PACKAGES
+    assert "org.postgresql:postgresql" in SPARK_PACKAGES
 
 
 def test_materializer_accepts_a_catalog_url():

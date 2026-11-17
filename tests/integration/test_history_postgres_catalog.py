@@ -15,6 +15,7 @@ from featureforge.spec.loader import load_spec
 from featureforge.streaming.contracts.feature_record import FeatureRecord
 from featureforge.streaming.history import (
     DEFAULT_CATALOG_URL,
+    SPARK_PACKAGES,
     Evidence,
     HistoryTable,
     open_sql_catalog,
@@ -25,9 +26,7 @@ pytestmark = pytest.mark.integration
 
 URL = os.environ.get("FEATUREFORGE_CATALOG_URL", DEFAULT_CATALOG_URL)
 SPEC = load_spec(Path(__file__).parents[2] / "feature_repo" / "specs" / "user_skip_rate_24h.yaml")
-PACKAGES = (
-    "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.12.0,org.postgresql:postgresql:42.7.4"
-)
+PACKAGES = SPARK_PACKAGES
 OBSERVATION = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
 PUBLISHED = datetime(2026, 1, 1, 12, 0, 5, tzinfo=UTC)
 

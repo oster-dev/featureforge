@@ -38,6 +38,15 @@ from featureforge.streaming.contracts.feature_record import FeatureRecord, recor
 
 CATALOG_NAME = "history"
 DEFAULT_CATALOG_URL = "postgresql+psycopg2://featureforge:featureforge@127.0.0.1:55432/iceberg"
+# One JVM per Python process: spark.jars.packages only counts for the session that starts
+# the JVM, so every test that reads the history uses this one list.
+SPARK_PACKAGES = ",".join(
+    (
+        "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.12.0",
+        "org.xerial:sqlite-jdbc:3.46.1.3",
+        "org.postgresql:postgresql:42.7.4",
+    )
+)
 RESERVED_COLUMNS = ("update_id", "spec_version", "published_at")
 PARTITION_NAME = "published_at_day"
 PARTITION_FIELD_ID = 1000
