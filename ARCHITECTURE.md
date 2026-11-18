@@ -344,7 +344,7 @@ flowchart LR
   writes to the history, and a test checks that the snapshot is unchanged.
 - **Limits.** The `published_as_of` mode needs one entity key. `history_start`
   marks only the beginning of the evidence, so a later gap reads as
-  `not_published`. There is no CLI command for datasets yet. See
+  `not_published`. The `build-training-dataset` command writes a dataset in either mode. See
   [Known limits](#known-limits) and [STATUS.md](STATUS.md).
 
 
@@ -418,7 +418,7 @@ flowchart LR
 ```
 
 Planned and **not implemented**: a `window_replace` store policy, further
-operators in Flink, a CLI for datasets, a Cassandra backend, serving service with
+operators in Flink, a Cassandra backend, serving service with
 load tests, observability and recovery drills, ML workflow with registry and
 rollback. Scope and order: [STATUS.md](STATUS.md) and
 [docs/PLATFORM_BLUEPRINT.md](docs/PLATFORM_BLUEPRINT.md).
@@ -443,7 +443,7 @@ rollback. Scope and order: [STATUS.md](STATUS.md) and
   ADR-011. The history table and an idempotent append exist in
   `src/featureforge/streaming/history.py`, and `materialize_spec` appends
   evidence when `--history-root` is set. `published_as_of` reads the history by
-  the rule of ADR-010. Training datasets read it in two modes (section 5). There is no CLI command for datasets yet. The parity between Redis and `published_as_of` is tested in `tests/integration/test_materialize_spec_kafka_to_history.py`.
+  the rule of ADR-010. Training datasets read it in two modes (section 5). The `build-training-dataset` command writes a dataset in either mode. The parity between Redis and `published_as_of` is tested in `tests/integration/test_materialize_spec_kafka_to_history.py`.
 - The spec-driven store is proven end to end from events to Redis by its own
   test for `content_play_count_1h`. The two original features run on the same
   code through their wrappers and are covered by their joined tests and Redis
