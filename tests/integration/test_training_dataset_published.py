@@ -182,3 +182,86 @@ def test_the_modes_differ_where_serving_and_the_events_differ(tmp_path):
     assert pinned_snapshot_id(history) == snapshot
     stored = json.loads((tmp_path / "published" / "_manifest.json").read_text())
     assert stored == published
+
+
+def test_the_latest_history_start_cuts_and_the_edge_stays(tmp_path):
+    other = load_spec(
+        Path(__file__).parents[2] / "feature_repo" / "specs" / "user_play_count_1h.yaml"
+    )
+    label = make_label()
+    start_a = PUBLISHED
+    start_b = BASE + timedelta(hours=1)
+    root = tmp_path / "history"
+
+    served_a = FeatureRecord(
+        feature_name=SPEC.name,
+        entity_key="user_id",
+        entity_value=USER,
+        observation_time=start_a - timedelta(seconds=1),
+        window_start_exclusive=start_a - timedelta(hours=24, seconds=1),
+        counts={"play_count": 1, "skip_count": 1},
+        derived={"skip_rate": 0.5},
+    )
+    served_b = FeatureRecord(
+        feature_name=other.name,
+        entity_key="user_id",
+        entity_value=USER,
+        observation_time=start_b - timedelta(seconds=1),
+        window_start_exclusive=start_b - timedelta(hours=1, seconds=1),
+        counts={"play_count": 4},
+        derived={},
+    )
+    history_a = HistoryTable(open_local_catalog(root), SPEC)
+    history_b = HistoryTable(open_local_catalog(root), other)
+    history_a.append([Evidence(served_a, start_a)])
+    history_b.append([Evidence(served_b, start_b)])
+    snapshots = {
+        SPEC.name: pinned_snapshot_id(history_a),
+        other.name: pinned_snapshot_id(history_b),
+    }
+
+    when = [start_a - MICRO, start_b - MICRO, start_b]
+    spark = open_spark(root)
+    try:
+        pinned = {
+            spec.name: PinnedHistory(
+                read_history(spark, spec, snapshots[spec.name]), snapshots[spec.name]
+            )
+            for spec in (SPEC, other)
+        }
+        manifest = build_training_dataset(
+            spark,
+            [SPEC, other],
+            label,
+            events_to_frame(spark, [make_event(1, start_b + timedelta(hours=1), "play")]),
+            label_observations_to_frame(spark, label, [({"user_id": USER}, t) for t in when]),
+            mode="published_as_of",
+            data_end=start_b + HORIZON + timedelta(seconds=1),
+            output=tmp_path / "published",
+            history=pinned,
+        )
+        rows = read_rows(spark, tmp_path / "published")
+    finally:
+        spark.stop()
+
+    assert manifest["observations"] == 3
+    assert manifest["excluded_before_history"] == 2
+    assert manifest["excluded_incomplete"] == 0
+    assert manifest["rows"] == 1
+    assert manifest["history"] == [
+        {
+            "feature": SPEC.name,
+            "snapshot_id": snapshots[SPEC.name],
+            "history_start": start_a.isoformat(),
+        },
+        {
+            "feature": other.name,
+            "snapshot_id": snapshots[other.name],
+            "history_start": start_b.isoformat(),
+        },
+    ]
+    assert list(rows) == [micros(start_b)]
+    row = rows[micros(start_b)]
+    assert row[f"{SPEC.name}__status"] == "present"
+    assert row[f"{other.name}__status"] == "present"
+    assert row[f"{other.name}__play_count"] == 4
