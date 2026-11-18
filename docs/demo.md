@@ -466,8 +466,7 @@ python -m featureforge.streaming.materialize_spec \
 
 A dataset joins the features and one label of every observation, in one of two
 explicit modes that never replace each other
-([ADR-014](adr/ADR-014-training-datasets.md)). There is no CLI command for
-datasets yet, so this demo runs the tests that build real datasets with Spark.
+([ADR-014](adr/ADR-014-training-datasets.md)). The `build-training-dataset` command writes a dataset from JSONL files, and the tests below build real datasets with Spark.
 It needs no Docker. The first run downloads the Spark packages.
 
 
@@ -539,10 +538,60 @@ The manifest of the published-as-of dataset in the first test has this shape
 ```
 
 
+### 3. Write a dataset with the command
+
+
+The `build-training-dataset` command runs either mode from JSONL files. It needs
+the `spark` extra, never overwrites an existing output and never creates a
+history table. The observations are a JSONL file with the label keys and
+`observation_time` in UTC:
+
+```bash
+user=$(head -n 1 fixtures/streaming/user_skip_rate_24h_v1.jsonl | python -c "import sys, json; print(json.loads(sys.stdin.readline())['user_id'])")
+printf '{"user_id": "%s", "observation_time": "2026-01-01T12:00:00+00:00"}\n' "$user" > /tmp/dataset_observations.jsonl
+rm -rf /tmp/dataset_demo
+python -m featureforge.cli build-training-dataset \
+  --feature-spec feature_repo/specs/user_skip_rate_24h.yaml \
+  --label-spec feature_repo/labels/completed_within_7d.yaml \
+  --events fixtures/streaming/user_skip_rate_24h_v1.jsonl \
+  --observations /tmp/dataset_observations.jsonl \
+  --mode event_time \
+  --data-end 2026-01-20T00:00:00+00:00 \
+  --output /tmp/dataset_demo
+cat /tmp/dataset_demo/_manifest.json
+python -c "import pandas as pd; print(pd.read_parquet('/tmp/dataset_demo').to_string(index=False))"
+```
+
+
+The command prints `✓ completed_within_7d (event_time): 1 rows in 1 partitions, 0
+observations excluded, written to /tmp/dataset_demo` and exits with `0`. The row
+holds the three feature columns `user_skip_rate_24h__play_count`,
+`user_skip_rate_24h__skip_count` and `user_skip_rate_24h__skip_rate` with the
+values 1, 0 and 0.0, and the label `label__completed_within_7d` is true. The column
+`label__completed_within_7d__observable_at` shows the label became observable at
+2026-01-08 12:00 UTC, seven days after the observation. The manifest lists the
+mode, the feature and label versions, `data_end`, the observation and row counts,
+both exclusion counts, the columns and the partitions. Running the same command
+again prints `✗ output already exists: /tmp/dataset_demo` and exits with `1`.
+
+Mode `published_as_of` also needs `--history-root DIR` and optionally
+`--history-catalog-url`. The command pins the current snapshot of the history of
+every feature and records the snapshot ids in the manifest under `history`. A
+feature without a history table fails with exit code `1` and creates nothing.
+Exit code `1` also means invalid input, an existing output path or no
+observation with a complete label window. Exit code `2` means a file or the
+history root is missing, or PySpark is not installed:
+
+```bash
+pytest -v tests/unit/test_cli_build_training_dataset.py   # 9 passed
+pytest -v -m integration tests/integration/test_cli_training_dataset.py   # 2 passed
+```
+
+
 ### What this demo does not prove
 
 
-- There is no CLI command and no training loader yet.
+- There is no training loader yet.
 - The parity between a Redis value and the `published_as_of` value is tested over two bounded runs of one entity, not for several entities or at TTL expiry. The dataset reflects the recorded evidence.
 - The `published_as_of` mode needs one entity key. `history_start` marks only the
   beginning of the evidence, so a later gap reads as `not_published`.

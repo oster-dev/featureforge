@@ -240,6 +240,7 @@ jobs:
             tests/integration/test_history_postgres_catalog.py \
             tests/integration/test_published_spark.py \
             tests/integration/test_training_dataset_published.py \
+            tests/integration/test_cli_training_dataset.py \
             --junitxml=/tmp/featureforge-streaming-redis.xml
 
           python - <<'PYTEST_REPORT'
@@ -258,6 +259,7 @@ jobs:
               "test_history_postgres_catalog",
               "test_published_spark",
               "test_training_dataset_published",
+              "test_cli_training_dataset",
           )
           for suite in required_suites:
               if not any(
