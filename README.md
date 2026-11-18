@@ -48,6 +48,9 @@ flowchart LR
     end
 
     TRAIN[Training pipeline<br/>point-in-time retrieval]
+    HIST[(History table<br/>Iceberg, publication evidence)]
+    DS[Spark dataset builder<br/>event_time · published_as_of]
+    DSOUT[(Training dataset<br/>Parquet + manifest)]
 
     GEN --> PD & SP --> OFF --> GATE --> FEAST
     FEAST -->|historical retrieval| TRAIN
@@ -56,6 +59,10 @@ flowchart LR
     VAL --> REJ
     FJ --> LATE
     REDIS --> API
+    MAT --> HIST
+    EV --> DS
+    HIST --> DS
+    DS --> DSOUT
 ```
 
 | Layer | Technology |
@@ -63,11 +70,12 @@ flowchart LR
 | Batch computation | Pandas (reference), PySpark (parity-tested) |
 | Stream processing | Apache Kafka 3.9, Apache Flink 1.20 (PyFlink) |
 | Offline store | Partitioned Parquet (local); S3 profile documented |
+| Publication history and training datasets | Apache Iceberg (PyIceberg writes, Spark reads) with a SQLite or PostgreSQL catalog; Spark training datasets with a manifest |
 | Feature definitions and retrieval | Feast |
 | Declarative feature specs | YAML, validated by a Pydantic model |
 | Online store | Redis 7.4 (local); DynamoDB profile documented |
 | Contracts | Pydantic |
-| Quality | pytest, Ruff, GitHub Actions (baseline, Python 3.11/3.12, serving integration, Flink integration) |
+| Quality | pytest, Ruff, mypy, GitHub Actions (baseline, Python 3.11/3.12, serving integration, Flink integration) |
 
 Full design: [ARCHITECTURE.md](ARCHITECTURE.md) ·
 [Platform Blueprint](docs/PLATFORM_BLUEPRINT.md) ·
@@ -127,6 +135,35 @@ savepoint stop and resume, and recovery from a TaskManager crash. The Redis
 stores and materializers of the two original features are thin wrappers over the spec-driven store and materializer, which also serve a YAML-only feature end to end. See
 [STATUS.md](STATUS.md) for what is not yet proven.
 
+### Training datasets and history
+
+A training dataset joins features and one label per observation, in one of two
+explicit modes that never replace each other. See
+[ADR-010](docs/adr/ADR-010-time-and-availability-model.md),
+[ADR-011](docs/adr/ADR-011-history-table-layout.md),
+[ADR-012](docs/adr/ADR-012-label-specs.md) and
+[ADR-014](docs/adr/ADR-014-training-datasets.md).
+
+
+| Guarantee | Evidence |
+|---|---|
+| Label specs are validated, evaluated by one exact reference and computed with Spark over the window `(t, t + horizon]` | [`test_label_spec.py`](tests/unit/test_label_spec.py), [`test_label_reference.py`](tests/unit/test_label_reference.py), [`test_label_spark.py`](tests/unit/test_label_spark.py) |
+| The history table appends publication evidence idempotently, and `published_as_of` answers the rule of ADR-010 from it | [`test_history.py`](tests/unit/test_history.py), [`test_published_as_of.py`](tests/unit/test_published_as_of.py) |
+| `materialize_spec` appends evidence next to the Redis write | [`test_materialize_spec_history.py`](tests/unit/test_materialize_spec_history.py), [`test_materialize_spec_kafka_to_history.py`](tests/integration/test_materialize_spec_kafka_to_history.py) |
+| Spark reads the history table that PyIceberg wrote, with a SQLite and with a PostgreSQL catalog | [`test_history_spark_read.py`](tests/integration/test_history_spark_read.py), [`test_history_postgres_catalog.py`](tests/integration/test_history_postgres_catalog.py) |
+| An event at the observation time is a feature and never the label, and an event just after it is the label | [`test_training_dataset.py`](tests/unit/test_training_dataset.py) |
+| An observation whose label window is incomplete is excluded and counted, never written with a null label | [`test_training_dataset.py`](tests/unit/test_training_dataset.py) |
+| Every dataset row matches the feature and label references on randomized observations | [`test_training_dataset.py`](tests/unit/test_training_dataset.py) |
+| The Spark join of the history returns what `published_as_of` returns, at the publication and TTL boundaries and on randomized histories | [`test_published_spark.py`](tests/integration/test_published_spark.py) |
+| In `published_as_of` mode, a feature that is not published or expired has null values and a status, never zero | [`test_published_spark.py`](tests/integration/test_published_spark.py), [`test_training_dataset_published.py`](tests/integration/test_training_dataset_published.py) |
+| An observation before the latest history start is excluded and counted, one on the edge stays, and the manifest records the snapshot id and start of each feature | [`test_training_dataset_published.py`](tests/integration/test_training_dataset_published.py) |
+| The two modes differ exactly where serving and the events differ, and a dataset run leaves the history unchanged | [`test_training_dataset_published.py`](tests/integration/test_training_dataset_published.py) |
+
+
+Not yet proven: the parity between a Redis value and the `published_as_of` value
+over a bounded replay, and a CLI command for datasets. See [STATUS.md](STATUS.md).
+
+
 ### Online access
 
 | Guarantee | Evidence |
@@ -137,9 +174,9 @@ All of the above run in CI on every pull request and push to `main`, plus a nigh
 
 | CI layer | What it proves |
 |---|---|
-| Baseline lint and test | Fresh install, Ruff, all infrastructure-free tests |
+| Baseline lint and test | Fresh install, Ruff, mypy, all infrastructure-free tests |
 | Python 3.11 and 3.12 compatibility | The infrastructure-free tests on the oldest and a middle supported version |
-| Redis and Feast serving integration | Generation → backfill → Feast apply → materialization → online parity |
+| Redis and Feast serving integration | Generation → backfill → Feast apply → materialization → online parity; the history table, the published-as-of join and the training datasets |
 | Flink Kafka-to-Redis integration | Full Docker Compose streaming stack, joined end-to-end tests |
 
 ---
@@ -208,8 +245,8 @@ All three use the spec-driven store and materializer. The first two keep their t
 | Phase | Status |
 |---|---|
 | 1 · Feature store foundation | **Released** as [v0.1.0](https://github.com/oster-dev/featureforge/releases/tag/v0.1.0) |
-| 2 · Streaming feature platform | **Core delivered.** Declarative feature specs: spec model, reference and one generic Flink job running both streaming features are done, including savepoint resume and recovery from a TaskManager crash. A spec-driven Redis store and materializer serve a YAML-only feature end to end. Open: JobManager failure, streaming history, and the final demo |
-| 3 · End-to-end ML workflow | **Planned** |
+| 2 · Streaming feature platform | **Core delivered.** Declarative feature specs: spec model, reference and one generic Flink job running both streaming features are done, including savepoint resume and recovery from a TaskManager crash. A spec-driven Redis store and materializer serve a YAML-only feature end to end. Streaming publication evidence is recorded in an Iceberg history table and read back as published-as-of. Open: JobManager failure and the final demo |
+| 3 · End-to-end ML workflow | **Started.** Label specs and training datasets in two explicit modes (event time and published-as-of) are done. Open: a CLI command for datasets, the online and offline parity test over a bounded replay, and the training loader |
 
 Details, open items, and known limitations: **[STATUS.md](STATUS.md)**.
 
@@ -221,9 +258,8 @@ Details, open items, and known limitations: **[STATUS.md](STATUS.md)**.
 |---|---|
 | [STATUS.md](STATUS.md) | Delivered vs. in progress vs. planned, known limitations |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Component design and data flow |
-| [docs/REFERENCE.md](docs/REFERENCE.md) | Full technical reference: contracts, semantics, CLI, CI details |
 | [docs/PLATFORM_BLUEPRINT.md](docs/PLATFORM_BLUEPRINT.md) | Target platform design |
-| [docs/adr/](docs/adr/) | Architecture decision records (ADR-001 to ADR-011) |
+| [docs/adr/](docs/adr/) | Architecture decision records (ADR-001 to ADR-014) |
 | [docs/streaming-migration.md](docs/streaming-migration.md) | Streaming provenance and verification boundaries |
 | [docs/demo.md](docs/demo.md) | Reviewer walkthrough |
 | [docs/runbooks/](docs/runbooks/) | Stale features, failed backfill, failed materialization |

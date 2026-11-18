@@ -1,12 +1,14 @@
 # FeatureForge Platform Blueprint
 
-**Status:** target design, updated 2026-11-15.
+**Status:** target design, updated 2026-11-18.
 **Baseline:** v0.1.0 released. Streaming core delivered. Feature spec model,
 exact reference and a generic Flink job are delivered. The generic job runs both
 original streaming features and a third feature defined by a YAML spec alone. A
 spec-driven store and materializer serve count and ratio features (ADR-009),
 proven from events to Redis for that third feature. The stores and
 materializers of the two original features are thin wrappers over them.
+Streaming publication evidence, label specs and training datasets in two
+explicit modes are delivered.
 
 This document describes the **target** system. Implemented behavior is in
 [ARCHITECTURE.md](../ARCHITECTURE.md). Delivery status is in [STATUS.md](../STATUS.md).
@@ -53,14 +55,14 @@ flowchart LR
 
     subgraph Storage
         OFF[(Offline store<br/>Parquet)]:::done
-        HIST[(Versioned history<br/>Iceberg)]:::plan
+        HIST[(Versioned history<br/>Iceberg)]:::wip
         ON[(Online store<br/>Redis)]:::done
         ON2[(Online store<br/>Cassandra)]:::plan
     end
 
     subgraph Access
         CLIENT[Unified online client]:::done
-        DATASET[Training dataset API<br/>point-in-time]:::plan
+        DATASET[Training dataset API<br/>point-in-time]:::wip
         SERVICE[Serving service]:::plan
     end
 
@@ -70,11 +72,11 @@ flowchart LR
     SPEC -.-> BATCH & STREAM
     BATCH --> OFF --> ON
     STREAM --> ON
-    STREAM -.-> HIST
+    STREAM --> HIST
     OFF -.-> HIST
     ON --> CLIENT
     ON -.-> ON2
-    HIST -.-> DATASET --> ML
+    HIST --> DATASET -.-> ML
     CLIENT -.-> SERVICE --> ML
     OBS -.-> STREAM & SERVICE
 
@@ -103,7 +105,10 @@ features, and one generic Flink job that is the only implementation of both
 streaming features. It is verified on the golden fixtures, late corrections,
 replay and the Redis path. A spec-driven Redis store and materializer (ADR-009)
 serve count and ratio features. `content_play_count_1h`, a feature defined by a
-YAML spec alone, is proven from events to Redis without a new Python file.
+YAML spec alone, is proven from events to Redis without a new Python file. A history table
+records publication evidence (ADR-010, ADR-011), `published_as_of` answers what
+serving held, label specs fix the label window (ADR-012), and training datasets
+run in two explicit modes (ADR-014).
 
 **First integrated feature set:** seven-day user engagement, seven-day content
 popularity, `user_play_count_1h`, `user_skip_rate_24h`. Prove this slice before
@@ -172,6 +177,9 @@ Historical retrieval has two explicit modes that are never silently interchanged
 2. **Published-as-of retrieval** using only versions with recorded publication
    evidence before the prediction timestamp.
 
+Since ADR-014 a dataset call names the mode, there is no default, and the
+manifest records it.
+
 ---
 
 ## 7. Online correction contract
@@ -211,8 +219,14 @@ publication evidence supports.
 - If a sink succeeds but recording its publication fails, the discrepancy must
   be observable and reconciled. Earlier availability is never invented
   retroactively.
-- A completed historical dataset is immutable and referenced by a manifest. An
-  incomplete output directory is not an accepted dataset.
+- A completed historical dataset is immutable and referenced by a manifest. An incomplete output directory is not an accepted dataset.
+
+Status: ADR-010 and ADR-011 settle these points for the first integration. The
+history table, the evidence append and published-as-of retrieval exist. A
+dataset is written once, never overwritten, and its manifest is written last,
+so a directory without `_manifest.json` is not a dataset. Open: gap detection
+inside the history, several appender processes, and the parity test between a
+Redis value and the published-as-of value.
 
 ---
 
@@ -268,7 +282,7 @@ retroactively prove an SLO.
 flowchart LR
     A[A: Baseline and<br/>compatibility]:::done --> B[B: First streaming<br/>vertical slice]:::done
     B --> C[C: Corrections and<br/>historical publication]:::wip
-    C --> D[D: Mixed-feature<br/>ML workflow]:::plan
+    C --> D[D: Mixed-feature<br/>ML workflow]:::wip
     D --> E[E: Operations and<br/>application release]:::plan
 
     classDef done fill:#d4edda,stroke:#28a745,color:#000
@@ -280,8 +294,8 @@ flowchart LR
 |---|---|---|
 | A | Preserve released batch behavior, inventory dependencies, record import provenance | Done |
 | B | Integrate play-count slice, validation-to-online behavior, common read interface | Done |
-| C | Skip-rate and late corrections done. Feature spec model, exact reference and one generic Flink job running both features done, the hand-written jobs are removed. A spec-driven store and materializer are done and proven end to end for a YAML-only feature. The stores and materializers of the two original features are thin wrappers over them. Open: JobManager-failure recovery evidence, streaming history, published-as-of retrieval, availability boundaries | In progress |
-| D | Label audit, mixed datasets, batch-only vs batch-plus-stream comparison, model-backed inference | Planned |
+| C | Skip-rate and late corrections done. Feature spec model, exact reference and one generic Flink job running both features done, the hand-written jobs are removed. A spec-driven store and materializer are done and proven end to end for a YAML-only feature. The stores and materializers of the two original features are thin wrappers over them. The history, the evidence append, published-as-of retrieval and the availability model (ADR-010, ADR-011) are done. Open: JobManager-failure recovery evidence, gap detection inside the history, the online and offline parity test | In progress |
+| D | Label specs (ADR-012) and training datasets in two modes (ADR-014) are done. Open: label audit of the source, a CLI command and a training loader, batch-only vs batch-plus-stream comparison, model-backed inference | In progress |
 | E | Metrics, recovery drills, benchmarks, clean-clone demo, notebook, reproducible release | Planned |
 
 Bounded later extensions: cloud staging deployment, Metaflow orchestration,

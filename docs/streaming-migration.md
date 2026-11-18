@@ -41,6 +41,11 @@ flowchart LR
     D16 --> D17[Stage 6b<br/>YAML-only feature<br/>from events to Redis]:::dev
     D17 --> D18[ADR-010<br/>time and availability<br/>model]:::dev
     D18 --> D19[Stage 4l<br/>thin wrappers for the<br/>original features]:::dev
+    D19 --> D20[PR 46 to 49<br/>ADR-011, history,<br/>published-as-of]:::dev
+    D20 --> D21[PR 50 to 52<br/>Spark backfill,<br/>PostgreSQL catalog]:::dev
+    D21 --> D22[PR 53 to 58<br/>ADR-012,<br/>label specs]:::dev
+    D22 --> D23[PR 59 and 60<br/>ADR-013, ADR-014]:::dev
+    D23 --> D24[PR 61 and 62<br/>training datasets]:::dev
 
     classDef imp fill:#cfe2ff,stroke:#0d6efd,color:#000
     classDef dev fill:#d4edda,stroke:#28a745,color:#000
@@ -84,6 +89,25 @@ inside FeatureForge.
 | PR #40 | `764f779` | The spec-driven online path is recorded across README, STATUS and the design documents |
 | PR #42 | `a02a378` | ADR-010: time and availability model of the streaming features |
 | Stage 4l (PR #43) | `a780341` | The stores and materializers of the two original features are thin wrappers over the spec-driven store and materializer, `online.ttl` now applies to all three features, ADR-010 accepted |
+| PR #44 | `4858bc7` | Stage 4l and ADR-010 are recorded in this document |
+| PR #45 | `09dc93d` | The skip rate is read through the unified client, and its identity conflict is tested |
+| PR #46 | `8207da2` | ADR-011: history table layout and evidence append |
+| PR #47 | `870599a` | The history table and an idempotent evidence append for spec-driven features |
+| PR #48 | `fbcf2ad` | The spec-driven materializer appends publication evidence |
+| PR #49 | `3fc2dcf` | Published-as-of retrieval over the history table |
+| PR #50 | `9c83d93` | A spec-driven Spark backfill with parity to the spec reference |
+| PR #51 | `405f2b1` | `backfill-spec` writes spec-driven Spark backfills as Parquet |
+| PR #52 | `eee8255` | A PostgreSQL catalog profile for the history table in Docker Compose |
+| PR #53 | `23c2e3b` | ADR-012: label specs |
+| PR #54 | `e605399` | A deterministic behavioral simulator for interaction events |
+| PR #55 | `421c1bb` | mypy in the dev tooling and in CI, existing type errors fixed |
+| PR #56 | `bc15dda` | The `LabelSpec` model, loader and `validate-label-spec` command (ADR-012) |
+| PR #57 | `a6f0ffc` | The exact label reference evaluation (ADR-012) |
+| PR #58 | `f9c30c0` | The Spark label evaluation with parity to the reference (ADR-012) |
+| PR #59 | `c2c15a8` | ADR-013: online store protocol and a Cassandra backend (decision only) |
+| PR #60 | `fa0dade` | ADR-014: training datasets from features and labels |
+| PR #61 | `cd8ff57` | The event-time training dataset |
+| PR #62 | `a05be67` | The published-as-of mode: a Spark join of a pinned history snapshot, status columns, the history start cut, a manifest with snapshot ids |
 
 ---
 
@@ -235,7 +259,7 @@ features (ADR-008). `feature_repo/specs/` contains specs for `user_play_count_1h
 and `user_skip_rate_24h`. The specs are validated, evaluated by an exact
 reference, and drive the generic Flink job `jobs/feature_from_spec.py`, which
 runs both features (see the next section). Stores and materializers became
-spec-driven in stage 4k, Spark features are not spec-driven yet. `online.ttl`
+spec-driven in stage 4k, the Spark backfill from a spec covers count aggregations, and the two original Spark features are hand-written. `online.ttl`
 in a spec is enforced by the spec-driven store. Since stage 4l the stores of
 the two original features delegate to it, so all three features expire.
 
@@ -413,6 +437,8 @@ replay cannot undo the stored state.
 | Spec-driven store | `src/featureforge/streaming/spec_store.py`, `contracts/feature_record.py`, `contracts/count_vector.py` | Any count or ratio spec with one entity key. Guarded writes with `WATCH`/`MULTI`, `append_only` and `componentwise_monotonic`, `online.ttl` as Redis expiry |
 | Unified access | `src/featureforge/online.py` | Batch features, streaming play count and skip rate. The skip-rate reader is optional in the constructor and always set by `from_local` |
 | Feature specs | `src/featureforge/spec/`, `feature_repo/specs/` | Drive the generic Flink job for all three features |
+| History and published-as-of | `src/featureforge/streaming/history.py`, `published_as_of.py`, `published_spark.py` | One Iceberg table per spec, an idempotent append by update identity, the evidence append of `materialize_spec` with `--history-root`, and the rule of ADR-010 in Python and as one Spark join |
+| Labels and training datasets | `src/featureforge/spec/label_model.py`, `label_reference.py`, `label_spark.py`, `training_dataset.py` | Label windows `(t, t + horizon]`, and datasets in `event_time` and `published_as_of` mode with a manifest |
 
 All three features run on the generic job and share watermark delay (10 min),
 allowed lateness (30 min), checkpointing (10 s), too-late side outputs,
@@ -444,13 +470,15 @@ The unified interface reads the skip rate next to the play count. A missing key,
 | Sustained operation and performance targets | **Not verified** |
 | Exactly-once delivery | **Not claimed.** Flink Kafka sinks use `AT_LEAST_ONCE` |
 | Zero emission for inactive users | **Not established.** A newer window can replace a value with zero, but no window job emits zero merely because time advances |
-| Historical streaming publication and published-as-of retrieval | **Not implemented.** No `published_at` is fabricated |
+| Streaming publication evidence and published-as-of retrieval | Verified: the history append, the Python `published_as_of`, and the Spark join of a pinned snapshot, which equals the Python rule at the publication and TTL boundaries on randomized histories. **Not verified:** the parity between a Redis value and the published-as-of value over a bounded replay, gaps inside the history, and several appender processes. Backfills and datasets never write a `published_at` |
+| Training datasets | Verified in both modes: the leakage rule at `t` and at `t + horizon`, exclusion of incomplete label windows, the cut at the latest history start including its edge, status columns with null values, and the manifest counts and snapshot ids. Composite keys fail by design in `published_as_of` mode |
 | Atomic mixed batch and stream reads | **Not provided** (`atomic: false`) |
 | Spec-driven execution in Flink | Verified for count and ratio features: the generic job is the only implementation of all three streaming features |
 | Spec-driven store and materializer for count and ratio specs | Verified end to end for `content_play_count_1h` (events to Redis: hand-calculated windows, redelivered event, TTL, rerun, replay). Verified for the skip-rate spec by unit tests and Redis integration tests. The two original features run on the same code through thin wrappers |
 | `online.ttl` as a Redis expiry | Verified for the spec-driven store: set by written updates, not extended by unchanged or stale updates, measured in wall-clock time. The two original features get the same expiry through their wrappers |
 | `WATCH` retry of the spec-driven store | Verified with a mocked pipeline and, through the two wrappers, with a real concurrent writer on Redis |
-| `window_replace` store policy and Spark features from a spec | **Not implemented** |
+| `window_replace` store policy | **Not implemented** |
+| Spark features from a spec | Count aggregations only (`backfill-spec`). Other operators fail loudly, and the two original Spark features are hand-written |
 
 Fresh bounded reprocessing is not recovery. Cancelling a test job during cleanup
 is not a recovery test. Passing replay, routing and correction tests must not be
@@ -466,7 +494,7 @@ The online-serving tests are not marked `integration`. They can run under
 offline files and Redis connectivity but not that expected online values are
 materialized. The unified, routing, late-event, savepoint, crash-recovery,
 dedupe-expiry, skip-rate, spec-driven store, spec-driven materializer and
-end-to-end tests are marked `integration`.
+end-to-end tests are marked `integration`. So are the Spark tests that read the history and the dataset tests with a history.
 
 ### Open test-maintenance items
 
@@ -492,9 +520,9 @@ count and the skip rate. All three features run on one generic spec-driven Flink
 spec-driven store and materializer serve count and ratio features, and a
 feature defined by a YAML spec alone (`content_play_count_1h`) is proven from
 events to Redis. The stores and materializers of the two original features are thin wrappers
-over the spec-driven ones, and Spark features are not spec-driven.
+over the spec-driven ones. A Spark backfill from a spec covers count aggregations, and the two original Spark features are hand-written.
 
 Remaining before the streaming phase can be called complete: JobManager-failure
-recovery verification, verification at the production TTL values, versioned streaming history and a reproducible completion demonstration. These must be
+recovery verification, verification at the production TTL values, gap detection inside the streaming history, the parity test between Redis and published-as-of, and a reproducible completion demonstration. These must be
 completed or explicitly scoped. For current test and CI results see the README
 badge and the Actions page, not this document.

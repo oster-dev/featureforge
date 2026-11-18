@@ -1,14 +1,17 @@
 # FeatureForge Demo Guide
 
-Three reviewer walkthroughs, each runnable from a clean checkout:
+Four reviewer walkthroughs, each runnable from a clean checkout:
 
 1. **Batch path:** synthetic data to Feast-materialized online features.
 2. **Streaming path:** Kafka to Flink to Redis, verified end to end.
 3. **Feature spec:** a declarative spec validated, evaluated against golden fixtures, run as a generic Flink job and served from Redis without feature-specific code.
+4. **Training dataset:** features and a label joined in two explicit modes,
+   event time and published-as-of, written as Parquet with a manifest.
 
 Expected local runtime: batch about 2 minutes, the spec evaluation a few seconds,
 the generic job about a minute, the YAML-only end-to-end test about ten seconds on a warm stack,
-streaming several minutes. In CI each Flink test module starts from a fresh TaskManager, and the skip-rate suites recreate it per test.
+streaming several minutes, the training dataset tests about 20 seconds once the
+Spark packages are cached. In CI each Flink test module starts from a fresh TaskManager, and the skip-rate suites recreate it per test.
 
 ```mermaid
 flowchart LR
@@ -22,6 +25,9 @@ flowchart LR
         C1[YAML spec] --> C2[Validate<br/>and field check] --> C3[Exact reference<br/>evaluation] --> C4[Golden fixtures<br/>and Python<br/>references]
         C2 --> C5[Generic Flink job<br/>for all features] --> C4
         C5 --> C6[Spec-driven<br/>materializer<br/>and store] --> C7[(Redis)]
+    end
+    subgraph D["Demo D: training dataset"]
+        D1[Events and<br/>pinned history] --> D2[Spark join and<br/>backfills] --> D3[Parquet by UTC day<br/>and manifest]
     end
 ```
 
@@ -157,7 +163,8 @@ request.
   and dedupe expiry are covered by `test_generic_job_recovery.py`,
   `test_generic_job_checkpoint_recovery.py` and `test_generic_job_dedupe_ttl.py`.
 - The Flink Kafka sinks are at-least-once. The path is idempotent, not exactly-once.
-- Multi-partition Kafka and streaming history are not implemented.
+- Multi-partition Kafka is not demonstrated. This demo neither writes nor reads
+  the history table, see Demo D.
 
 See [Known limits](../ARCHITECTURE.md#known-limits).
 
@@ -444,7 +451,8 @@ python -m featureforge.streaming.materialize_spec \
   values are not proven for it.
 - The two original features run on the spec-driven store and materializer
   through thin wrappers. The path is proven end to end from events to Redis by
-  its own test for `content_play_count_1h`. No Spark feature is driven by a spec.
+  its own test for `content_play_count_1h`. A Spark backfill from a spec covers count aggregations only (`backfill-spec`),
+  and the two original Spark features are hand-written.
 - `online.ttl` is a Redis expiry from the last accepted write for all three
   streaming features. Keys written before the wrappers have no expiry until
   their next written update.
@@ -453,7 +461,100 @@ python -m featureforge.streaming.materialize_spec \
 
 ---
 
+## Demo D: training dataset
+
+
+A dataset joins the features and one label of every observation, in one of two
+explicit modes that never replace each other
+([ADR-014](adr/ADR-014-training-datasets.md)). There is no CLI command for
+datasets yet, so this demo runs the tests that build real datasets with Spark.
+It needs no Docker. The first run downloads the Spark packages.
+
+
+### 1. Event-time mode
+
+
+```bash
+pytest -v tests/unit/test_training_dataset.py   # 12 passed
+```
+
+
+Features come from events over `(t - size, t]`, the label from events over
+`(t, t + horizon]`. The hand-calculated fixture puts events at `t - 1h`, `t`,
+just after `t`, at `t + horizon` and just after it. The event at `t` is a feature
+and never the label. An observation whose label window ends after `data_end` is
+excluded and counted. The manifest lists every partition, the row counts add up,
+existing output is never overwritten, and 60 random observations match the
+feature and label references.
+
+
+### 2. Published-as-of mode and the history
+
+
+```bash
+pytest -v -m integration \
+  tests/integration/test_published_spark.py \
+  tests/integration/test_training_dataset_published.py   # 4 passed
+```
+
+
+The first file runs the Spark join of the history. One version is published at
+`P`, and `online.ttl` is the retention:
+
+
+| Observation time | Status |
+|---|---|
+| `P` minus 1 microsecond | `not_published` |
+| `P` | `present` |
+| `P + ttl` minus 1 microsecond | `present` |
+| `P + ttl` | `expired` |
+
+
+The same file compares the join with `published_as_of` on randomized histories
+at every boundary. The second file builds both modes over the same observations.
+A late event separates them: the event-time dataset counts it, the history does
+not hold it. An observation before the history start is excluded and counted, an
+observation exactly at the start stays, and with two features the later start
+cuts. A feature that is not published or expired has null values and a
+`<spec>__status` column, never zero. The test also checks that a run leaves the
+history snapshot unchanged.
+
+
+The manifest of the published-as-of dataset in the first test has this shape
+(values elided where they depend on the run):
+
+
+```json
+{
+  "manifest_version": 1,
+  "mode": "published_as_of",
+  "features": [{"name": "user_skip_rate_24h", "version": 1}],
+  "label": {"name": "label_under_test", "version": 1, "horizon_seconds": 604800},
+  "observations": 3,
+  "rows": 2,
+  "excluded_incomplete": 0,
+  "excluded_before_history": 1,
+  "history": [{"feature": "user_skip_rate_24h", "snapshot_id": "...", "history_start": "..."}]
+}
+```
+
+
+### What this demo does not prove
+
+
+- There is no CLI command and no training loader yet.
+- The parity between a Redis value and the `published_as_of` value over a bounded
+  replay is not tested. The dataset reflects the recorded evidence.
+- The `published_as_of` mode needs one entity key. `history_start` marks only the
+  beginning of the evidence, so a later gap reads as `not_published`.
+- There are no throughput numbers for the Spark join.
+
+
+---
+
+
 ## CI evidence
+
 
 Four GitHub Actions jobs run on every push and pull request to `main`. A
 scheduled nightly run on `main` repeats them.
@@ -462,7 +563,7 @@ scheduled nightly run on `main` repeats them.
 |---|---|
 | Baseline lint and test | Clean install, Ruff, all infrastructure-free tests |
 | Python compatibility | The infrastructure-free suite on Python 3.11 and 3.12 |
-| Serving integration | Redis, Feast, materialization, online parity and ranking |
+| Serving integration | Redis, Feast, materialization, online parity and ranking, the history, the published-as-of join and the training datasets |
 | Streaming integration | Full Compose stack, joined Kafka, Flink and Redis tests including the generic spec-driven job, each Flink test module on a fresh TaskManager |
 
 Current status: see the badge in the [README](../README.md) and the
@@ -491,6 +592,8 @@ runs them with zero skips.
 | Generic job fails with `ModuleNotFoundError` | A dependency is missing in `docker/flink/Dockerfile`. Rebuild with `docker compose up -d --build` |
 | Changed code under `src/` not picked up by Flink | `jobs/` and `feature_repo/specs/` are mounted, `src/` is copied into the image. Rebuild with `docker compose up -d --build` |
 | Savepoint cannot be written or read | JobManager and TaskManager must both mount the `flink-savepoints` volume. A volume with old permissions: `docker compose down`, `docker volume rm featureforge-stream_flink-savepoints`, `docker compose up -d --build` |
+| `ClassNotFoundException: iceberg.DefaultSource` | A plain Spark session started earlier in the same `pytest` call. Run the history and dataset tests in their own call, as in Demo D |
+| The dataset tests fail offline | Spark downloads the Iceberg and JDBC packages on the first run. Run once with network access |
 | Spec validation fails | Read the printed field path and message. An unknown event field is reported with the available fields |
 | `materialize_spec` stops with `Topic is not available` or `Refusing to materialize an empty Kafka range` | Run the Flink job for that spec first. The feature topic must exist and contain records |
 | `materialize_spec` stops with `record fields do not match` | The record on the topic and the spec disagree. Compare the payload with the spec fields and version. Never edit Redis by hand |
