@@ -297,8 +297,19 @@ def test_the_mode_is_required_and_checked(spark: SparkSession, tmp_path: Path) -
         call(spark, [PLAY_COUNT], label, events, observations, **common)
     with pytest.raises(ValueError, match="mode"):
         call(spark, [PLAY_COUNT], label, events, observations, mode="latest", **common)
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(ValueError, match="pinned history"):
         call(spark, [PLAY_COUNT], label, events, observations, mode="published_as_of", **common)
+    with pytest.raises(ValueError, match="only used by mode published_as_of"):
+        call(
+            spark,
+            [PLAY_COUNT],
+            label,
+            events,
+            observations,
+            mode="event_time",
+            history={},
+            **common,
+        )
 
 
 def test_rows_match_the_references(spark: SparkSession, tmp_path: Path) -> None:
