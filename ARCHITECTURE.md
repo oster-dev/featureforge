@@ -29,6 +29,10 @@ flowchart LR
     FEAST -->|historical retrieval| TRAIN[Training pipeline]
     FEAST -->|materialization| REDIS[(Redis<br/>online store)]
     MAT --> REDIS
+    MAT --> HIST[(History table<br/>Iceberg, publication evidence)]
+    EV[(Interaction events)] --> DS[Spark dataset builder<br/>event_time and published_as_of]
+    HIST --> DS
+    DS --> DSOUT[(Training dataset<br/>Parquet and manifest)]
     REDIS --> CLIENT[Unified online client<br/>availability and freshness]
 ```
 
@@ -37,11 +41,13 @@ flowchart LR
 | Batch features | Pandas (reference), PySpark (parity-tested) |
 | Spec-driven backfill | PySpark, count specs: values at explicit observation times, equal to the spec reference, no availability time |
 | Offline store | One canonical Parquet root, Hive-style `observation_date` partitions |
+| Publication history | One Iceberg table per spec (PyIceberg writes, Spark reads, SQLite or PostgreSQL catalog), appended idempotently by `materialize_spec` with `--history-root` |
+| Training datasets | Spark: features from events (`event_time`) or from a pinned history snapshot (`published_as_of`), a label from events, Parquet by UTC day and a manifest |
 | Retrieval and materialization | Feast, point-in-time joins |
 | Streaming | Kafka, Flink (PyFlink), Pydantic contracts |
 | Feature definitions as data | YAML specs, Pydantic validation, exact reference, one generic Flink job for all spec-defined streaming features |
 | Online store | Redis. One spec-driven store and materializer for count and ratio specs. The two original features keep their typed models and command lines as thin wrappers over it |
-| Quality | pytest, Ruff, four CI layers |
+| Quality | pytest, Ruff, mypy, four CI layers |
 
 ---
 
@@ -285,11 +291,67 @@ flowchart LR
   `materialize_skip_rate.py`) keep their typed models, constructors and command
   lines and delegate to the spec-driven store and materializer. They load their
   spec from `feature_repo/specs/` next to the source tree. `offline.store` in
-  the specs is declarative only: no Iceberg store exists.
+  the specs is declarative only: no Iceberg offline feature store exists (the history table of section 5 only records publication evidence).
 
 ---
 
-## 5. Serving
+## 5. History and training datasets
+
+
+```mermaid
+flowchart LR
+    MS[Spec-driven<br/>materializer] --> R[(Redis)]
+    MS -->|after a written result| H[(History table<br/>one per spec)]
+    H -->|pinned snapshot| J[Spark join<br/>latest version at or before t<br/>TTL cutoff]
+    EV[(Events)] --> BF[Spark backfills<br/>features up to t<br/>label after t]
+    J --> DS[Dataset builder<br/>mode required]
+    BF --> DS
+    DS --> OUT[(Parquet by UTC day<br/>and manifest)]
+```
+
+
+- **Publication evidence.** After Redis returns `written`, the materializer
+  appends the update to the history table of the spec with `published_at`, one
+  UTC clock reading. The table is partitioned by the day of `published_at`, the
+  first row of an update identity wins, and one appender per table is the rule
+  (ADR-010, ADR-011).
+- **Published-as-of rule.** A version is available at `T` if its `published_at`
+  is at or before `T`, no later accepted version has `published_at` at or before
+  `T`, and `T` is before `published_at + online.ttl`. Past that the value is
+  missing, never zero. `published_as_of` answers this for one time in Python and
+  is the oracle for the Spark join.
+- **Labels.** A label is computed from events over `(t, t + horizon]`. An
+  observation whose window ends after `data_end` is excluded and counted, and a
+  label is never null (ADR-012).
+- **Two modes, never substituted.** `build_training_dataset` requires a mode.
+  `event_time` computes features from events over `(t - size, t]`, including
+  events that arrived late. `published_as_of` takes them from a pinned history
+  snapshot with one Spark scan per table: the version with the highest rank
+  (`published_at`, `observation_time`, the counts, `update_id`) among those at or
+  before `t`, expired when `t` reaches `published_at + online.ttl`. A feature
+  that is not published or expired has null values and a `status` column.
+- **History start.** An observation before the latest history start of all
+  features has no evidence either way. It is excluded and counted in
+  `excluded_before_history`, and an observation exactly at the start stays.
+- **Leakage rule.** Features use only information up to `t`, the label only
+  events strictly after `t`. An event at `t` belongs to the features.
+- **Output.** Parquet partitioned by the UTC day of the observation time, never
+  overwritten, with `_manifest.json`: mode, spec versions, `data_end`, counts,
+  every partition with its rows, the Spark version and, in `published_as_of`
+  mode, the snapshot id and start of every history (ADR-014).
+- **Boundary.** `training_dataset.py` never imports PyIceberg. The caller reads
+  the history and passes one pinned frame per feature. A dataset run never
+  writes to the history, and a test checks that the snapshot is unchanged.
+- **Limits.** The `published_as_of` mode needs one entity key. `history_start`
+  marks only the beginning of the evidence, so a later gap reads as
+  `not_published`. There is no CLI command for datasets yet. See
+  [Known limits](#known-limits) and [STATUS.md](STATUS.md).
+
+
+---
+
+
+## 6. Serving
 
 `OnlineFeatureClient` reads batch features (via Feast) and streaming features
 (play count and skip rate, via the Redis streaming store) through one
@@ -308,7 +370,7 @@ partition.
 
 ---
 
-## 6. Testing and CI
+## 7. Testing and CI
 
 ```mermaid
 flowchart LR
@@ -321,9 +383,9 @@ flowchart LR
 
 | CI job | Proves |
 |---|---|
-| Baseline | Clean install, Ruff, all tests marked not `integration` |
+| Baseline | Clean install, Ruff, mypy, all tests marked not `integration` |
 | Python 3.11 and 3.12 | The tests marked not `integration` on two more supported versions |
-| Serving integration | Generate, backfill, apply, materialize, online parity, Redis store tests |
+| Serving integration | Generate, backfill, apply, materialize, online parity, Redis store tests, history, published-as-of join and training dataset tests |
 | Streaming integration | Full Compose stack, joined Kafka, Flink and Redis tests, including the generic spec-driven job |
 
 Streaming integration tests that start Flink jobs each recreate the TaskManager
@@ -341,13 +403,13 @@ repository) live in `tests/failure_simulations/`, with runbooks in
 
 ---
 
-## 7. Roadmap
+## 8. Roadmap
 
 ```mermaid
 flowchart LR
     P1[Phase 1<br/>Feature store<br/>Released v0.1.0]:::done
     P2[Phase 2<br/>Streaming platform<br/>Core delivered, specs in progress]:::wip
-    P3[Phase 3<br/>End-to-end ML<br/>Planned]:::plan
+    P3[Phase 3<br/>End-to-end ML<br/>Started]:::wip
     P1 --> P2 --> P3
 
     classDef done fill:#d4edda,stroke:#28a745,color:#000
@@ -356,7 +418,7 @@ flowchart LR
 ```
 
 Planned and **not implemented**: a `window_replace` store policy, further
-operators in Flink, Iceberg history, Cassandra backend, serving service with
+operators in Flink, a CLI for datasets, the online and offline parity test, a Cassandra backend, serving service with
 load tests, observability and recovery drills, ML workflow with registry and
 rollback. Scope and order: [STATUS.md](STATUS.md) and
 [docs/PLATFORM_BLUEPRINT.md](docs/PLATFORM_BLUEPRINT.md).
@@ -381,7 +443,7 @@ rollback. Scope and order: [STATUS.md](STATUS.md) and
   ADR-011. The history table and an idempotent append exist in
   `src/featureforge/streaming/history.py`, and `materialize_spec` appends
   evidence when `--history-root` is set. `published_as_of` reads the history by
-  the rule of ADR-010. There is no training dataset API yet.
+  the rule of ADR-010. Training datasets read it in two modes (section 5). There is no CLI command for datasets yet, and the parity test between Redis and `published_as_of` is open.
 - The spec-driven store is proven end to end from events to Redis by its own
   test for `content_play_count_1h`. The two original features run on the same
   code through their wrappers and are covered by their joined tests and Redis
@@ -404,6 +466,9 @@ rollback. Scope and order: [STATUS.md](STATUS.md) and
 | 009 | Spec-driven online stores and materializer |
 | 010 | Time and availability model for streaming history |
 | 011 | History table layout and evidence append |
+| 012 | Label specs |
+| 013 | Online store protocol |
+| 014 | Training datasets |
 
 ## Principles
 

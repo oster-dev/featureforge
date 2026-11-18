@@ -8,7 +8,10 @@ system without requiring a cloud deployment.
 Related: [ARCHITECTURE.md](../ARCHITECTURE.md) ·
 [ADR-002](adr/ADR-002-canonical-offline-store-contract.md) ·
 [ADR-005](adr/ADR-005-aws-s3-offline-store-profile.md) ·
-[ADR-009](adr/ADR-009-spec-driven-online-stores.md)
+[ADR-009](adr/ADR-009-spec-driven-online-stores.md) ·
+[ADR-010](adr/ADR-010-time-and-availability-model.md) ·
+[ADR-011](adr/ADR-011-history-table-layout.md) ·
+[ADR-014](adr/ADR-014-training-datasets.md)
 
 ---
 
@@ -45,6 +48,8 @@ flowchart LR
 | Online store | Redis | DynamoDB |
 | Streaming transport | Kafka (Compose) | Managed Kafka (MSK) |
 | Streaming compute | Flink (Compose) | Managed Flink |
+| Publication history | Iceberg (PyIceberg writes, Spark reads), SQLite or PostgreSQL JDBC catalog | Iceberg warehouse on S3. The catalog service is not decided |
+| Training datasets | Parquet by UTC day and a manifest, written by Spark | Same layout under `training/datasets/` |
 
 The canonical-source invariant is preserved:
 
@@ -78,7 +83,9 @@ s3://featureforge-<environment>/
 │   ├── user_engagement_features/observation_date=YYYY-MM-DD/features.parquet
 │   ├── content_popularity_features/observation_date=YYYY-MM-DD/features.parquet
 │   └── manifests/{backfill,correctness,freshness,materialization}/
+├── history/
 ├── training/historical-features/
+├── training/datasets/<dataset-run>/
 └── models/baseline/
 ```
 
@@ -91,6 +98,12 @@ s3://featureforge-<environment>/
 - Raw events partition by `ingestion_date`. Features partition by
   `observation_date`, which enables partition pruning and reuses the existing
   point-in-time logic and freshness checks (ADR-003).
+- `history/` holds the Iceberg warehouse of the publication history (ADR-011).
+  `training/datasets/` holds the datasets of ADR-014: Parquet partitioned by the
+  UTC observation day and a `_manifest.json` that is written last, so a
+  directory without it is not a dataset. Locally the builder refuses an existing
+  output path. On S3 that check is not atomic between concurrent runs, so the
+  design intent is a unique prefix per run. Not built.
 
 ## 4. Encryption
 
@@ -112,6 +125,8 @@ environment and role.
 | `featureforge-backfill-writer` | Write `raw/`, `source/`, `offline-store/`, backfill and correctness manifests | Write DynamoDB, change IAM or KMS policies |
 | `featureforge-materialization-writer` | Read `offline-store/`, write materialization manifests, write the DynamoDB table | Modify `raw/` or `source/`, change Feast definitions |
 | `featureforge-serving-reader` | Read the DynamoDB table | Write S3 or DynamoDB, trigger materialization, change Feast definitions |
+| `featureforge-stream-materializer` | Write the DynamoDB table and the `history/` prefix | Write `training/`, change IAM or KMS policies |
+| `featureforge-dataset-builder` | Read `history/` and `source/`, write `training/datasets/` | Write `history/` or DynamoDB |
 
 The component that validates and promotes data is distinct from the one that
 consumes it. A compromised serving credential cannot corrupt feature data.
@@ -138,6 +153,7 @@ Illustrative policy for the serving reader (not deployed):
 | `manifests/` | Stay in Standard | Small objects. Lifecycle transitions skip objects under 128 KB by default and per-object transition costs can exceed the savings |
 | `training/` | Standard, then IA at 90 days | Regenerable, kept for reproducibility |
 | `models/` | Standard, versioned | Small artifacts, versioning matters more than class |
+| `history/`, `training/datasets/` | No rule yet | Table files reference each other and a dataset is read as a whole. Test any rule against real reads before adding it |
 
 - Buckets have **versioning** enabled. A faulty backfill that overwrites a
   partition leaves the previous good version recoverable, consistent with the
@@ -180,6 +196,15 @@ local and CI online store.
 > condition expression when it updates an item that may be expired. An item past
 > its TTL is never served as live and never replaced by zero.
 
+> **TTL details.** The expiry attribute must be a Number in Unix epoch seconds,
+> otherwise TTL ignores the item
+> ([TTL](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/TTL.html)).
+> Expired items pending deletion still count toward storage and read costs. The
+> documentation names filter expressions for reads and condition expressions
+> for writes to expired items
+> ([expired items](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/ttl-expired-items.html)).
+
+
 ## 8. Streaming profile
 
 Managed Kafka (Amazon MSK) and Managed Service for Apache Flink are the
@@ -206,6 +231,12 @@ What stays unverified:
   is not tested.
 - Whether to adopt Glue Schema Registry. The current contracts are Pydantic
   models, not registry-backed schemas.
+- The catalog of the history. Locally PyIceberg writes and Spark reads through a
+  SQLite or PostgreSQL JDBC catalog. Which catalog service backs it on AWS, and
+  whether PyIceberg and Spark agree on it there, is not decided or tested.
+- The Spark runtime of the dataset builder and its Iceberg packages. Not decided.
+- The no-overwrite and manifest-last rules of a dataset on S3 under concurrent
+  runs.
 
 ## 9. Resilience
 
@@ -233,6 +264,7 @@ traced to the backfill, check and materialization that produced it.
 - Cross-region replication or multi-region disaster recovery.
 - DynamoDB autoscaling beyond on-demand mode.
 - A CI/CD pipeline that deploys to AWS.
+- A history catalog, a dataset job or a Spark runtime on AWS.
 
 These remain future work. FeatureForge deliberately completes local
 correctness, reliability and documentation before adding cloud complexity.

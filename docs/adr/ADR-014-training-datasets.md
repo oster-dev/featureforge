@@ -1,6 +1,6 @@
 # ADR-014 Training datasets from features and labels
 
-- Status: Accepted. Decides how a training dataset joins feature values and a label, in two modes. Nothing is implemented yet. The implementation follows in two changes, the event-time mode first.
+- Status: Accepted. Decides how a training dataset joins feature values and a label, in two modes. Both modes are implemented: event time (#61) and published-as-of (#62). Open: a CLI command, the online and offline parity test and the open items below.
 - Date: 2026-11-18
 - Author: Nico Ostermann
 - Deciders: Nico Ostermann

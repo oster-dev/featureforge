@@ -1,6 +1,6 @@
 # ADR-012 Label specs for training data
 
-- Status: Accepted. Decides what a label is, how its window and its observability work and which events it may use. Nothing is implemented yet, the implementation follows in separate changes.
+- Status: Accepted. Decides what a label is, how its window and its observability work and which events it may use. Implemented: the `LabelSpec` model, loader and `validate-label-spec` command (#56), the exact reference (#57) and the Spark evaluation (#58).
 - Date: 2026-11-17
 - Author: Nico Ostermann
 - Deciders: Nico Ostermann

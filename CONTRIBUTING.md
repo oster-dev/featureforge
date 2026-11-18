@@ -62,9 +62,13 @@ has to be moved to a branch afterwards.
 ```bash
 ruff format --check .
 ruff check .
+mypy
 pytest -m "not integration"
 git diff --check
 ```
+
+Before pushing, run the full suite once with the compose stack running:
+`pytest -v`. It takes about nine minutes on a laptop.
 
 Fix formatting with `ruff format .` and imports with `ruff check --fix .`.
 Run `ruff format .` before `git add`, otherwise the staged version stays
@@ -78,6 +82,7 @@ unformatted. CI fails on both checks, and it is the cheapest failure to avoid.
 | Feast, materialization, online serving | `docker compose up -d`, `feast apply`, then `pytest tests/integration/test_online_serving.py tests/integration/test_unified_online.py` |
 | Redis store policies | `pytest -m integration tests/integration/test_streaming_redis_online_store*.py tests/integration/test_redis_skip_rate_store.py` |
 | The spec-driven store, record parser, decision function or materializer (`spec_store.py`, `contracts/feature_record.py`, `contracts/count_vector.py`, `materialize_spec.py`) | `pytest tests/unit/test_count_vector_update.py tests/unit/test_feature_record.py tests/unit/test_spec_store.py tests/unit/test_materialize_spec.py tests/unit/test_materialize_spec_history.py`, then `docker compose up -d kafka redis` and `pytest -m integration tests/integration/test_spec_store_redis.py tests/integration/test_materialize_spec_kafka_to_redis.py tests/integration/test_materialize_spec_kafka_to_history.py`. A change to the end-to-end path also needs `tests/integration/test_content_play_count_end_to_end.py` on the full stack |
+| The history table, `published_as_of`, label specs, the Spark join of the history or the training datasets (`history.py`, `published_as_of.py`, `published_spark.py`, `training_dataset.py`, `label_*.py`) | `pytest tests/unit/test_history.py tests/unit/test_history_catalog_config.py tests/unit/test_published_as_of.py tests/unit/test_label_spec.py tests/unit/test_label_reference.py tests/unit/test_label_spark.py tests/unit/test_training_dataset.py`, then `docker compose up -d` and `pytest -m integration tests/integration/test_history_spark_read.py tests/integration/test_history_postgres_catalog.py tests/integration/test_published_spark.py tests/integration/test_training_dataset_published.py`. Run the integration files in their own `pytest` call, see the Spark entry in Troubleshooting |
 | A feature spec, the spec model, reference or job plan | `python -m featureforge.cli validate-spec`, then `pytest tests/unit/test_spec_model.py tests/unit/test_spec_reference.py tests/unit/test_spec_golden_parity.py tests/unit/test_spec_flink_plan.py` |
 | The generic Flink job (`jobs/feature_from_spec.py`), `src/`, `docker/flink/Dockerfile`, or `docker-compose.yml` | `docker compose up -d --build`, then the full streaming selection below: the generic job is the only implementation of both streaming features |
 | Flink jobs, contracts, routing, materializers, savepoint or crash recovery | The full streaming selection below |
@@ -206,6 +211,29 @@ flowchart TD
   `docker/flink/Dockerfile`. The image installs its dependencies explicitly and
   checks the project imports at build time.
 
+**Training datasets and history**
+
+
+- A dataset call names its mode, `event_time` or `published_as_of`. There is no
+  default, and one mode never stands in for the other (ADR-010, ADR-014). The
+  manifest records the mode.
+- Features use only information up to `t`, the label only events strictly after
+  `t`. An event at `t` is a feature and never the label.
+- A label is never read from the history and is never null. An observation with
+  an incomplete label window is excluded and counted, not written.
+- The Spark join of the history must match `published_as_of`, which is the
+  oracle. A version published at `t` is visible, and a value is expired when
+  `t` reaches `published_at + online.ttl`. Changing the rank or the TTL cutoff
+  means updating the oracle, the join, the tests and ADR-010 together.
+- An observation before the latest history start is excluded and counted. One
+  exactly at the start stays.
+- A dataset run and a backfill never write to the history, and only the
+  materializer writes `published_at` (ADR-011). A dataset reads the history at a
+  pinned snapshot and records its id in the manifest.
+- `training_dataset.py` does not import PyIceberg. The caller reads the history
+  and passes the pinned frames.
+
+
 **Failure visibility**
 
 Failures must not look like success: raise a clear exception, return a
@@ -234,6 +262,11 @@ Rules:
 - Integration tests use isolated topics and key prefixes, never shared names.
   New integration tests clean up the topics they create.
 - Wait for observable outputs, not fixed sleeps.
+- A boundary test must be able to fail. After writing one, flip the boundary
+  in the code (for example `<=` to `<`), watch the test fail, and restore the
+  code.
+- Tests that read the Iceberg history start Spark with `SPARK_PACKAGES` from
+  `featureforge.streaming.history`, so every test shares one package list.
 - Cleanup code must not mask the original failure.
 - A recovery test must prove the restore itself, not only the final values:
   a job that replays from the earliest offset reaches the same counts as one
@@ -272,6 +305,9 @@ flowchart LR
   Compose setup to the baseline job.
 - A new Flink integration module must be added to `MODULES` in
   `scripts/ci/run_flink_integration.sh`, otherwise CI never runs it.
+- An integration test of the serving job must be added to the file list and
+  to `required_suites` in `.github/workflows/ci.yml`. A test with the
+  `integration` marker that is in neither list never runs in CI.
 - Never remove skip guards from baseline tests to manufacture a green run.
   Skipped must never look like proven.
 - Failed streaming runs upload a diagnostics artifact. Download it before
@@ -294,6 +330,7 @@ Background: [ADR-004](docs/adr/ADR-004-github-actions-ci.md).
 | Rebuilt job code not picked up | `jobs/` and `feature_repo/specs/` are mounted. Changes under `src/` or `docker/flink/Dockerfile` need `docker compose up -d --build` |
 | `ModuleNotFoundError` inside a Flink job | A dependency is missing in `docker/flink/Dockerfile`. Check with `docker compose exec -T jobmanager /opt/pyflink/bin/python -c "import featureforge.spec.loader"` |
 | Savepoint cannot be written or read | Both `jobmanager` and `taskmanager` must mount the `flink-savepoints` volume at `/opt/flink/savepoints`, owned by `flink`. A volume created before this setup keeps old permissions: `docker compose down`, `docker volume rm featureforge-stream_flink-savepoints`, then `docker compose up -d --build` |
+| `ClassNotFoundException: iceberg.DefaultSource` | Spark starts one JVM per Python process, and only the session that starts it loads `spark.jars.packages`. A plain session created earlier in the same `pytest` call, for example by the unit tests with `create_local_session`, leaves the Iceberg packages out. Run the Iceberg integration files in their own call. The package list is `SPARK_PACKAGES` in `featureforge.streaming.history` |
 | A spec is rejected | `python -m featureforge.cli validate-spec <spec.yaml>` prints each violated rule and the available names |
 | `SkipRateUpdateConflictError` or `UpdateConflictError` | Compare stored and incoming count vectors, find the upstream producer, fix or replay upstream. Never edit Redis by hand or weaken the policy |
 | `materialize_spec` fails with `record fields do not match` | The record on the feature topic does not match the spec: compare the topic payload with the spec fields and the spec version, then fix the producer or the spec. Never edit Redis by hand |
@@ -341,6 +378,8 @@ test: recover the generic job from a TaskManager crash via checkpoint
 test: run a YAML-only feature from events to Redis on the generic stack
 test: add skip-rate golden fixture with hand-calculated values
 ci: expand Flink integration selection
+ci: run the published-as-of and dataset integration tests
+feat: add the published-as-of mode to the training dataset (ADR-014)
 fix: preserve UTC timestamp semantics in Spark features
 docs: rewrite ARCHITECTURE with current streaming state
 ```
