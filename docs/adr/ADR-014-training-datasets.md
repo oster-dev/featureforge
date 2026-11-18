@@ -1,6 +1,6 @@
 # ADR-014 Training datasets from features and labels
 
-- Status: Accepted. Decides how a training dataset joins feature values and a label, in two modes. Both modes are implemented: event time (#61) and published-as-of (#62). Open: a CLI command, the online and offline parity test and the open items below.
+- Status: Accepted. Decides how a training dataset joins feature values and a label, in two modes. Both modes are implemented: event time (#61) and published-as-of (#62). The online and offline parity test is done (#65). Open: a CLI command and the open items below.
 - Date: 2026-11-18
 - Author: Nico Ostermann
 - Deciders: Nico Ostermann
@@ -77,7 +77,7 @@ Planned, and written before the implementation.
 - The mode is required, composite keys in `published_as_of` mode fail, and existing output is not overwritten.
 - The manifest lists every partition, and the row counts add up to the rows written.
 - A dataset run never writes to the history (ADR-011).
-- The planned parity test between online and offline: a bounded replay writes Redis and the history, and the Redis value at the stop time equals the `published_as_of` value at that time.
+- The parity test between online and offline (#65): bounded runs write Redis and the history, the Redis value equals the `published_as_of` value after each run, and an earlier time still returns the earlier version. Not covered: several entities and the TTL expiry.
 
 ## Open items
 

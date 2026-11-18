@@ -543,8 +543,7 @@ The manifest of the published-as-of dataset in the first test has this shape
 
 
 - There is no CLI command and no training loader yet.
-- The parity between a Redis value and the `published_as_of` value over a bounded
-  replay is not tested. The dataset reflects the recorded evidence.
+- The parity between a Redis value and the `published_as_of` value is tested over two bounded runs of one entity, not for several entities or at TTL expiry. The dataset reflects the recorded evidence.
 - The `published_as_of` mode needs one entity key. `history_start` marks only the
   beginning of the evidence, so a later gap reads as `not_published`.
 - There are no throughput numbers for the Spark join.
