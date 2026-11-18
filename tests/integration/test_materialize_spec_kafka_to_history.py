@@ -1,10 +1,11 @@
-"""Verify the evidence append of the generic materializer from Kafka to the history table."""
+"""Verify the evidence append of the generic materializer and its parity with published_as_of."""
 
 import contextlib
 import json
 import os
 import subprocess
 import sys
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
@@ -17,6 +18,7 @@ from redis import Redis
 from featureforge.spec.loader import load_spec
 from featureforge.streaming.contracts.feature_record import stamp
 from featureforge.streaming.history import HistoryTable, open_local_catalog
+from featureforge.streaming.published_as_of import published_as_of
 from featureforge.streaming.spec_store import RedisSpecStore
 
 pytestmark = pytest.mark.integration
@@ -150,6 +152,47 @@ def test_evidence_is_recorded_per_accepted_update_and_survives_a_replay(tmp_path
         assert [
             (row["play_count"], row["published_at"]) for row in history_rows(spec, tmp_path)
         ] == [(row["play_count"], row["published_at"]) for row in rows]
+    finally:
+        redis_client.delete(store.key_for(entity))
+        redis_client.close()
+        delete_topic(topic)
+
+
+def test_published_as_of_matches_redis_at_every_point_in_time(tmp_path):
+    spec = load_spec(SPEC_PATH)
+    run_id = uuid4().hex
+    topic = f"features.test-parity.{run_id}.v1"
+    key_prefix = f"featureforge-stream:integration:parity:{run_id}"
+    entity = f"user_{run_id}"
+    history = HistoryTable(open_local_catalog(tmp_path), spec)
+
+    create_topic(topic)
+    redis_client = Redis.from_url(REDIS_URL, decode_responses=True)
+    store = RedisSpecStore(redis_client, spec, key_prefix=key_prefix)
+    try:
+        produce(topic, [record_json(spec, entity, 1), record_json(spec, entity, 2)])
+        before = datetime.now(UTC)
+        run_materializer(topic, key_prefix, f"parity-first-{run_id}", tmp_path)
+        after_first = datetime.now(UTC)
+
+        online = store.read(entity)
+        oracle = published_as_of(history, [entity], after_first)[entity]
+        assert oracle.status == "present"
+        assert oracle.record.counts == online.counts == {"play_count": 2}
+        assert oracle.record.observation_time == online.observation_time
+        early = published_as_of(history, [entity], before - timedelta(seconds=2))
+        assert early[entity].status == "not_published"
+
+        time.sleep(0.05)
+        produce(topic, [record_json(spec, entity, 3)])
+        run_materializer(topic, key_prefix, f"parity-second-{run_id}", tmp_path)
+        after_second = datetime.now(UTC)
+
+        assert store.read(entity).counts == {"play_count": 3}
+        then = published_as_of(history, [entity], after_first)[entity]
+        now = published_as_of(history, [entity], after_second)[entity]
+        assert then.record.counts == {"play_count": 2}
+        assert now.record.counts == store.read(entity).counts == {"play_count": 3}
     finally:
         redis_client.delete(store.key_for(entity))
         redis_client.close()
