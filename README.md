@@ -158,10 +158,10 @@ explicit modes that never replace each other. See
 | In `published_as_of` mode, a feature that is not published or expired has null values and a status, never zero | [`test_published_spark.py`](tests/integration/test_published_spark.py), [`test_training_dataset_published.py`](tests/integration/test_training_dataset_published.py) |
 | An observation before the latest history start is excluded and counted, one on the edge stays, and the manifest records the snapshot id and start of each feature | [`test_training_dataset_published.py`](tests/integration/test_training_dataset_published.py) |
 | The two modes differ exactly where serving and the events differ, and a dataset run leaves the history unchanged | [`test_training_dataset_published.py`](tests/integration/test_training_dataset_published.py) |
+| Redis and `published_as_of` agree on the value of an entity after each of two bounded runs, and `published_as_of` still returns the older version at an earlier time | [`test_materialize_spec_kafka_to_history.py`](tests/integration/test_materialize_spec_kafka_to_history.py) |
 
 
-Not yet proven: the parity between a Redis value and the `published_as_of` value
-over a bounded replay, and a CLI command for datasets. See [STATUS.md](STATUS.md).
+Not yet proven: the parity for several entities and at TTL expiry. Not yet built: a CLI command for datasets. See [STATUS.md](STATUS.md).
 
 
 ### Online access
@@ -246,7 +246,7 @@ All three use the spec-driven store and materializer. The first two keep their t
 |---|---|
 | 1 · Feature store foundation | **Released** as [v0.1.0](https://github.com/oster-dev/featureforge/releases/tag/v0.1.0) |
 | 2 · Streaming feature platform | **Core delivered.** Declarative feature specs: spec model, reference and one generic Flink job running both streaming features are done, including savepoint resume and recovery from a TaskManager crash. A spec-driven Redis store and materializer serve a YAML-only feature end to end. Streaming publication evidence is recorded in an Iceberg history table and read back as published-as-of. Open: JobManager failure and the final demo |
-| 3 · End-to-end ML workflow | **Started.** Label specs and training datasets in two explicit modes (event time and published-as-of) are done. Open: a CLI command for datasets, the online and offline parity test over a bounded replay, and the training loader |
+| 3 · End-to-end ML workflow | **Started.** Label specs and training datasets in two explicit modes (event time and published-as-of) are done. The online and offline parity test over a bounded replay is done. Open: a CLI command for datasets and the training loader |
 
 Details, open items, and known limitations: **[STATUS.md](STATUS.md)**.
 

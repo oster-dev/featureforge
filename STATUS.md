@@ -51,7 +51,7 @@ Related: [README](README.md) · [Architecture](ARCHITECTURE.md) ·
 | Item | State |
 |---|---|
 | WP1: declarative spec and generic engine | Stages 1 to 3 delivered for both features. Stage 4 delivered except JobManager failure: every integration test runs on the generic job, the hand-written jobs are deleted, and the stores and materializers of the two original features are thin wrappers over the spec-driven code. Stages 5 and 6 below. |
-| Streaming history and published-as-of retrieval (WP2) | In progress: the history table and an idempotent append exist ([ADR-011](docs/adr/ADR-011-history-table-layout.md)), `materialize_spec` writes evidence with `--history-root`, and `published_as_of` reads it (Python, and one Spark join for datasets). The time model is decided in [ADR-010](docs/adr/ADR-010-time-and-availability-model.md) (Accepted): availability is `published_at` of the online sink, assigned by the materializer after a `written` result. A spec-driven Spark backfill computes values at explicit observation times, never reads or writes `published_at`, and leaves recorded evidence unchanged (tested). Training datasets exist in both modes ([ADR-014](docs/adr/ADR-014-training-datasets.md)). Open: a CLI command, the parity test between Redis and published-as-of over a bounded replay, and operators beyond count. |
+| Streaming history and published-as-of retrieval (WP2) | In progress: the history table and an idempotent append exist ([ADR-011](docs/adr/ADR-011-history-table-layout.md)), `materialize_spec` writes evidence with `--history-root`, and `published_as_of` reads it (Python, and one Spark join for datasets). The time model is decided in [ADR-010](docs/adr/ADR-010-time-and-availability-model.md) (Accepted): availability is `published_at` of the online sink, assigned by the materializer after a `written` result. A spec-driven Spark backfill computes values at explicit observation times, never reads or writes `published_at`, and leaves recorded evidence unchanged (tested). Training datasets exist in both modes ([ADR-014](docs/adr/ADR-014-training-datasets.md)). The parity between Redis and `published_as_of` is tested over two bounded runs of one entity (`tests/integration/test_materialize_spec_kafka_to_history.py`). Open: a CLI command and operators beyond count. |
 
 ### WP1 stages
 
@@ -69,7 +69,7 @@ Related: [README](README.md) · [Architecture](ARCHITECTURE.md) ·
 Order follows the [readiness plan](docs/PLATFORM_BLUEPRINT.md):
 
 1. **WP1:** stages 4 to 6 above.
-2. **WP2:** stream history, label specs and training datasets are delivered. Open: the parity test between Redis and published-as-of, a CLI command for datasets, and an Iceberg offline store.
+2. **WP2:** stream history, label specs and training datasets are delivered. The parity test between Redis and published-as-of is delivered too. Open: a CLI command for datasets, and an Iceberg offline store.
 3. **WP3:** second online backend (Cassandra) behind one contract suite.
 4. **WP4:** feature-serving service and load test.
 5. **WP5:** observability, recovery drills, soak run.
@@ -95,7 +95,7 @@ workflow (Metaflow, MLflow, registry, rollback).
 | Published-as-of retrieval has no CLI | ADR-010 and ADR-011 are Accepted. The history table, an idempotent append and the evidence append of `materialize_spec` (with `--history-root`) exist, and `published_as_of` answers the rule of ADR-010 in Python. There is no CLI command for datasets yet. The dataset API takes one pinned history per feature. All three streaming features run through the spec-driven store, so the evidence can be added in one place. |
 | The `published_as_of` dataset mode needs one entity key | The history has one entity column, so composite keys fail before any data is read (ADR-014). |
 | `history_start` marks only the beginning of the evidence | A later gap, for example a materializer run without a history root, reads as `not_published`. The rule cannot detect it. |
-| Redis and published-as-of are not compared over a replay | The planned parity test is open. The dataset reflects the recorded evidence, not a replay comparison. |
+| Redis and published-as-of are compared on one entity only | The parity test covers two bounded runs of one entity with the play-count spec. Several entities and the TTL expiry are not compared. |
 | A crash between Redis and the history append makes `published_at` later than the real publication | Training sees such a value later than serving did, never earlier (ADR-010). |
 | The history join is not measured at scale | The Spark join ranks the versions per entity and observation. There are no throughput numbers. |
 | `window_replace` update policy has no store | Non-count operators cannot be served online yet. |

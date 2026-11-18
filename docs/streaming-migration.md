@@ -470,7 +470,7 @@ The unified interface reads the skip rate next to the play count. A missing key,
 | Sustained operation and performance targets | **Not verified** |
 | Exactly-once delivery | **Not claimed.** Flink Kafka sinks use `AT_LEAST_ONCE` |
 | Zero emission for inactive users | **Not established.** A newer window can replace a value with zero, but no window job emits zero merely because time advances |
-| Streaming publication evidence and published-as-of retrieval | Verified: the history append, the Python `published_as_of`, and the Spark join of a pinned snapshot, which equals the Python rule at the publication and TTL boundaries on randomized histories. **Not verified:** the parity between a Redis value and the published-as-of value over a bounded replay, gaps inside the history, and several appender processes. Backfills and datasets never write a `published_at` |
+| Streaming publication evidence and published-as-of retrieval | Verified: the history append, the Python `published_as_of`, and the Spark join of a pinned snapshot, which equals the Python rule at the publication and TTL boundaries on randomized histories. The parity between a Redis value and the published-as-of value over two bounded runs of one entity is tested (PR #65). **Not verified:** gaps inside the history, several appender processes, and the parity for several entities and at TTL expiry. Backfills and datasets never write a `published_at` |
 | Training datasets | Verified in both modes: the leakage rule at `t` and at `t + horizon`, exclusion of incomplete label windows, the cut at the latest history start including its edge, status columns with null values, and the manifest counts and snapshot ids. Composite keys fail by design in `published_as_of` mode |
 | Atomic mixed batch and stream reads | **Not provided** (`atomic: false`) |
 | Spec-driven execution in Flink | Verified for count and ratio features: the generic job is the only implementation of all three streaming features |
@@ -523,6 +523,6 @@ events to Redis. The stores and materializers of the two original features are t
 over the spec-driven ones. A Spark backfill from a spec covers count aggregations, and the two original Spark features are hand-written.
 
 Remaining before the streaming phase can be called complete: JobManager-failure
-recovery verification, verification at the production TTL values, gap detection inside the streaming history, the parity test between Redis and published-as-of, and a reproducible completion demonstration. These must be
+recovery verification, verification at the production TTL values, gap detection inside the streaming history, and a reproducible completion demonstration. These must be
 completed or explicitly scoped. For current test and CI results see the README
 badge and the Actions page, not this document.

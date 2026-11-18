@@ -224,9 +224,7 @@ publication evidence supports.
 Status: ADR-010 and ADR-011 settle these points for the first integration. The
 history table, the evidence append and published-as-of retrieval exist. A
 dataset is written once, never overwritten, and its manifest is written last,
-so a directory without `_manifest.json` is not a dataset. Open: gap detection
-inside the history, several appender processes, and the parity test between a
-Redis value and the published-as-of value.
+so a directory without `_manifest.json` is not a dataset. Open: gap detection inside the history and several appender processes. The parity between a Redis value and the published-as-of value is tested over two bounded runs of one entity.
 
 ---
 
@@ -294,7 +292,7 @@ flowchart LR
 |---|---|---|
 | A | Preserve released batch behavior, inventory dependencies, record import provenance | Done |
 | B | Integrate play-count slice, validation-to-online behavior, common read interface | Done |
-| C | Skip-rate and late corrections done. Feature spec model, exact reference and one generic Flink job running both features done, the hand-written jobs are removed. A spec-driven store and materializer are done and proven end to end for a YAML-only feature. The stores and materializers of the two original features are thin wrappers over them. The history, the evidence append, published-as-of retrieval and the availability model (ADR-010, ADR-011) are done. Open: JobManager-failure recovery evidence, gap detection inside the history, the online and offline parity test | In progress |
+| C | Skip-rate and late corrections done. Feature spec model, exact reference and one generic Flink job running both features done, the hand-written jobs are removed. A spec-driven store and materializer are done and proven end to end for a YAML-only feature. The stores and materializers of the two original features are thin wrappers over them. The history, the evidence append, published-as-of retrieval, its parity with Redis over a bounded replay and the availability model (ADR-010, ADR-011) are done. Open: JobManager-failure recovery evidence and gap detection inside the history | In progress |
 | D | Label specs (ADR-012) and training datasets in two modes (ADR-014) are done. Open: label audit of the source, a CLI command and a training loader, batch-only vs batch-plus-stream comparison, model-backed inference | In progress |
 | E | Metrics, recovery drills, benchmarks, clean-clone demo, notebook, reproducible release | Planned |
 
