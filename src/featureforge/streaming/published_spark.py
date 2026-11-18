@@ -10,6 +10,7 @@ not present are null, never zero.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from pyspark.sql import DataFrame, SparkSession, Window
 from pyspark.sql import functions as F
@@ -91,3 +92,23 @@ def published_as_of_frame(
         *(F.when(F.col(STATUS_COLUMN) == "present", F.col(name)).alias(name) for name in values),
         STATUS_COLUMN,
     )
+
+
+def create_history_session(
+    root: Path, catalog_url: str | None = None, app_name: str = "featureforge-training-dataset"
+) -> SparkSession:
+    """Create a local Spark session in UTC that reads the history through the Iceberg catalog."""
+    from featureforge.streaming.history import SPARK_PACKAGES, spark_catalog_config
+
+    builder = (
+        SparkSession.builder.master("local[*]")
+        .appName(app_name)
+        .config("spark.sql.shuffle.partitions", "4")
+        .config("spark.ui.enabled", "false")
+        .config("spark.jars.packages", SPARK_PACKAGES)
+    )
+    for key, value in spark_catalog_config(root, catalog_url).items():
+        builder = builder.config(key, value)
+    spark = builder.config("spark.sql.session.timeZone", "UTC").getOrCreate()
+    spark.conf.set("spark.sql.session.timeZone", "UTC")
+    return spark

@@ -240,6 +240,59 @@ def build_parser() -> argparse.ArgumentParser:
         help="New directory for the Parquet result. An existing path is never overwritten.",
     )
 
+    dataset_parser = subparsers.add_parser(
+        "build-training-dataset",
+        help="Join feature values and a label into a Parquet training dataset (ADR-014).",
+    )
+    dataset_parser.add_argument(
+        "--feature-spec",
+        dest="feature_specs",
+        type=Path,
+        action="append",
+        required=True,
+        help="Path to a feature spec YAML file. Repeatable.",
+    )
+    dataset_parser.add_argument(
+        "--label-spec", type=Path, required=True, help="Path to the label spec YAML file."
+    )
+    dataset_parser.add_argument(
+        "--events", type=Path, required=True, help="JSONL file with interaction events."
+    )
+    dataset_parser.add_argument(
+        "--observations",
+        type=Path,
+        required=True,
+        help="JSONL file: the label keys and observation_time in UTC, ISO 8601.",
+    )
+    dataset_parser.add_argument(
+        "--mode",
+        choices=("event_time", "published_as_of"),
+        required=True,
+        help="event_time computes from events, published_as_of reads the pinned history.",
+    )
+    dataset_parser.add_argument(
+        "--data-end",
+        required=True,
+        help="End of the event data in UTC, ISO 8601. Labels need a complete window up to it.",
+    )
+    dataset_parser.add_argument(
+        "--output",
+        type=Path,
+        required=True,
+        help="New directory for the dataset. An existing path is never overwritten.",
+    )
+    dataset_parser.add_argument(
+        "--history-root",
+        type=Path,
+        default=None,
+        help="Directory of the history catalog. Required by mode published_as_of.",
+    )
+    dataset_parser.add_argument(
+        "--history-catalog-url",
+        default=None,
+        help="SQL catalog URL of the history. Omit to use the SQLite file under --history-root.",
+    )
+
     materialize_parser = subparsers.add_parser(
         "materialize",
         help="Materialize Feast offline feature values into the online store.",
@@ -786,6 +839,141 @@ def run_backfill_spec_command(
     return 0
 
 
+def run_build_training_dataset_command(
+    feature_spec_paths: list[Path],
+    label_spec_path: Path,
+    events_path: Path,
+    observations_path: Path,
+    mode: str,
+    data_end: str,
+    output_path: Path,
+    history_root: Path | None = None,
+    history_catalog_url: str | None = None,
+    spark: SparkSession | None = None,
+) -> int:
+    """Write a training dataset in one of the two modes of ADR-014.
+
+    Exit codes: 0 ok, 1 invalid input, a missing history table, an existing output path or a
+    dataset without a complete label window, 2 a file or the history root is missing or
+    PySpark is not installed. The command never creates a history table.
+    """
+    from pydantic import ValidationError
+    from rich.markup import escape
+
+    from featureforge.spec.label_loader import load_label_spec
+    from featureforge.spec.loader import format_errors, load_spec
+    from featureforge.spec.reference import EventIdentityConflictError
+
+    console = Console()
+    try:
+        moment = parse_utc_datetime(data_end)
+        features = [load_spec(path) for path in feature_spec_paths]
+        label = load_label_spec(label_spec_path)
+        events = _read_events(events_path)
+        pairs = _read_observations(observations_path, label.keys)
+    except FileNotFoundError as exc:
+        console.print(f"[red]✗[/red] file not found: {exc.filename}", soft_wrap=True)
+        return 2
+    except ValidationError as exc:
+        console.print("[red]✗[/red] invalid spec", soft_wrap=True)
+        for line in format_errors(exc):
+            console.print(f"    {escape(line)}", soft_wrap=True)
+        return 1
+    except (ValueError, TypeError) as exc:
+        console.print(f"[red]✗[/red] {escape(str(exc))}", soft_wrap=True)
+        return 1
+
+    if output_path.exists():
+        console.print(
+            f"[red]✗[/red] output already exists: {escape(str(output_path))}", soft_wrap=True
+        )
+        return 1
+    published = mode == "published_as_of"
+    if published and history_root is None:
+        console.print("[red]✗[/red] mode published_as_of needs --history-root", soft_wrap=True)
+        return 1
+    if not published and (history_root is not None or history_catalog_url is not None):
+        console.print(
+            "[red]✗[/red] --history-root is only used by mode published_as_of", soft_wrap=True
+        )
+        return 1
+    if history_root is not None and not history_root.is_dir():
+        console.print(
+            f"[red]✗[/red] history root not found: {escape(str(history_root))}", soft_wrap=True
+        )
+        return 2
+
+    try:
+        from featureforge.spec.label_spark import label_observations_to_frame
+        from featureforge.spec.spark_backfill import create_local_session, events_to_frame
+        from featureforge.spec.training_dataset import PinnedHistory, build_training_dataset
+        from featureforge.streaming.history import HistoryTable, open_catalog, table_name
+        from featureforge.streaming.published_spark import (
+            create_history_session,
+            pinned_snapshot_id,
+            read_history,
+        )
+    except ImportError:
+        console.print(
+            "[red]✗[/red] PySpark is not installed. Run: "
+            + escape("pip install 'featureforge[spark]'"),
+            soft_wrap=True,
+        )
+        return 2
+
+    owns_session = spark is None
+    if spark is not None:
+        session = spark
+    elif history_root is not None:
+        session = create_history_session(history_root, history_catalog_url)
+    else:
+        session = create_local_session()
+    try:
+        histories = None
+        if history_root is not None:
+            catalog = open_catalog(history_root, history_catalog_url)
+            histories = {}
+            for feature in features:
+                if not catalog.table_exists(table_name(feature)):
+                    raise ValueError(f"no history table for {feature.name} under {history_root}")
+                snapshot_id = pinned_snapshot_id(HistoryTable(catalog, feature))
+                histories[feature.name] = PinnedHistory(
+                    read_history(session, feature, snapshot_id), snapshot_id
+                )
+        manifest = build_training_dataset(
+            session,
+            features,
+            label,
+            events_to_frame(session, events),
+            label_observations_to_frame(session, label, pairs),
+            mode=mode,
+            data_end=moment,
+            output=output_path,
+            history=histories,
+        )
+    except (
+        ValueError,
+        TypeError,
+        NotImplementedError,
+        FileExistsError,
+        EventIdentityConflictError,
+    ) as exc:
+        console.print(f"[red]✗[/red] {escape(str(exc))}", soft_wrap=True)
+        return 1
+    finally:
+        if owns_session:
+            session.stop()
+
+    excluded = manifest["excluded_incomplete"] + manifest["excluded_before_history"]
+    console.print(
+        f"[green]✓[/green] {escape(label.name)} ({mode}): {manifest['rows']} rows in "
+        f"{len(manifest['partitions'])} partitions, {excluded} observations excluded, "
+        f"written to {escape(str(output_path))}",
+        soft_wrap=True,
+    )
+    return 0
+
+
 def main() -> None:
     """Parse command-line arguments and run the selected command."""
     parser = build_parser()
@@ -830,6 +1018,20 @@ def main() -> None:
                 entity_args=args.entity,
                 at=args.at,
                 expect_args=args.expect,
+            )
+        )
+    elif args.command == "build-training-dataset":
+        raise SystemExit(
+            run_build_training_dataset_command(
+                args.feature_specs,
+                args.label_spec,
+                args.events,
+                args.observations,
+                args.mode,
+                args.data_end,
+                args.output,
+                args.history_root,
+                args.history_catalog_url,
             )
         )
     elif args.command == "materialize":
