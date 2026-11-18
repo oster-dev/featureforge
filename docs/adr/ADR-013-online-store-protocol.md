@@ -52,6 +52,8 @@ Goal: the same spec runs on Redis or Cassandra, and one contract test suite is g
 - Negative: reads at `LOCAL_QUORUM` are not linearizable. Serving can briefly see the value from before a conditional write that is still running. The failure direction is old, never invented.
 - Negative: the single local node proves the protocol logic. It proves nothing about replication, several datacenters or failure of a node.
 - Negative: the payload is compared as a whole. A larger record makes the condition more expensive.
+- Negative: the Paxos state is kept per partition. Two features of one entity contend with each other on writes, although they sit in different rows. The partition per entity favors the read of one entity over concurrent writes of its features.
+- Neutral: a payload that returns to an earlier value between the read and the conditional write (A to B to A) is harmless, because the decision depends only on the stored value.
 
 ## Alternatives considered
 
