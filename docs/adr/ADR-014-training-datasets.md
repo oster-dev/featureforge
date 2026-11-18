@@ -52,6 +52,7 @@ Goal: for the same observation, features that contain only information up to the
 - Negative: the `published_as_of` mode covers only the time since the history started. Earlier observations are excluded and counted.
 - Negative: the history supports one entity key, so the `published_as_of` mode cannot join features with composite keys.
 - Negative: the spec-qualified column names are long.
+- Negative: `history_start` marks only the beginning. A later gap, for example a materializer run without a history root, reads as `not_published` although serving held a value. The rule cannot detect it.
 
 ## Alternatives considered
 
@@ -85,3 +86,4 @@ Planned, and written before the implementation.
 - Operators beyond count in the Spark backfill, and with them in the dataset.
 - The Arrow loader for training and its throughput numbers.
 - Several appender processes and their effect on `history_start`.
+- Detecting gaps inside the history, not only its start.
