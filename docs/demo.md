@@ -588,10 +588,26 @@ pytest -v -m integration tests/integration/test_cli_training_dataset.py   # 2 pa
 ```
 
 
+### 4. Read the dataset back with the loader
+
+`load_training_dataset` reads a dataset with pandas and pyarrow, so a training job
+does not start Spark. It checks the files against the manifest before it returns a
+frame: the manifest exists and has a known version, every manifest column is in the
+files, and the row count and the rows per day match. A mismatch raises
+`TrainingDatasetError`, a missing directory raises `FileNotFoundError`. The frame
+holds the manifest columns in manifest order, sorted by the keys and the observation
+time, and both time columns are `datetime64[us, UTC]`. The loader reads the whole
+dataset into memory:
+
+```bash
+python -c "from pathlib import Path; from featureforge.spec.training_loader import load_training_dataset; loaded = load_training_dataset(Path('/tmp/dataset_demo')); print(loaded.frame.dtypes); print(loaded.frame.to_string(index=False))"
+```
+
+
 ### What this demo does not prove
 
 
-- There is no training loader yet.
+- There is no Arrow loader with throughput numbers yet. The dataset loader reads a whole dataset into memory.
 - The parity between a Redis value and the `published_as_of` value is tested over two bounded runs of one entity, not for several entities or at TTL expiry. The dataset reflects the recorded evidence.
 - The `published_as_of` mode needs one entity key. `history_start` marks only the
   beginning of the evidence, so a later gap reads as `not_published`.
