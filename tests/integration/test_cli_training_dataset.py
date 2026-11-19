@@ -294,3 +294,51 @@ def test_a_missing_events_root_is_a_missing_input(tmp_path, capsys):
 
     assert status == 2
     assert "events root not found" in capsys.readouterr().out
+
+
+def test_a_dataset_is_rebuilt_at_the_recorded_snapshot_after_the_table_grew(tmp_path, capsys):
+    events_path, observations_path = write_inputs(tmp_path, MOMENTS)
+    events_root = tmp_path / "events"
+    log = fill_event_table(events_root, events_path)
+
+    first = run_events(None, observations_path, tmp_path / "first", events_root=events_root)
+    assert first == 0, capsys.readouterr().out
+    recorded = read_manifest(tmp_path / "first")["events"]["snapshot_id"]
+
+    log.append([make_event(4, BASE - timedelta(minutes=10), "skip")])
+    latest = run_events(None, observations_path, tmp_path / "latest", events_root=events_root)
+    assert latest == 0, capsys.readouterr().out
+    rebuilt = run_events(
+        None,
+        observations_path,
+        tmp_path / "rebuilt",
+        events_root=events_root,
+        events_snapshot_id=recorded,
+    )
+    assert rebuilt == 0, capsys.readouterr().out
+
+    assert read_manifest(tmp_path / "rebuilt") == read_manifest(tmp_path / "first")
+    first_frame = load_training_dataset(tmp_path / "first").frame
+    pd.testing.assert_frame_equal(load_training_dataset(tmp_path / "rebuilt").frame, first_frame)
+    assert not load_training_dataset(tmp_path / "latest").frame.equals(first_frame)
+
+
+def test_a_snapshot_id_needs_the_table_and_must_exist(tmp_path, capsys):
+    events_path, observations_path = write_inputs(tmp_path, MOMENTS)
+    events_root = tmp_path / "events"
+    fill_event_table(events_root, events_path)
+
+    without_root = run_events(events_path, observations_path, tmp_path / "a", events_snapshot_id=1)
+    assert without_root == 1
+    assert "--events-snapshot-id needs --events-root" in capsys.readouterr().out
+
+    unknown = run_events(
+        None,
+        observations_path,
+        tmp_path / "b",
+        events_root=events_root,
+        events_snapshot_id=12345,
+    )
+    assert unknown == 1
+    assert "no snapshot 12345" in capsys.readouterr().out
+    assert not (tmp_path / "b").exists()

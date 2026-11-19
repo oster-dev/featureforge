@@ -30,7 +30,7 @@ Goal: keep the validated events as immutable facts in Iceberg, so that datasets 
 | Duplicates | A row whose `event_id` exists is dropped. The first row wins and keeps the earliest `ingested_at`. If another payload field differs from the stored row, `ingested_at` excluded, the writer fails with the identity conflict of ADR-007 and ADR-008 and writes nothing. The check and the append are not atomic, so one writer per table is the rule, as in ADR-011. |
 | Partitioning | `day(event_time)`. |
 | Schema check | If the schema derived from the model differs from the existing table, the writer fails. It never alters a schema silently. |
-| Dataset read | `build-training-dataset` in mode `event_time` reads either a JSONL file or the table at a pinned snapshot (`--events-root`, optional `--events-catalog-url`). The pin is the current snapshot when the command starts. |
+| Dataset read | `build-training-dataset` in mode `event_time` reads either a JSONL file or the table at a pinned snapshot (`--events-root`, optional `--events-catalog-url`). The pin is the current snapshot when the command starts, or the one named by `--events-snapshot-id`. |
 | Reproducibility | A dataset from the table lists the snapshot id in its manifest under `events`. The same snapshot, spec, observations and `data_end` give the same rows. This replaces the content hash of ADR-014. |
 | Receipt time | The table keeps `ingested_at` so that a later decision can add a mode that uses only events received by `t`. This ADR does not add that mode. |
 
@@ -57,7 +57,7 @@ Goal: keep the validated events as immutable facts in Iceberg, so that datasets 
 
 ## Verification
 
-Every item has a test except the last one: the parity between a bounded writer run and a run through Flink and Redis is not built. The item about an append after the pin is proven for the frame read at a pinned snapshot (`tests/integration/test_events_spark_read.py`). The command always pins the current snapshot and cannot yet rebuild a dataset at a chosen one.
+Every item has a test except the last one: the parity between a bounded writer run and a run through Flink and Redis is not built. The item about an append after the pin is proven for the frame read at a pinned snapshot (`tests/integration/test_events_spark_read.py`). `--events-snapshot-id` rebuilds a dataset at the recorded snapshot after the table grew (`tests/integration/test_cli_training_dataset.py`).
 
 - Round trip: events through the writer into the table, Spark reads the same events including `ingested_at`.
 - The same batch twice leaves the rows unchanged and keeps the first `ingested_at`.
@@ -76,5 +76,4 @@ Every item has a test except the last one: the parity between a bounded writer r
 - Several writers and several partitions, compaction and retention.
 - A production catalog and a neutral catalog name.
 - Event contract versions and schema evolution.
-- Rebuilding a dataset at a chosen snapshot, for example `--events-snapshot-id`.
 - The materialized backfill table, with its own name rule, as a later ADR.

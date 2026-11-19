@@ -274,6 +274,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="SQL catalog URL of the event table. Omit for the SQLite file under --events-root.",
     )
     dataset_parser.add_argument(
+        "--events-snapshot-id",
+        type=int,
+        default=None,
+        help="Read the event table at this snapshot, for example the one a manifest records. "
+        "Omit to read the snapshot that is current at the start.",
+    )
+    dataset_parser.add_argument(
         "--observations",
         type=Path,
         required=True,
@@ -867,6 +874,7 @@ def run_build_training_dataset_command(
     spark: SparkSession | None = None,
     events_root: Path | None = None,
     events_catalog_url: str | None = None,
+    events_snapshot_id: int | None = None,
 ) -> int:
     """Write a training dataset in one of the two modes of ADR-014.
 
@@ -924,6 +932,9 @@ def run_build_training_dataset_command(
     if (events_path is None) == (events_root is None):
         console.print("[red]✗[/red] give exactly one of --events and --events-root", soft_wrap=True)
         return 1
+    if events_root is None and events_snapshot_id is not None:
+        console.print("[red]✗[/red] --events-snapshot-id needs --events-root", soft_wrap=True)
+        return 1
     if events_root is None and events_catalog_url is not None:
         console.print("[red]✗[/red] --events-catalog-url needs --events-root", soft_wrap=True)
         return 1
@@ -947,7 +958,7 @@ def run_build_training_dataset_command(
         from featureforge.streaming.event_log import (
             EVENT_TABLE,
             open_event_table,
-            pinned_events_snapshot_id,
+            require_events_snapshot,
         )
         from featureforge.streaming.events_spark import read_events
         from featureforge.streaming.history import HistoryTable, open_catalog, table_name
@@ -988,7 +999,7 @@ def run_build_training_dataset_command(
         pinned_events = None
         if events_root is not None:
             event_table = open_event_table(open_catalog(events_root, events_catalog_url))
-            event_snapshot = pinned_events_snapshot_id(event_table)
+            event_snapshot = require_events_snapshot(event_table, events_snapshot_id)
             pinned_events = PinnedEvents(EVENT_TABLE, event_snapshot)
             events_frame = read_events(session, event_snapshot)
         else:
@@ -1088,6 +1099,7 @@ def main() -> None:
                 args.history_catalog_url,
                 events_root=args.events_root,
                 events_catalog_url=args.events_catalog_url,
+                events_snapshot_id=args.events_snapshot_id,
             )
         )
     elif args.command == "materialize":
