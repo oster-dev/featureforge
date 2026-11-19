@@ -6,10 +6,12 @@ from pathlib import Path
 from uuid import UUID
 
 import pandas as pd
+import pyarrow as pa
 import pytest
 
 from featureforge.cli import run_build_training_dataset_command
 from featureforge.spec.loader import load_spec
+from featureforge.spec.training_batches import open_training_batches
 from featureforge.spec.training_loader import load_training_dataset
 from featureforge.streaming.contracts.events import InteractionEventV1
 from featureforge.streaming.contracts.feature_record import FeatureRecord
@@ -113,6 +115,11 @@ def test_published_as_of_pins_the_history_and_records_the_snapshot(tmp_path, cap
     assert loaded.frame["observation_time"].tolist() == [pd.Timestamp(t1), pd.Timestamp(t2)]
     assert f"{SPEC.name}__status" in loaded.frame.columns
     assert "label__completed_within_7d" in loaded.frame.columns
+
+    table = pa.Table.from_batches(list(open_training_batches(tmp_path / "dataset").batches()))
+    assert table.num_rows == 2
+    assert table.column_names == manifest["columns"]
+    assert sorted(table.column("observation_time").to_pylist()) == [t1, t2]
 
 
 def test_a_feature_without_a_history_table_fails_and_creates_nothing(tmp_path, capsys):
