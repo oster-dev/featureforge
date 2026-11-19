@@ -9,6 +9,7 @@ from featureforge.streaming.event_log import (
     EventLogSchemaError,
     open_event_table,
     pinned_events_snapshot_id,
+    require_events_snapshot,
 )
 from featureforge.streaming.history import open_local_catalog
 
@@ -82,3 +83,25 @@ def test_the_pin_is_the_current_snapshot_and_a_later_append_does_not_move_it(tmp
     table.refresh()
     assert table.scan(snapshot_id=pinned).to_arrow().num_rows == 1
     assert table.scan(snapshot_id=later).to_arrow().num_rows == 2
+
+
+def test_a_chosen_snapshot_is_used_and_without_a_choice_the_current_one(tmp_path):
+    catalog = open_local_catalog(tmp_path)
+    log = EventLog(catalog)
+    log.append([make_event(1)])
+    first = pinned_events_snapshot_id(log.table)
+    log.append([make_event(2)])
+    table = open_event_table(catalog)
+    current = pinned_events_snapshot_id(table)
+
+    assert current != first
+    assert require_events_snapshot(table, first) == first
+    assert require_events_snapshot(table, None) == current
+
+
+def test_an_unknown_snapshot_is_an_error(tmp_path):
+    log = EventLog(open_local_catalog(tmp_path))
+    log.append([make_event(1)])
+
+    with pytest.raises(ValueError, match="no snapshot 12345"):
+        require_events_snapshot(log.table, 12345)

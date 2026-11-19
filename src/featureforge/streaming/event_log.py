@@ -150,6 +150,16 @@ def pinned_events_snapshot_id(table) -> int:
     return int(snapshot.snapshot_id)
 
 
+def require_events_snapshot(table, snapshot_id: int | None) -> int:
+    """Return the snapshot a dataset reads: the one chosen, or else the current one."""
+    if snapshot_id is None:
+        return pinned_events_snapshot_id(table)
+    table.refresh()
+    if table.snapshot_by_id(snapshot_id) is None:
+        raise ValueError(f"the event table has no snapshot {snapshot_id}")
+    return snapshot_id
+
+
 def event_row(event: InteractionEventV1) -> dict:
     """Return the table row of an event. The id is stored as its canonical string."""
     row = event.model_dump()
