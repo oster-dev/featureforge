@@ -344,7 +344,7 @@ flowchart LR
   writes to the history, and a test checks that the snapshot is unchanged.
 - **Limits.** The `published_as_of` mode needs one entity key. `history_start`
   marks only the beginning of the evidence, so a later gap reads as
-  `not_published`. The `build-training-dataset` command writes a dataset in either mode and `load_training_dataset` reads it back through the manifest. See
+  `not_published`. The `build-training-dataset` command writes a dataset in either mode and `load_training_dataset` reads it back through the manifest, and `open_training_batches` yields it as Arrow batches. See
   [Known limits](#known-limits) and [STATUS.md](STATUS.md).
 
 

@@ -79,11 +79,44 @@ Planned, and written before the implementation.
 - A dataset run never writes to the history (ADR-011).
 - The parity test between online and offline (#65): bounded runs write Redis and the history, the Redis value equals the `published_as_of` value after each run, and an earlier time still returns the earlier version. Not covered: several entities and the TTL expiry.
 
+## Reading datasets for training
+
+`load_training_dataset` (pandas, the whole dataset in memory, sorted by key) and
+`open_training_batches` (Arrow, batches in partition order, no sort) both check the
+files against the manifest. The Arrow loader reads the row counts and the schema from the
+Parquet metadata when the dataset is opened, so its checks run before the first batch and
+read no rows. The pandas loader checks after it has read every row.
+
+`scripts/benchmark_training_loaders.py` measured both on synthetic data in the layout of
+`build-training-dataset`: seven columns, 30 daily partitions, one Snappy Parquet file per
+day, 128 MB for 5 million rows and 462 MB for 20 million. Every read ran in its own process
+and the table shows the median of 3 runs with a warm file cache. The machine was macOS on
+arm64 with 14 CPUs, Python 3.13.9, pandas 2.3.3 and pyarrow 19.0.1. `pandas-raw` is
+`pd.read_parquet` without checks and without a sort, the fair comparison for the Arrow loader.
+
+| Rows | Loader | First batch (s) | Total (s) | Rows per second | Added peak memory (MB) |
+|------|--------|-----------------|-----------|-----------------|------------------------|
+| 5 million | pandas | 2.72 | 2.72 | 1,838,361 | 1,809 |
+| 5 million | pandas-raw | 0.13 | 0.13 | 39,720,210 | 754 |
+| 5 million | arrow | 0.01 | 0.07 | 72,315,092 | 122 |
+| 20 million | pandas | 15.32 | 15.32 | 1,305,462 | 4,964 |
+| 20 million | pandas-raw | 0.48 | 0.48 | 41,618,778 | 2,572 |
+| 20 million | arrow | 0.01 | 0.25 | 79,685,058 | 299 |
+
+- The Arrow loader reads about twice as fast as `pd.read_parquet` and adds 6 to 9 times less
+  peak memory. The first batch arrives after 0.01 s.
+- `load_training_dataset` is about 30 times slower than `pd.read_parquet` at 20 million rows.
+  The time is in its checks and its sort, not in the read.
+- The numbers come from synthetic data on one machine with a fixed batch size of 65,536. They
+  do not include the conversion of the batches for a training framework.
+
 ## Open items
 
 - Composite entity keys in the history.
 - A content hash of the events in the manifest.
 - Operators beyond count in the Spark backfill, and with them in the dataset.
-- The Arrow loader for training and its throughput numbers.
+- The conversion of Arrow batches into NumPy arrays or tensors for a training framework is not measured.
+- `load_training_dataset` is about 30 times slower than `pd.read_parquet` at 20 million rows. The cause, the checks over all rows or the sort, is not profiled.
+- The memory of the Arrow loader grows with the dataset, from 122 to 299 MB between 5 and 20 million rows. The cause is not examined.
 - Several appender processes and their effect on `history_start`.
 - Detecting gaps inside the history, not only its start.
