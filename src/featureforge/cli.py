@@ -256,7 +256,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--label-spec", type=Path, required=True, help="Path to the label spec YAML file."
     )
     dataset_parser.add_argument(
-        "--events", type=Path, required=True, help="JSONL file with interaction events."
+        "--events",
+        type=Path,
+        default=None,
+        help="JSONL file with interaction events. Give this or --events-root.",
+    )
+    dataset_parser.add_argument(
+        "--events-root",
+        type=Path,
+        default=None,
+        help="Directory of the catalog with the event table (ADR-015). Mode "
+        "event_time reads it at the snapshot that is current at the start.",
+    )
+    dataset_parser.add_argument(
+        "--events-catalog-url",
+        default=None,
+        help="SQL catalog URL of the event table. Omit for the SQLite file under --events-root.",
     )
     dataset_parser.add_argument(
         "--observations",
@@ -842,7 +857,7 @@ def run_backfill_spec_command(
 def run_build_training_dataset_command(
     feature_spec_paths: list[Path],
     label_spec_path: Path,
-    events_path: Path,
+    events_path: Path | None,
     observations_path: Path,
     mode: str,
     data_end: str,
@@ -850,12 +865,16 @@ def run_build_training_dataset_command(
     history_root: Path | None = None,
     history_catalog_url: str | None = None,
     spark: SparkSession | None = None,
+    events_root: Path | None = None,
+    events_catalog_url: str | None = None,
 ) -> int:
     """Write a training dataset in one of the two modes of ADR-014.
 
     Exit codes: 0 ok, 1 invalid input, a missing history table, an existing output path or a
     dataset without a complete label window, 2 a file or the history root is missing or
-    PySpark is not installed. The command never creates a history table.
+    PySpark is not installed. The command never creates a history table or an
+    event table. Mode event_time reads the events from a JSONL file or, with
+    events_root, from the event table at the snapshot current at the start (ADR-015).
     """
     from pydantic import ValidationError
     from rich.markup import escape
@@ -869,7 +888,7 @@ def run_build_training_dataset_command(
         moment = parse_utc_datetime(data_end)
         features = [load_spec(path) for path in feature_spec_paths]
         label = load_label_spec(label_spec_path)
-        events = _read_events(events_path)
+        events = _read_events(events_path) if events_path is not None else []
         pairs = _read_observations(observations_path, label.keys)
     except FileNotFoundError as exc:
         console.print(f"[red]✗[/red] file not found: {exc.filename}", soft_wrap=True)
@@ -902,11 +921,35 @@ def run_build_training_dataset_command(
             f"[red]✗[/red] history root not found: {escape(str(history_root))}", soft_wrap=True
         )
         return 2
+    if (events_path is None) == (events_root is None):
+        console.print("[red]✗[/red] give exactly one of --events and --events-root", soft_wrap=True)
+        return 1
+    if events_root is None and events_catalog_url is not None:
+        console.print("[red]✗[/red] --events-catalog-url needs --events-root", soft_wrap=True)
+        return 1
+    if events_root is not None and published:
+        console.print("[red]✗[/red] --events-root is only used by mode event_time", soft_wrap=True)
+        return 1
+    if events_root is not None and not events_root.is_dir():
+        console.print(
+            f"[red]✗[/red] events root not found: {escape(str(events_root))}", soft_wrap=True
+        )
+        return 2
 
     try:
         from featureforge.spec.label_spark import label_observations_to_frame
         from featureforge.spec.spark_backfill import create_local_session, events_to_frame
-        from featureforge.spec.training_dataset import PinnedHistory, build_training_dataset
+        from featureforge.spec.training_dataset import (
+            PinnedEvents,
+            PinnedHistory,
+            build_training_dataset,
+        )
+        from featureforge.streaming.event_log import (
+            EVENT_TABLE,
+            open_event_table,
+            pinned_events_snapshot_id,
+        )
+        from featureforge.streaming.events_spark import read_events
         from featureforge.streaming.history import HistoryTable, open_catalog, table_name
         from featureforge.streaming.published_spark import (
             create_history_session,
@@ -926,6 +969,8 @@ def run_build_training_dataset_command(
         session = spark
     elif history_root is not None:
         session = create_history_session(history_root, history_catalog_url)
+    elif events_root is not None:
+        session = create_history_session(events_root, events_catalog_url)
     else:
         session = create_local_session()
     try:
@@ -940,16 +985,25 @@ def run_build_training_dataset_command(
                 histories[feature.name] = PinnedHistory(
                     read_history(session, feature, snapshot_id), snapshot_id
                 )
+        pinned_events = None
+        if events_root is not None:
+            event_table = open_event_table(open_catalog(events_root, events_catalog_url))
+            event_snapshot = pinned_events_snapshot_id(event_table)
+            pinned_events = PinnedEvents(EVENT_TABLE, event_snapshot)
+            events_frame = read_events(session, event_snapshot)
+        else:
+            events_frame = events_to_frame(session, events)
         manifest = build_training_dataset(
             session,
             features,
             label,
-            events_to_frame(session, events),
+            events_frame,
             label_observations_to_frame(session, label, pairs),
             mode=mode,
             data_end=moment,
             output=output_path,
             history=histories,
+            events_snapshot=pinned_events,
         )
     except (
         ValueError,
@@ -1032,6 +1086,8 @@ def main() -> None:
                 args.output,
                 args.history_root,
                 args.history_catalog_url,
+                events_root=args.events_root,
+                events_catalog_url=args.events_catalog_url,
             )
         )
     elif args.command == "materialize":

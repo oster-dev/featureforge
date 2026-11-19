@@ -111,7 +111,11 @@ def ensure_event_table(catalog: Catalog, identifier: str = EVENT_TABLE):
             partition_spec=event_partition_spec(),
         )
 
-    table = catalog.load_table(identifier)
+    return check_event_table(catalog.load_table(identifier), identifier)
+
+
+def check_event_table(table, identifier: str = EVENT_TABLE):
+    """Check a loaded event table against the contract and return it."""
     actual = [
         (field.name, str(field.field_type), field.required) for field in table.schema().fields
     ]
@@ -128,6 +132,22 @@ def ensure_event_table(catalog: Catalog, identifier: str = EVENT_TABLE):
             f"found {partitions}"
         )
     return table
+
+
+def open_event_table(catalog: Catalog, identifier: str = EVENT_TABLE):
+    """Load the existing event table and check it. A missing table is an error, never created."""
+    if not catalog.table_exists(identifier):
+        raise ValueError(f"no event table {identifier} in the catalog")
+    return check_event_table(catalog.load_table(identifier), identifier)
+
+
+def pinned_events_snapshot_id(table) -> int:
+    """Return the current snapshot id of the event table, the one a dataset reads."""
+    table.refresh()
+    snapshot = table.current_snapshot()
+    if snapshot is None:
+        raise ValueError("the event table has no snapshot: nothing was written to it yet")
+    return int(snapshot.snapshot_id)
 
 
 def event_row(event: InteractionEventV1) -> dict:

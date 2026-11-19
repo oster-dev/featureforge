@@ -42,6 +42,14 @@ class PinnedHistory:
     snapshot_id: int
 
 
+@dataclass(frozen=True)
+class PinnedEvents:
+    """The event fact table, read at one snapshot (ADR-015)."""
+
+    table: str
+    snapshot_id: int
+
+
 def feature_columns(feature: FeatureSpec) -> list[str]:
     """Return the value columns of a feature spec, in the order of the backfill."""
     return [*(aggregation.name for aggregation in feature.aggregations), *feature.derived]
@@ -169,12 +177,15 @@ def build_training_dataset(
     data_end: datetime,
     output: Path,
     history: Mapping[str, PinnedHistory] | None = None,
+    events_snapshot: PinnedEvents | None = None,
 ) -> dict[str, Any]:
     """Write the dataset as Parquet partitioned by the UTC day and return its manifest."""
     if mode not in MODES:
         raise ValueError(f"mode must be event_time or published_as_of, got {mode!r}")
     if mode == "event_time" and history is not None:
         raise ValueError("history is only used by mode published_as_of")
+    if mode == "published_as_of" and events_snapshot is not None:
+        raise ValueError("events_snapshot is only used by mode event_time")
     given = history or {}
     if mode == "published_as_of":
         if len(label.keys) != 1:
@@ -240,5 +251,10 @@ def build_training_dataset(
             }
             for feature in features
         ]
+    if events_snapshot is not None:
+        manifest["events"] = {
+            "table": events_snapshot.table,
+            "snapshot_id": events_snapshot.snapshot_id,
+        }
     (output / MANIFEST_NAME).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return manifest
