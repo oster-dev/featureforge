@@ -1,6 +1,6 @@
 # ADR-015 Iceberg event fact store and snapshot-pinned event-time datasets
 
-- Status: Proposed. Decides what the event fact store holds, who writes it and how datasets read it. Nothing is implemented.
+- Status: Accepted. Decides what the event fact store holds, who writes it and how datasets read it. Implemented: the table contract, the idempotent append, the event writer and the snapshot-pinned read of `build-training-dataset --mode event_time`. The open items below remain.
 - Date: 2026-11-19
 - Author: Nico Ostermann
 - Deciders: Nico Ostermann
@@ -57,7 +57,7 @@ Goal: keep the validated events as immutable facts in Iceberg, so that datasets 
 
 ## Verification
 
-Planned, nothing exists yet.
+Every item has a test except the last one: the parity between a bounded writer run and a run through Flink and Redis is not built. The item about an append after the pin is proven for the frame read at a pinned snapshot (`tests/integration/test_events_spark_read.py`). The command always pins the current snapshot and cannot yet rebuild a dataset at a chosen one.
 
 - Round trip: events through the writer into the table, Spark reads the same events including `ingested_at`.
 - The same batch twice leaves the rows unchanged and keeps the first `ingested_at`.
@@ -76,4 +76,5 @@ Planned, nothing exists yet.
 - Several writers and several partitions, compaction and retention.
 - A production catalog and a neutral catalog name.
 - Event contract versions and schema evolution.
+- Rebuilding a dataset at a chosen snapshot, for example `--events-snapshot-id`.
 - The materialized backfill table, with its own name rule, as a later ADR.
