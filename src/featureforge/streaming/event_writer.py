@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import time
 from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path
@@ -86,8 +87,21 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
         "Omit to use the SQLite file under --events-root.",
     )
     parser.add_argument("--batch-size", type=int, default=1000)
+    parser.add_argument(
+        "--max-batch-seconds",
+        type=float,
+        default=0.0,
+        help="A partial batch is written on an idle poll once its oldest event has "
+        "waited this long. 0 writes it at the first idle poll. A larger value writes "
+        "fewer, larger files at a low event rate.",
+    )
     parser.add_argument("--bounded", action="store_true")
     return parser.parse_args(argv)
+
+
+def idle_flush_due(first_pending_at: float, now: float, max_batch_seconds: float) -> bool:
+    """A partial batch is written on an idle poll once its oldest event waited this long."""
+    return now - first_pending_at >= max_batch_seconds
 
 
 def _flush(
@@ -117,6 +131,8 @@ def write_events(arguments: argparse.Namespace) -> Counter[str]:
     """
     if arguments.batch_size < 1:
         raise ValueError("--batch-size must be positive")
+    if arguments.max_batch_seconds < 0:
+        raise ValueError("--max-batch-seconds must not be negative")
 
     topic = arguments.topic
     log = EventLog(open_catalog(Path(arguments.events_root), arguments.events_catalog_url))
@@ -171,12 +187,19 @@ def write_events(arguments: argparse.Namespace) -> Counter[str]:
 
         payloads: list[str | bytes | None] = []
         last_offset: int | None = None
+        first_pending_at = 0.0
 
         while True:
             message = consumer.poll(timeout=1.0)
 
             if message is None:
-                if payloads and last_offset is not None:
+                if (
+                    payloads
+                    and last_offset is not None
+                    and idle_flush_due(
+                        first_pending_at, time.monotonic(), arguments.max_batch_seconds
+                    )
+                ):
                     _flush(consumer, partition, last_offset + 1, payloads, log, results)
                 continue
 
@@ -188,6 +211,8 @@ def write_events(arguments: argparse.Namespace) -> Counter[str]:
                 raise ValueError("Kafka message carries no offset")
             payloads.append(message.value())
             last_offset = message_offset
+            if len(payloads) == 1:
+                first_pending_at = time.monotonic()
 
             if len(payloads) >= arguments.batch_size:
                 _flush(consumer, partition, last_offset + 1, payloads, log, results)
