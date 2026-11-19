@@ -469,6 +469,7 @@ rollback. Scope and order: [STATUS.md](STATUS.md) and
 | 012 | Label specs |
 | 013 | Online store protocol |
 | 014 | Training datasets |
+| 015 | Iceberg event fact store |
 
 ## Principles
 
