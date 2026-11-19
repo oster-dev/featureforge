@@ -160,9 +160,11 @@ explicit modes that never replace each other. See
 | The two modes differ exactly where serving and the events differ, and a dataset run leaves the history unchanged | [`test_training_dataset_published.py`](tests/integration/test_training_dataset_published.py) |
 | Redis and `published_as_of` agree on the value of an entity after each of two bounded runs, and `published_as_of` still returns the older version at an earlier time | [`test_materialize_spec_kafka_to_history.py`](tests/integration/test_materialize_spec_kafka_to_history.py) |
 | `build-training-dataset` writes a dataset in both modes, pins the history snapshot and records it in the manifest, never creates a history table and never overwrites an output | [`test_cli_build_training_dataset.py`](tests/unit/test_cli_build_training_dataset.py), [`test_cli_training_dataset.py`](tests/integration/test_cli_training_dataset.py) |
+| The event writer appends a validated event once per `event_id`, commits the offset only after the append, counts rejections without storing them and stops on an identity conflict | [`test_event_log_append.py`](tests/unit/test_event_log_append.py), [`test_event_writer_loop.py`](tests/unit/test_event_writer_loop.py), [`test_event_writer_kafka.py`](tests/integration/test_event_writer_kafka.py) |
+| `build-training-dataset --events-root` reads the event table at a pinned snapshot and records it, a dataset from the table equals the dataset from the same JSONL, and a missing or empty table fails and creates nothing | [`test_cli_training_dataset.py`](tests/integration/test_cli_training_dataset.py), [`test_events_spark_read.py`](tests/integration/test_events_spark_read.py) |
 
 
-Not yet proven: the parity for several entities and at TTL expiry. Not yet built: the Iceberg offline store. See [STATUS.md](STATUS.md).
+Not yet proven: the parity for several entities and at TTL expiry. Not yet built: a mode that uses only events received by `t`. See [STATUS.md](STATUS.md).
 
 
 ### Online access
@@ -247,7 +249,7 @@ All three use the spec-driven store and materializer. The first two keep their t
 |---|---|
 | 1 · Feature store foundation | **Released** as [v0.1.0](https://github.com/oster-dev/featureforge/releases/tag/v0.1.0) |
 | 2 · Streaming feature platform | **Core delivered.** Declarative feature specs: spec model, reference and one generic Flink job running both streaming features are done, including savepoint resume and recovery from a TaskManager crash. A spec-driven Redis store and materializer serve a YAML-only feature end to end. Streaming publication evidence is recorded in an Iceberg history table and read back as published-as-of. Open: JobManager failure and the final demo |
-| 3 · End-to-end ML workflow | **Started.** Label specs and training datasets in two explicit modes (event time and published-as-of) are done. The online and offline parity test over a bounded replay is done. The `build-training-dataset` command, the dataset loader and the Arrow batch loader are done. Open: the Iceberg offline store |
+| 3 · End-to-end ML workflow | **Started.** Label specs and training datasets in two explicit modes (event time and published-as-of) are done. The online and offline parity test over a bounded replay is done. The `build-training-dataset` command, the dataset loader and the Arrow batch loader are done. The event fact store ([ADR-015](docs/adr/ADR-015-iceberg-event-fact-store.md)) keeps validated events as Iceberg facts, and `event_time` datasets read them at a pinned snapshot. Open: a mode that uses only events received by `t`, a table for rejected events and the materialized backfill table |
 
 Details, open items, and known limitations: **[STATUS.md](STATUS.md)**.
 

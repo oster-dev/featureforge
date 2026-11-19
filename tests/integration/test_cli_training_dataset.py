@@ -15,6 +15,7 @@ from featureforge.spec.training_batches import open_training_batches
 from featureforge.spec.training_loader import load_training_dataset
 from featureforge.streaming.contracts.events import InteractionEventV1
 from featureforge.streaming.contracts.feature_record import FeatureRecord
+from featureforge.streaming.event_log import EVENT_TABLE, EventLog, pinned_events_snapshot_id
 from featureforge.streaming.history import (
     Evidence,
     HistoryTable,
@@ -151,3 +152,145 @@ def test_the_loader_repeats_the_constants_of_the_writer():
     assert training_loader.MANIFEST_NAME == training_dataset.MANIFEST_NAME
     assert training_loader.SUPPORTED_MANIFEST_VERSION == training_dataset.MANIFEST_VERSION
     assert training_loader.PARTITION_COLUMN == training_dataset.PARTITION_COLUMN
+
+
+MOMENTS = (BASE, BASE + timedelta(hours=1))
+DATA_END = (MOMENTS[-1] + HORIZON + timedelta(seconds=1)).isoformat()
+
+
+def run_events(events_path, observations_path, output, *, mode="event_time", **options):
+    return run_build_training_dataset_command(
+        [SPEC_PATH],
+        LABEL_PATH,
+        events_path,
+        observations_path,
+        mode,
+        DATA_END,
+        output,
+        **options,
+    )
+
+
+def fill_event_table(root, events_path):
+    log = EventLog(open_local_catalog(root))
+    log.append(
+        [
+            InteractionEventV1.model_validate_json(line)
+            for line in events_path.read_text().splitlines()
+        ]
+    )
+    return log
+
+
+def read_manifest(output):
+    return json.loads((output / "_manifest.json").read_text())
+
+
+def test_a_dataset_from_the_event_table_equals_the_dataset_from_the_same_jsonl(tmp_path, capsys):
+    events_path, observations_path = write_inputs(tmp_path, MOMENTS)
+    events_root = tmp_path / "events"
+    snapshot = pinned_events_snapshot_id(fill_event_table(events_root, events_path).table)
+
+    from_table = run_events(
+        None, observations_path, tmp_path / "from_table", events_root=events_root
+    )
+    assert from_table == 0, capsys.readouterr().out
+    from_jsonl = run_events(events_path, observations_path, tmp_path / "from_jsonl")
+    assert from_jsonl == 0, capsys.readouterr().out
+
+    table_manifest = read_manifest(tmp_path / "from_table")
+    jsonl_manifest = read_manifest(tmp_path / "from_jsonl")
+    assert "events" not in jsonl_manifest
+    assert table_manifest["events"] == {"table": EVENT_TABLE, "snapshot_id": snapshot}
+    assert {k: v for k, v in table_manifest.items() if k != "events"} == jsonl_manifest
+    pd.testing.assert_frame_equal(
+        load_training_dataset(tmp_path / "from_table").frame,
+        load_training_dataset(tmp_path / "from_jsonl").frame,
+    )
+
+
+def test_every_run_pins_the_snapshot_that_is_current_at_its_start(tmp_path, capsys):
+    events_path, observations_path = write_inputs(tmp_path, MOMENTS)
+    events_root = tmp_path / "events"
+    log = fill_event_table(events_root, events_path)
+    first_snapshot = pinned_events_snapshot_id(log.table)
+
+    first = run_events(None, observations_path, tmp_path / "first", events_root=events_root)
+    assert first == 0, capsys.readouterr().out
+    log.append([make_event(4, BASE - timedelta(minutes=10), "skip")])
+    second_snapshot = pinned_events_snapshot_id(log.table)
+    second = run_events(None, observations_path, tmp_path / "second", events_root=events_root)
+    assert second == 0, capsys.readouterr().out
+
+    assert first_snapshot != second_snapshot
+    assert read_manifest(tmp_path / "first")["events"]["snapshot_id"] == first_snapshot
+    assert read_manifest(tmp_path / "second")["events"]["snapshot_id"] == second_snapshot
+
+
+def test_a_missing_event_table_fails_and_creates_nothing(tmp_path, capsys):
+    _, observations_path = write_inputs(tmp_path, MOMENTS)
+    events_root = tmp_path / "events"
+    events_root.mkdir()
+
+    status = run_events(None, observations_path, tmp_path / "dataset", events_root=events_root)
+
+    assert status == 1
+    assert "no event table" in capsys.readouterr().out
+    assert not open_local_catalog(events_root).table_exists(EVENT_TABLE)
+    assert not (tmp_path / "dataset").exists()
+
+
+def test_an_event_table_without_a_snapshot_fails(tmp_path, capsys):
+    _, observations_path = write_inputs(tmp_path, MOMENTS)
+    events_root = tmp_path / "events"
+    EventLog(open_local_catalog(events_root))
+
+    status = run_events(None, observations_path, tmp_path / "dataset", events_root=events_root)
+
+    assert status == 1
+    assert "no snapshot" in capsys.readouterr().out
+    assert not (tmp_path / "dataset").exists()
+
+
+def test_the_event_sources_exclude_each_other(tmp_path, capsys):
+    events_path, observations_path = write_inputs(tmp_path, MOMENTS)
+    events_root = tmp_path / "events"
+    events_root.mkdir()
+    output = tmp_path / "dataset"
+
+    both = run_events(events_path, observations_path, output, events_root=events_root)
+    assert both == 1
+    assert "exactly one of --events and --events-root" in capsys.readouterr().out
+
+    neither = run_events(None, observations_path, output)
+    assert neither == 1
+    assert "exactly one of --events and --events-root" in capsys.readouterr().out
+
+    url_only = run_events(
+        events_path, observations_path, output, events_catalog_url="postgresql://unused"
+    )
+    assert url_only == 1
+    assert "--events-catalog-url needs --events-root" in capsys.readouterr().out
+
+    published = run_events(
+        None,
+        observations_path,
+        output,
+        mode="published_as_of",
+        history_root=events_root,
+        events_root=events_root,
+    )
+    assert published == 1
+    assert "only used by mode event_time" in capsys.readouterr().out
+    assert not output.exists()
+
+
+def test_a_missing_events_root_is_a_missing_input(tmp_path, capsys):
+    _, observations_path = write_inputs(tmp_path, MOMENTS)
+
+    status = run_events(
+        None, observations_path, tmp_path / "dataset", events_root=tmp_path / "missing"
+    )
+
+    assert status == 2
+    assert "events root not found" in capsys.readouterr().out

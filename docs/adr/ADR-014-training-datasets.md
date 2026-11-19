@@ -113,7 +113,7 @@ arm64 with 14 CPUs, Python 3.13.9, pandas 2.3.3 and pyarrow 19.0.1. `pandas-raw`
 ## Open items
 
 - Composite entity keys in the history.
-- A content hash of the events in the manifest.
+- A content hash of the events in the manifest for JSONL input. A dataset from the event table records the snapshot id instead (ADR-015).
 - Operators beyond count in the Spark backfill, and with them in the dataset.
 - The conversion of Arrow batches into NumPy arrays or tensors for a training framework is not measured.
 - `load_training_dataset` is about 30 times slower than `pd.read_parquet` at 20 million rows. The cause, the checks over all rows or the sort, is not profiled.
