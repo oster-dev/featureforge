@@ -30,8 +30,8 @@ class LoadedDataset:
     manifest: dict[str, Any]
 
 
-def load_training_dataset(path: Path) -> LoadedDataset:
-    """Load a dataset and check the files against its manifest."""
+def read_manifest(path: Path) -> dict[str, Any]:
+    """Return the manifest of a dataset directory after the checks every reader needs."""
     if not path.is_dir():
         raise FileNotFoundError(f"dataset directory does not exist: {path}")
     manifest_path = path / MANIFEST_NAME
@@ -40,14 +40,18 @@ def load_training_dataset(path: Path) -> LoadedDataset:
             f"{MANIFEST_NAME} is missing in {path}; the dataset is not complete"
         )
     manifest: dict[str, Any] = json.loads(manifest_path.read_text(encoding="utf-8"))
-
     version = manifest.get("manifest_version")
     if version != SUPPORTED_MANIFEST_VERSION:
         raise TrainingDatasetError(
             f"unsupported manifest_version {version!r}, "
             f"this loader reads {SUPPORTED_MANIFEST_VERSION}"
         )
+    return manifest
 
+
+def load_training_dataset(path: Path) -> LoadedDataset:
+    """Load a dataset and check the files against its manifest."""
+    manifest = read_manifest(path)
     columns: list[str] = manifest["columns"]
     frame = pd.read_parquet(path)
     missing = [name for name in [*columns, PARTITION_COLUMN] if name not in frame.columns]
