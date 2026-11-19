@@ -260,7 +260,7 @@ Details, open items, and known limitations: **[STATUS.md](STATUS.md)**.
 | [STATUS.md](STATUS.md) | Delivered vs. in progress vs. planned, known limitations |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Component design and data flow |
 | [docs/PLATFORM_BLUEPRINT.md](docs/PLATFORM_BLUEPRINT.md) | Target platform design |
-| [docs/adr/](docs/adr/) | Architecture decision records (ADR-001 to ADR-014) |
+| [docs/adr/](docs/adr/) | Architecture decision records (ADR-001 to ADR-015) |
 | [docs/streaming-migration.md](docs/streaming-migration.md) | Streaming provenance and verification boundaries |
 | [docs/demo.md](docs/demo.md) | Reviewer walkthrough |
 | [docs/runbooks/](docs/runbooks/) | Stale features, failed backfill, failed materialization |
