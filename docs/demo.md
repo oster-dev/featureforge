@@ -604,10 +604,25 @@ python -c "from pathlib import Path; from featureforge.spec.training_loader impo
 ```
 
 
+### 5. Read the dataset in Arrow batches
+
+`open_training_batches` makes the same checks as the loader above from the Parquet
+metadata, so it reads no row before it returns. Its batches come in the order of the
+partition days and are not sorted by key. Use it when a dataset does not fit into memory
+or when the first batch should arrive at once:
+
+```bash
+python -c "from pathlib import Path; from featureforge.spec.training_batches import open_training_batches; opened = open_training_batches(Path('/tmp/dataset_demo')); print([batch.num_rows for batch in opened.batches()])"
+```
+
+The dataset of step 3 holds one row, so the command prints `[1]`. ADR-014 has the read
+numbers of both loaders.
+
+
 ### What this demo does not prove
 
 
-- There is no Arrow loader with throughput numbers yet. The dataset loader reads a whole dataset into memory.
+- The dataset loader reads a whole dataset into memory. `open_training_batches` reads in batches, and ADR-014 holds the numbers of both.
 - The parity between a Redis value and the `published_as_of` value is tested over two bounded runs of one entity, not for several entities or at TTL expiry. The dataset reflects the recorded evidence.
 - The `published_as_of` mode needs one entity key. `history_start` marks only the
   beginning of the evidence, so a later gap reads as `not_published`.

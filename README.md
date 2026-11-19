@@ -162,7 +162,7 @@ explicit modes that never replace each other. See
 | `build-training-dataset` writes a dataset in both modes, pins the history snapshot and records it in the manifest, never creates a history table and never overwrites an output | [`test_cli_build_training_dataset.py`](tests/unit/test_cli_build_training_dataset.py), [`test_cli_training_dataset.py`](tests/integration/test_cli_training_dataset.py) |
 
 
-Not yet proven: the parity for several entities and at TTL expiry. Not yet built: an Arrow loader with throughput numbers. See [STATUS.md](STATUS.md).
+Not yet proven: the parity for several entities and at TTL expiry. Not yet built: the Iceberg offline store. See [STATUS.md](STATUS.md).
 
 
 ### Online access
@@ -247,7 +247,7 @@ All three use the spec-driven store and materializer. The first two keep their t
 |---|---|
 | 1 · Feature store foundation | **Released** as [v0.1.0](https://github.com/oster-dev/featureforge/releases/tag/v0.1.0) |
 | 2 · Streaming feature platform | **Core delivered.** Declarative feature specs: spec model, reference and one generic Flink job running both streaming features are done, including savepoint resume and recovery from a TaskManager crash. A spec-driven Redis store and materializer serve a YAML-only feature end to end. Streaming publication evidence is recorded in an Iceberg history table and read back as published-as-of. Open: JobManager failure and the final demo |
-| 3 · End-to-end ML workflow | **Started.** Label specs and training datasets in two explicit modes (event time and published-as-of) are done. The online and offline parity test over a bounded replay is done. The `build-training-dataset` command and the dataset loader are done. Open: an Arrow loader with throughput numbers |
+| 3 · End-to-end ML workflow | **Started.** Label specs and training datasets in two explicit modes (event time and published-as-of) are done. The online and offline parity test over a bounded replay is done. The `build-training-dataset` command, the dataset loader and the Arrow batch loader are done. Open: the Iceberg offline store |
 
 Details, open items, and known limitations: **[STATUS.md](STATUS.md)**.
 

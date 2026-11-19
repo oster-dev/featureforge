@@ -293,7 +293,7 @@ flowchart LR
 | A | Preserve released batch behavior, inventory dependencies, record import provenance | Done |
 | B | Integrate play-count slice, validation-to-online behavior, common read interface | Done |
 | C | Skip-rate and late corrections done. Feature spec model, exact reference and one generic Flink job running both features done, the hand-written jobs are removed. A spec-driven store and materializer are done and proven end to end for a YAML-only feature. The stores and materializers of the two original features are thin wrappers over them. The history, the evidence append, published-as-of retrieval, its parity with Redis over a bounded replay and the availability model (ADR-010, ADR-011) are done. Open: JobManager-failure recovery evidence and gap detection inside the history | In progress |
-| D | Label specs (ADR-012), training datasets in two modes (ADR-014), the `build-training-dataset` command and the dataset loader are done. Open: label audit of the source, an Arrow loader with throughput numbers, batch-only vs batch-plus-stream comparison, model-backed inference | In progress |
+| D | Label specs (ADR-012), training datasets in two modes (ADR-014), the `build-training-dataset` command, the dataset loader and the Arrow batch loader are done. Open: label audit of the source, batch-only vs batch-plus-stream comparison, model-backed inference | In progress |
 | E | Metrics, recovery drills, benchmarks, clean-clone demo, notebook, reproducible release | Planned |
 
 Bounded later extensions: cloud staging deployment, Metaflow orchestration,
