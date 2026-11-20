@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "featureforge"
 version = "0.1.0"
-description = "Production-inspired feature platform for reproducible offline training data and low-latency online ML feature serving."
+description = "Production-inspired feature platform for reproducible offline training data and online ML feature serving."
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 license = { text = "MIT" }
