@@ -103,6 +103,16 @@ services:
       retries: 12
       start_period: 5s
 
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.12.0
+    profiles: ["fault"]
+    ports:
+      - "127.0.0.1:8474:8474"
+      - "127.0.0.1:16379:16379"
+    depends_on:
+      redis:
+        condition: service_healthy
+
   iceberg-catalog:
     image: postgres:16-alpine
     profiles: ["catalog"]
