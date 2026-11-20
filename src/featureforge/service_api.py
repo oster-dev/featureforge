@@ -86,12 +86,19 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--budget-ms", type=float, default=50.0)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8080)
+    parser.add_argument("--quiet", action="store_true", help="No access log.")
     args = parser.parse_args(argv)
 
     import uvicorn
 
     app = create_app(build_server(args.specs_dir, args.redis_url, args.budget_ms))
-    uvicorn.run(app, host=args.host, port=args.port)
+    uvicorn.run(
+        app,
+        host=args.host,
+        port=args.port,
+        log_level="warning" if args.quiet else "info",
+        access_log=not args.quiet,
+    )
 
 
 if __name__ == "__main__":
