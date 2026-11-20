@@ -149,10 +149,22 @@ class Dedupe(_Strict):
     ttl: Duration
 
 
+class FallbackPolicy(StrEnum):
+    OMIT = "omit"
+    DEFAULT_VALUE = "default_value"
+    FAIL = "fail"
+
+
+class Fallback(_Strict):
+    policy: FallbackPolicy = FallbackPolicy.OMIT
+    defaults: dict[str, float] = Field(default_factory=dict)
+
+
 class Online(_Strict):
     store: Literal["redis", "cassandra"]
     ttl: Duration
     update_policy: UpdatePolicy
+    fallback: Fallback = Field(default_factory=Fallback)
 
 
 class Offline(_Strict):
@@ -205,6 +217,16 @@ class FeatureSpec(_Strict):
             )
         if self.online.ttl < self.window.size:
             raise ValueError("online.ttl must be >= window.size")
+
+        fallback = self.online.fallback
+        if fallback.policy is FallbackPolicy.DEFAULT_VALUE:
+            expected_defaults = {*agg_names, *self.derived}
+            if set(fallback.defaults) != expected_defaults:
+                raise ValueError(
+                    f"online.fallback.defaults must name exactly {sorted(expected_defaults)}"
+                )
+        elif fallback.defaults:
+            raise ValueError("online.fallback.defaults requires the policy default_value")
 
         policy = self.online.update_policy
         monotone = policy in (UpdatePolicy.APPEND_ONLY, UpdatePolicy.COMPONENTWISE_MONOTONIC)

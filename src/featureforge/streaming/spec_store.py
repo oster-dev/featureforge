@@ -1,5 +1,6 @@
 """Guarded Redis writes for spec-driven count-vector features (ADR-009)."""
 
+from dataclasses import dataclass
 from typing import cast
 
 from redis import Redis
@@ -21,6 +22,14 @@ SUPPORTED_POLICIES = (
     UpdatePolicy.COMPONENTWISE_MONOTONIC,
 )
 MAX_ATTEMPTS = 16
+
+
+@dataclass(frozen=True)
+class RecordRead:
+    """One decoded read: a record, no record, or the type of a decoding error."""
+
+    record: FeatureRecord | None = None
+    error_type: str | None = None
 
 
 class UnsupportedPolicyError(ValueError):
@@ -89,6 +98,15 @@ class RedisSpecStore:
         if payload is None:
             return None
         return self._decode(payload, entity_value=entity_value)
+
+    def decode_read(self, payload: str | bytes | None, entity_value: str) -> RecordRead:
+        """Decode one payload from a multi-key read without raising on bad data."""
+        if payload is None:
+            return RecordRead()
+        try:
+            return RecordRead(record=self._decode(payload, entity_value=entity_value))
+        except (ValueError, TypeError) as error:
+            return RecordRead(error_type=type(error).__name__)
 
     def write(self, record: FeatureRecord) -> WriteOutcome:
         """Apply window ordering and componentwise same-window count ordering.
