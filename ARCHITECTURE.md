@@ -1,7 +1,7 @@
 # FeatureForge Architecture
 
 FeatureForge computes features once and serves them consistently for offline
-training and low-latency online inference, from batch and streaming sources.
+training and online reads, from batch and streaming sources.
 
 This document describes what is **implemented and tested today**.
 

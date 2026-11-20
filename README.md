@@ -4,7 +4,9 @@
 [![Release](https://img.shields.io/github/v/release/oster-dev/featureforge)](https://github.com/oster-dev/featureforge/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**A production-inspired ML feature platform that computes features once and serves them correctly for both offline training and low-latency online inference, from batch and streaming sources.**
+**A production-inspired ML feature platform that keeps features correct between offline training and online reads, from batch and streaming sources.**
+
+Proven today: point-in-time training datasets in two modes ([ADR-014](docs/adr/ADR-014-training-datasets.md)), event-time semantics ([ADR-010](docs/adr/ADR-010-time-and-availability-model.md)), idempotent writes into an Iceberg event fact store ([ADR-015](docs/adr/ADR-015-iceberg-event-fact-store.md)) and online/offline parity for one entity over two runs ([test](tests/integration/test_materialize_spec_kafka_to_history.py)). Not measured yet: serving latency and throughput. [STATUS.md](STATUS.md) lists what is delivered and every known limit.
 
 FeatureForge focuses on the parts that make feature platforms trustworthy:
 point-in-time correctness, event-time semantics, idempotent writes, and
@@ -24,6 +26,7 @@ flowchart LR
     subgraph Sources
         GEN[Deterministic<br/>synthetic generator]
         EV[(Kafka<br/>interaction-events.v1)]
+        JSONL[(Events JSONL<br/>file)]
     end
 
     subgraph Batch["Batch path"]
@@ -49,6 +52,8 @@ flowchart LR
 
     TRAIN[Training pipeline<br/>point-in-time retrieval]
     HIST[(History table<br/>Iceberg, publication evidence)]
+    WRITER[Event writer<br/>validate · append · then commit offset]
+    FACT[(Event fact table<br/>Iceberg, idempotent by event_id)]
     DS[Spark dataset builder<br/>event_time · published_as_of]
     DSOUT[(Training dataset<br/>Parquet + manifest)]
 
@@ -60,8 +65,10 @@ flowchart LR
     FJ --> LATE
     REDIS --> API
     MAT --> HIST
-    EV --> DS
-    HIST --> DS
+    EV --> WRITER --> FACT
+    FACT -->|event_time · pinned snapshot| DS
+    JSONL -->|event_time · JSONL input| DS
+    HIST -->|published_as_of · pinned snapshot| DS
     DS --> DSOUT
 ```
 
