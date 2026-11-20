@@ -509,7 +509,7 @@ These are maintenance items and not failures of passing tests.
 
 ---
 
-## Milestone statement
+## Current state
 
 FeatureForge has an integrated, tested streaming path with event validation,
 event-time windows, bounded replay idempotency, identity-conflict detection,
@@ -522,7 +522,7 @@ feature defined by a YAML spec alone (`content_play_count_1h`) is proven from
 events to Redis. The stores and materializers of the two original features are thin wrappers
 over the spec-driven ones. A Spark backfill from a spec covers count aggregations, and the two original Spark features are hand-written.
 
-Remaining before the streaming phase can be called complete: JobManager-failure
+Remaining before the streaming path can be called complete: JobManager-failure
 recovery verification, verification at the production TTL values, gap detection inside the streaming history, and a reproducible completion demonstration. These must be
 completed or explicitly scoped. For current test and CI results see the README
 badge and the Actions page, not this document.
