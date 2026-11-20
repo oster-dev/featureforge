@@ -24,15 +24,15 @@ Goal: one network contract that returns a feature vector for several entities wi
 | Endpoints | `POST /v1/features/lookup`, `GET /healthz` (process is alive), `GET /readyz` (specs loaded and the store answers a ping). |
 | Scope | Features defined by specs. The Feast batch features stay behind `OnlineFeatureClient` until they are specs. The first backend is Redis. Cassandra follows through the protocol of ADR-013. |
 | Request | `features`: a list of `{name, version?}`. `entities`: a list of key maps, for example `{"user_id": "u1"}`. At most 100 entities and 50 features per request, otherwise 422. Optional `reference_time` with an explicit time zone and optional `budget_ms`. |
-| Response | One entry for every requested pair of entity and feature. An entry is never dropped. Each entry has `status`, `value`, `observation_time`, `age_seconds`, `freshness`, `version`, `defaulted` and `error_type`. The response states `atomic: false`. |
-| Status | `ok`: present and fresh. `missing`: no key, an unknown entity, or an expired key. `stale`: present, and the age is above `freshness_slo`, the freshness is `unknown` or the observation time is in the future. `backend_error`: a timeout, a connection error or a record that fails validation. The `freshness` field keeps the exact reason of `stale`. |
+| Response | One entry for every requested pair of entity and feature. An entry is never dropped. Each entry has `status`, `values`, `observation_time`, `age_seconds`, `freshness`, `version`, `published_at`, `defaulted` and `error_type`. `values` maps the counter and derived names of the spec to numbers, because one record holds all of them. The response states `atomic: false`. |
+| Status | `ok`: present and fresh. `missing`: no key, an unknown entity, or an expired key. `stale`: present, and the age is above `freshness_slo` or the observation time is in the future. `backend_error`: a timeout, a connection error or a record that fails validation. The `freshness` field keeps the exact reason of `stale`. |
 | Stale values | A `stale` entry keeps its value, so the caller sees the value and its age and decides. |
 | Freshness | Evaluated at request time as `reference_time - observation_time` against `freshness_slo` of the spec. |
-| Reads | One pipelined `MGET` per store and request. One round trip, not one per key. |
+| Reads | One `MGET` per request over the keys of all requested features. One round trip, not one per key or feature. This assumes a single Redis node. A cluster needs one call per hash slot. |
 | Isolation | A corrupt record is `backend_error` for its own entry. The other entries of the request stay valid. |
-| Timeouts | A budget per request, default 50 ms. A timeout per backend call, default 30 ms and never more than the remaining budget. Both are first targets and not SLOs. A timeout is `backend_error` with `error_type` `Timeout`. |
+| Timeouts | A budget per request, default 50 ms. A request makes one round trip to one store, so the budget is the socket and connect timeout of the Redis client. A separate timeout per backend call matters once a request reads from several backends. The values are first targets and not SLOs. A timeout is `backend_error`, and `error_type` is the name of the exception class, for example `TimeoutError`. |
 | Retries | None in the request path. A retry hides tail latency inside the budget. |
-| Fallback | `online.fallback` in the spec: `omit` (default), `default_value` or `fail`. It applies to `missing` and `backend_error`. `omit` keeps the status and a null value. `default_value` returns the configured value, keeps the status and sets `defaulted: true`. `fail` answers the whole request with 503 when this feature is a `backend_error`. `missing` is a data state and never fails a request. |
+| Fallback | `online.fallback` in the spec has a `policy`: `omit` (default), `default_value` or `fail`. `default_value` needs a `defaults` map that names every counter and derived field of the spec. It applies to `missing` and `backend_error`. `omit` keeps the status and a null value. `default_value` returns the configured values, keeps the status and sets `defaulted: true`. `fail` answers the whole request with 503 when this feature is a `backend_error`. `missing` is a data state and never fails a request. |
 | Versions | The request names a feature and optionally a version. Without one, the highest loaded version of that name is used. The response states the resolved version. The version is part of the key. An unknown name or version is 422, not a feature status. |
 | Specs | Loaded from a directory at startup. No reload at runtime. |
 | Errors | The response carries `error_type` only. The message goes to the log. |
@@ -45,7 +45,7 @@ Goal: one network contract that returns a feature vector for several entities wi
 - Negative: JSON and a Python service add overhead per request. The size of that overhead is a measurement, not an assumption.
 - Negative: the budget is enforced by socket timeouts. It is not a hard guarantee. Validation and serialization time come on top.
 - Negative: stores are read at slightly different times. The response is not an atomic snapshot.
-- Negative: mapping `unknown` and `future` to `stale` loses a distinction in the status value. The `freshness` field carries it.
+- Negative: mapping `future` to `stale` loses a distinction in the status value. The `freshness` field carries it.
 - Negative: a new dependency on FastAPI and uvicorn, as an optional extra.
 - Negative: `online.fallback` is a new spec field. Existing specs stay valid through the default.
 
@@ -69,8 +69,8 @@ Every item has a test.
 - A value older than `freshness_slo` is `stale` and keeps its value and age.
 - A corrupt record is `backend_error` for its entry, and the other entries are `ok`.
 - With Redis stopped, every entry is `backend_error`. The three fallback policies behave as decided, and `fail` answers 503.
-- With a slow Redis (latency added by a proxy), the request ends within the budget plus a margin and reports `Timeout`.
-- A request reads one `MGET` per store, counted by a spy client.
+- With a slow Redis (latency added by a proxy), the request ends within the budget plus a margin and reports `TimeoutError`.
+- A request makes one `MGET` for all keys of all features, counted by a spy client.
 - The version is resolved as decided, and an unknown name, an unknown version and a request above the limits answer 422.
 - `readyz` fails while the store is down.
 
@@ -78,6 +78,6 @@ The latency of the service is measured in a separate change and reported in `doc
 
 ## Open items
 
-- `published_at` in the response needs a record that carries it. Until then the field is null.
+- `FeatureRecord` carries no `published_at`. The field stays null until the record gains it.
 - Synchronous or asynchronous Redis client: decided after profiling.
 - gRPC, authentication and a multi-read for Cassandra.
