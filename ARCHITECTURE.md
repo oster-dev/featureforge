@@ -5,13 +5,19 @@ training and online reads, from batch and streaming sources.
 
 This document describes what is **implemented and tested today**.
 
+The platform is the spec-driven path: one YAML spec drives the Flink job, the
+Spark backfill for count specs, the Redis store, the publication history and the training
+datasets. The Feast-based batch path (section 2) is batch path v1. It serves
+the original batch features and was built first. Those features are not yet
+defined as specs.
+
 ---
 
 ## 1. System overview
 
 ```mermaid
 flowchart LR
-    subgraph Batch["Batch path"]
+    subgraph Batch["Batch path v1"]
         GEN[Synthetic<br/>generator] --> REF[Pandas reference<br/>PySpark engine]
         REF --> OFF[(Canonical offline store<br/>partitioned Parquet)]
         OFF --> GATE{Correctness<br/>and freshness gates}
@@ -43,7 +49,7 @@ flowchart LR
 | Offline store | One canonical Parquet root, Hive-style `observation_date` partitions |
 | Publication history | One Iceberg table per spec (PyIceberg writes, Spark reads, SQLite or PostgreSQL catalog), appended idempotently by `materialize_spec` with `--history-root` |
 | Training datasets | Spark: features from events (`event_time`) or from a pinned history snapshot (`published_as_of`), a label from events, Parquet by UTC day and a manifest |
-| Retrieval and materialization | Feast, point-in-time joins |
+| Batch path v1: retrieval and materialization | Feast, point-in-time joins |
 | Streaming | Kafka, Flink (PyFlink), Pydantic contracts |
 | Feature definitions as data | YAML specs, Pydantic validation, exact reference, one generic Flink job for all spec-defined streaming features |
 | Online store | Redis. One spec-driven store and materializer for count and ratio specs. The two original features keep their typed models and command lines as thin wrappers over it |
@@ -51,7 +57,7 @@ flowchart LR
 
 ---
 
-## 2. Batch path
+## 2. Batch path v1
 
 ```mermaid
 flowchart LR

@@ -13,6 +13,12 @@ point-in-time correctness, event-time semantics, idempotent writes, and
 offline/online consistency. Every claimed guarantee below links to the test
 that proves it.
 
+The platform is the spec-driven path: one YAML spec drives the Flink job, the
+Spark backfill for count specs, the Redis store, the publication history and the
+training datasets. The Feast-based batch path is batch path v1. It serves the
+original batch features, which are not yet defined as specs
+([STATUS.md](STATUS.md)).
+
 > **Scope, stated honestly:** FeatureForge is a local reference implementation.
 > It runs on Docker Compose, uses synthetic data, and does not claim production
 > scale. Its value is in the explicit contracts and the evidence behind them.
@@ -29,7 +35,7 @@ flowchart LR
         JSONL[(Events JSONL<br/>file)]
     end
 
-    subgraph Batch["Batch path"]
+    subgraph Batch["Batch path v1"]
         PD[Pandas reference]
         SP[PySpark engine]
         OFF[(Canonical offline store<br/>Parquet, partitioned)]
@@ -78,7 +84,7 @@ flowchart LR
 | Stream processing | Apache Kafka 3.9, Apache Flink 1.20 (PyFlink) |
 | Offline store | Partitioned Parquet (local); S3 profile documented |
 | Publication history and training datasets | Apache Iceberg (PyIceberg writes, Spark reads) with a SQLite or PostgreSQL catalog; Spark training datasets with a manifest |
-| Feature definitions and retrieval | Feast |
+| Batch path v1: feature definitions and retrieval | Feast |
 | Declarative feature specs | YAML, validated by a Pydantic model |
 | Online store | Redis 7.4 (local); DynamoDB profile documented |
 | Contracts | Pydantic |
