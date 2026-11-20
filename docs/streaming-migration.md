@@ -29,18 +29,18 @@ flowchart LR
     D4 --> D5[CI stabilization<br/>fresh TaskManager<br/>per skip-rate test]:::dev
     D5 --> D6[PR 11<br/>feature spec<br/>model]:::dev
     D6 --> D7[PR 12<br/>CI hardening,<br/>TaskManager per module]:::dev
-    D7 --> D8[Stage 4a to 4f<br/>all integration tests<br/>on the generic job]:::dev
-    D8 --> D9[Stage 4g<br/>hand-written jobs<br/>removed]:::dev
-    D9 --> D10[Stage 4h<br/>savepoint stop<br/>and resume]:::dev
-    D10 --> D11[Stage 4i<br/>TaskManager crash<br/>recovery]:::dev
-    D11 --> D12[Stage 4j<br/>dedupe expiry<br/>after TTL]:::dev
-    D12 --> D13[Stage 6a<br/>YAML-only content<br/>feature on the job]:::dev
+    D7 --> D8[All integration tests<br/>on the generic job]:::dev
+    D8 --> D9[Hand-written jobs<br/>removed]:::dev
+    D9 --> D10[Savepoint stop<br/>and resume]:::dev
+    D10 --> D11[TaskManager crash<br/>recovery]:::dev
+    D11 --> D12[Dedupe expiry<br/>after TTL]:::dev
+    D12 --> D13[YAML-only content<br/>feature on the job]:::dev
     D13 --> D14[PR 33 and 34<br/>validate-spec and<br/>test-spec]:::dev
     D14 --> D15[ADR-009<br/>spec-driven<br/>online stores]:::dev
-    D15 --> D16[Stage 4k<br/>spec-driven store<br/>and materializer]:::dev
-    D16 --> D17[Stage 6b<br/>YAML-only feature<br/>from events to Redis]:::dev
+    D15 --> D16[Spec-driven store<br/>and materializer]:::dev
+    D16 --> D17[YAML-only feature<br/>from events to Redis]:::dev
     D17 --> D18[ADR-010<br/>time and availability<br/>model]:::dev
-    D18 --> D19[Stage 4l<br/>thin wrappers for the<br/>original features]:::dev
+    D18 --> D19[Thin wrappers for the<br/>original features]:::dev
     D19 --> D20[PR 46 to 49<br/>ADR-011, history,<br/>published-as-of]:::dev
     D20 --> D21[PR 50 to 52<br/>Spark backfill,<br/>PostgreSQL catalog]:::dev
     D21 --> D22[PR 53 to 58<br/>ADR-012,<br/>label specs]:::dev
@@ -54,7 +54,7 @@ flowchart LR
 Blue stages were imported from the source commit. Green stages are development
 inside FeatureForge.
 
-| Stage | Merge commit | Content |
+| Change | Merge commit | Content |
 |---|---|---|
 | Import 1 | n/a | Event validation, right-closed timestamp mapping, play-count reference, unit tests, golden fixture |
 | Import 2 | n/a | Event routing, guarded Redis play-count store, Kafka-to-Redis materializer, unit tests, `streaming` dependency group |
@@ -67,29 +67,29 @@ inside FeatureForge.
 | CI fixes | up to `1ba2b93` | Fresh TaskManager per skip-rate test. Last recorded state of `1ba2b93`: all three CI jobs green |
 | PR #11 | `1c1a8ac` | Declarative feature spec model and validation (ADR-008) |
 | PR #12 | `1281d2c` | CI hardening, fresh TaskManager per Flink test module, TaskManager metaspace logging |
-| Stage 4a | `1ad56ce` | The skip-rate job scenarios run on the hand-written and the generic job |
-| Stage 4b | `0ea7156` | The play-count spec reproduces its golden fixture on the generic job |
-| Stage 4c | `7d97afe` | The play-count late-event scenarios run on both jobs |
-| Stage 4d | `a8cb607` | The play-count replay idempotency and identity conflict run on both jobs |
-| Stage 4e | `4535162` | The skip-rate Flink-to-Redis test runs on both jobs |
-| Stage 4f | `8058076` | The joined play-count flow runs on both jobs |
-| Stage 4g | `a3c2da2` | The hand-written feature jobs are removed. Last version: tag `hand-written-jobs-final` |
-| Stage 4h | `c2e9365` | The generic job stops with a savepoint and a new job resumes from it, with dedupe and window state intact (play-count spec) |
-| Stage 4i | `e56934d` | The generic job recovers from a TaskManager crash with checkpoint state (play-count spec) |
-| Stage 4j (PR #30) | `de74e6d` | The dedupe state expires after its TTL: a redelivery inside it is ignored, one after it is counted again. The job expires the state with a processing-time timer because the PyFlink 1.20 state TTL did not expire it (play-count spec, shortened TTL) |
-| PR #31 | `8146b70` | The merge commit of stage 4j is recorded in this document |
-| Stage 6a (PR #32) | `a108622` | `content_play_count_1h` (entity `content_id`) runs on the generic job from a YAML spec alone and matches hand-calculated windows |
+| Skip-rate scenarios on the generic job | `1ad56ce` | The skip-rate job scenarios run on the hand-written and the generic job |
+| Play-count golden fixture on the generic job | `0ea7156` | The play-count spec reproduces its golden fixture on the generic job |
+| Play-count late events on both jobs | `7d97afe` | The play-count late-event scenarios run on both jobs |
+| Play-count replay and identity conflict | `a8cb607` | The play-count replay idempotency and identity conflict run on both jobs |
+| Skip-rate Flink-to-Redis on both jobs | `4535162` | The skip-rate Flink-to-Redis test runs on both jobs |
+| Joined play-count flow on both jobs | `8058076` | The joined play-count flow runs on both jobs |
+| Hand-written jobs removed | `a3c2da2` | The hand-written feature jobs are removed. Last version: tag `hand-written-jobs-final` |
+| Savepoint stop and resume | `c2e9365` | The generic job stops with a savepoint and a new job resumes from it, with dedupe and window state intact (play-count spec) |
+| TaskManager crash recovery | `e56934d` | The generic job recovers from a TaskManager crash with checkpoint state (play-count spec) |
+| Dedupe expiry after TTL (PR #30) | `de74e6d` | The dedupe state expires after its TTL: a redelivery inside it is ignored, one after it is counted again. The job expires the state with a processing-time timer because the PyFlink 1.20 state TTL did not expire it (play-count spec, shortened TTL) |
+| PR #31 | `8146b70` | The merge commit of the dedupe expiry change is recorded in this document |
+| YAML-only content feature (PR #32) | `a108622` | `content_play_count_1h` (entity `content_id`) runs on the generic job from a YAML spec alone and matches hand-calculated windows |
 | PR #33 | `0386f97` | `validate-spec` command for feature specs |
 | PR #34 | `8360f83` | `test-spec` command: a spec is evaluated on a JSONL event file with the spec reference, without Docker |
 | PR #35 | `52b113a` | ADR-009: spec-driven online stores and materializer |
-| Stage 4k (PR #36) | `9e1324b` | One decision function for count-vector updates, compared with the hand-written skip-rate policy |
-| Stage 4k (PR #37) | `d42230f` | Feature record parser and spec-driven Redis store with `online.ttl` expiry |
-| Stage 4k (PR #38) | `9711627` | Spec-driven Kafka-to-Redis materializer |
-| Stage 6b (PR #39) | `7513240` | `content_play_count_1h` runs from events to Redis through the validation job, the generic job, the spec-driven materializer and store, without a new Python file |
+| Count-vector decision function (PR #36) | `9e1324b` | One decision function for count-vector updates, compared with the hand-written skip-rate policy |
+| Spec-driven Redis store (PR #37) | `d42230f` | Feature record parser and spec-driven Redis store with `online.ttl` expiry |
+| Spec-driven materializer (PR #38) | `9711627` | Spec-driven Kafka-to-Redis materializer |
+| YAML-only feature from events to Redis (PR #39) | `7513240` | `content_play_count_1h` runs from events to Redis through the validation job, the generic job, the spec-driven materializer and store, without a new Python file |
 | PR #40 | `764f779` | The spec-driven online path is recorded across README, STATUS and the design documents |
 | PR #42 | `a02a378` | ADR-010: time and availability model of the streaming features |
-| Stage 4l (PR #43) | `a780341` | The stores and materializers of the two original features are thin wrappers over the spec-driven store and materializer, `online.ttl` now applies to all three features, ADR-010 accepted |
-| PR #44 | `4858bc7` | Stage 4l and ADR-010 are recorded in this document |
+| Thin wrappers for the original features (PR #43) | `a780341` | The stores and materializers of the two original features are thin wrappers over the spec-driven store and materializer, `online.ttl` now applies to all three features, ADR-010 accepted |
+| PR #44 | `4858bc7` | The thin wrappers and ADR-010 are recorded in this document |
 | PR #45 | `09dc93d` | The skip rate is read through the unified client, and its identity conflict is tested |
 | PR #46 | `8207da2` | ADR-011: history table layout and evidence append |
 | PR #47 | `870599a` | The history table and an idempotent evidence append for spec-driven features |
@@ -139,7 +139,7 @@ Imported from the source tag and adapted from `featureforge_stream` to
 - `src/featureforge/streaming/reference/user_skip_rate.py`
 - `src/featureforge/streaming/skip_rate_store.py`
 - `src/featureforge/streaming/materialize_skip_rate.py`
-- `jobs/user_skip_rate_24h.py` (replaced by the generic job in stage 4g; the last version is in the tag `hand-written-jobs-final`)
+- `jobs/user_skip_rate_24h.py` (replaced by the generic job when the hand-written jobs were removed; the last version is in the tag `hand-written-jobs-final`)
 - `tests/unit/test_skip_rate_update_policy.py`, `tests/unit/test_user_skip_rate.py`
 - `tests/integration/test_redis_skip_rate_store.py`
 - `tests/integration/test_skip_rate_materialization.py`
@@ -170,8 +170,8 @@ Redis write policies.
 
 Replay executions reconstruct results from Kafka input. They do not restore Flink
 state from a checkpoint or savepoint. Restoring from a savepoint and from a
-checkpoint after a crash is covered separately (stages 4h and 4i). Since stage
-4d both replay tests run against the generic job.
+checkpoint after a crash is covered separately (see Savepoint resume and Crash recovery below). Since the replay and
+identity conflict change both replay tests run against the generic job.
 
 ### Unified online access (PR #7)
 
@@ -207,8 +207,8 @@ verifies that a distinct late event corrects an already emitted window from one
 to two, and that an event too late for all windows reaches the late topic with
 schema `v1`, reason `TOO_LATE_FOR_ALL_ASSIGNED_WINDOWS`, the feature name and
 the original payload. It waits for observable outputs rather than fixed sleeps,
-cancels its own resolved job ID and cleans up its isolated topics. Since stage
-4c it runs against the generic job.
+cancels its own resolved job ID and cleans up its isolated topics. Since the play-count late-event change
+it runs against the generic job.
 
 This test verifies Flink's Kafka outputs. It does not run corrections through the
 Redis materializer. The Redis policy is covered separately by Redis integration
@@ -231,7 +231,7 @@ events count toward neither value.
 
 The Flink job uses 24-hour sliding windows with a one-minute slide, a 10-minute
 bounded-out-of-orderness watermark, 30 minutes of allowed lateness and a 48-hour
-deduplication TTL. Since stage 4g these parameters come from the spec. The Redis
+deduplication TTL. Since the hand-written jobs were removed these parameters come from the spec. The Redis
 store compares `(play_count, skip_count)` componentwise within one observation
 window and never compares rates by magnitude. A newer window replaces an older
 one. Incomparable vectors raise `SkipRateUpdateConflictError`.
@@ -259,8 +259,8 @@ features (ADR-008). `feature_repo/specs/` contains specs for `user_play_count_1h
 and `user_skip_rate_24h`. The specs are validated, evaluated by an exact
 reference, and drive the generic Flink job `jobs/feature_from_spec.py`, which
 runs both features (see the next section). Stores and materializers became
-spec-driven in stage 4k, the Spark backfill from a spec covers count aggregations, and the two original Spark features are hand-written. `online.ttl`
-in a spec is enforced by the spec-driven store. Since stage 4l the stores of
+spec-driven in PRs #36 to #38, the Spark backfill from a spec covers count aggregations, and the two original Spark features are hand-written. `online.ttl`
+in a spec is enforced by the spec-driven store. Since PR #43 the stores of
 the two original features delegate to it, so all three features expire.
 
 ### Generic job consolidation
@@ -280,7 +280,7 @@ parity check until all tests passed on the generic job:
 - 4e: the skip-rate Flink-to-Redis flow with corrections and replay.
 - 4f: the joined play-count flow from validation to Redis.
 
-In stage 4g the hand-written jobs `jobs/user_play_count_1h.py` and
+When the generic job became the only job, the hand-written jobs `jobs/user_play_count_1h.py` and
 `jobs/user_skip_rate_24h.py` were removed, together with the `hand_written` test
 parameters. Both jobs wrote to the same default topics as the generic job, so
 the materializers and stores are unchanged. No deployment configuration
@@ -288,7 +288,7 @@ referenced the removed files. The last version is the tag
 `hand-written-jobs-final`. The independent oracle stays: the pure-Python
 references and the hand-calculated golden fixtures.
 
-### Savepoint resume (stage 4h)
+### Savepoint resume
 
 `tests/integration/test_generic_job_recovery.py` stops the generic job for the
 play-count spec with a savepoint and starts a new job from it. The Compose
@@ -302,9 +302,9 @@ redelivered event is not counted again, that a late correction lands in the
 restored window state, and that the late topic stays empty.
 
 This covers a planned stop and resume. Recovery after a crash is covered by
-stage 4i. Both tests are shown for the play-count spec only.
+the crash recovery test. Both tests are shown for the play-count spec only.
 
-### Crash recovery (stage 4i)
+### Crash recovery
 
 `tests/integration/test_generic_job_checkpoint_recovery.py` starts the generic
 job for the play-count spec with the cluster restart strategy, so without
@@ -324,7 +324,7 @@ this does not cover JobManager loss or checkpoints on a shared volume. The
 test restarts the TaskManager in its cleanup and runs in its own CI module, so
 the next module starts from a fresh TaskManager anyway.
 
-### Dedupe expiry (stage 4j)
+### Dedupe expiry
 
 `tests/integration/test_generic_job_dedupe_ttl.py` runs the generic job with a copy of the
 play-count spec: 20 s windows, 5 s slide, 10 s allowed lateness and a 30 s dedupe TTL. The
@@ -336,7 +336,7 @@ reaches 2. This also shows that an ignored duplicate does not refresh the retent
 The first version of the test failed. The job used Flink state TTL with `OnCreateAndWrite`
 and `NeverReturnExpired`, and the dedupe state did not expire in PyFlink 1.20.3: the
 redelivery stayed ignored after 80 s, while a fresh event with a new ID updated the same
-window. The behavior matches the reported issue FLINK-34625. Since stage 4j the job
+window. The behavior matches the reported issue FLINK-34625. Since PR #30 the job
 registers a processing-time timer when it first sees an event ID and clears the state when
 the timer fires.
 
@@ -344,7 +344,7 @@ Replay protection is therefore bounded by the TTL. An event redelivered after ex
 counted again. The test uses the shortened spec only. The production values of 24 h and
 48 h are configuration and are not exercised.
 
-### Content feature from YAML only (stage 6a)
+### Content feature from YAML only
 
 `tests/integration/test_generic_job_content_play_count.py` runs
 `content_play_count_1h` on the generic job without code changes. The spec is the
@@ -365,11 +365,11 @@ observation time and can check expected values with `--expect`. Both use exit
 codes (0 ok, 1 invalid input or failed expectation, 2 missing file) and run
 without Docker. `test-spec` runs the reference, not the Flink job.
 
-### Spec-driven online path (stage 4k, ADR-009)
+### Spec-driven online path (ADR-009)
 
 Stores and materializers were hand-written per feature. ADR-009 replaces them
 with one decision function, one store and one materializer that take the spec.
-In stage 4l the hand-written stores and materializers of the two original
+In PR #43 the hand-written stores and materializers of the two original
 features became thin wrappers over this code. Their typed models, constructors
 and command lines are unchanged.
 
@@ -403,7 +403,7 @@ and command lines are unchanged.
   `{"stale": 1, "unchanged": 1, "written": 4}`, the stored values, the TTL and
   that a second run with the same group does nothing.
 
-### End-to-end proof (stage 6b)
+### End-to-end proof
 
 `tests/integration/test_content_play_count_end_to_end.py` runs the whole path for
 a feature that has no job, store, materializer or record type of its own: the
