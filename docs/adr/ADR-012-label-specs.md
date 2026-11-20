@@ -59,7 +59,7 @@ dedupe: {key: event_id}
 - Positive: the leakage rule is explicit. Features end at `t` inclusive, labels start strictly after `t`, and an incomplete window never becomes a negative example.
 - Negative: `completed_within_7d` cannot ship before a source produces `complete` events. A streaming event simulator with a documented behaviour model is built first.
 - Negative: `is_active_next_7d` of the batch generator stays a separate definition on the batch contract until the batch path moves to specs.
-- The online store protocol of WP3, planned as ADR-011 in the readiness plan, becomes ADR-013.
+- The online store protocol, planned as ADR-011, becomes ADR-013.
 
 ## Alternatives considered
 

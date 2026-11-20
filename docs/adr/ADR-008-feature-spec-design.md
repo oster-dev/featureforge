@@ -56,7 +56,7 @@ keys are rejected with a clear error, not computed approximately.
 | Unit | `GroupBy` + `Join` | `StreamFeatureView` | Spec (one feature group) |
 | Windows | Sawtooth (sliding + hopping) | Time-window aggregations | Explicit sliding, `slide` declared |
 | Update and dedupe policy | Engine-defined | Engine-defined | **Declared in the spec and tested** |
-| Backfill timeline | `Join` left side | Not part of the view | Defined in WP2 |
+| Backfill timeline | `Join` left side | Not part of the view | Defined with the training datasets (ADR-014) |
 
 Sources:
 [Chronon GroupBy](https://chronon.ai/authoring_features/GroupBy.html),
@@ -67,7 +67,7 @@ Sources:
 - Positive: one source of truth for stream job, backfill, reference and catalog;
   guarantees are explicit and testable.
 - Negative: a 24 h window with a 1 min slide assigns each event to 1,440 windows.
-  State growth must be measured (WP5, WP9). Sawtooth windows are the known
+  State growth must be measured. Sawtooth windows are the known
   alternative if this becomes the bottleneck.
 - Negative: aggregations other than `count` need `window_replace`, which offers no
   online corrections within a window. A store for it must be built and tested

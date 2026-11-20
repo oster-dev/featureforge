@@ -1,6 +1,6 @@
 # ADR-010 Time and availability model for streaming history
 
-- Status: Accepted. Decides the time model of WP2. Nothing is implemented, and no `published_at` is fabricated.
+- Status: Accepted. Decides the time model of the streaming history and the training datasets. Nothing is implemented, and no `published_at` is fabricated.
 - Date: 2026-11-16
 - Author: Nico Ostermann
 - Deciders: Nico Ostermann
@@ -55,7 +55,7 @@ Goal: a stream feature can be retrieved as it was visible to serving at a given 
 
 ## Verification
 
-Nothing here is implemented. WP2 has to add tests for the following.
+Nothing here is implemented. The history and dataset work has to add tests for the following.
 
 - Idempotent evidence on redelivery.
 - No evidence on `stale`.

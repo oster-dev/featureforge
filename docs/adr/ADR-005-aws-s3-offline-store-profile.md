@@ -204,7 +204,7 @@ online feature data.
 
 ## Compliance
 
-This decision aligns with the L5 roadmap's Phase 5 goal:
+This decision aligns with the L5 roadmap goal:
 
 > Document the S3 bucket layout, Parquet partitioning, lifecycle/cost
 > trade-offs, and encryption. Document least-privilege roles: job writer,
