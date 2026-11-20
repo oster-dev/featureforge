@@ -263,7 +263,7 @@ spec-driven in stage 4k, the Spark backfill from a spec covers count aggregation
 in a spec is enforced by the spec-driven store. Since stage 4l the stores of
 the two original features delegate to it, so all three features expire.
 
-### Generic job consolidation (WP1 stage 4)
+### Generic job consolidation
 
 The generic job builds the windowed computation from a plan derived from a spec.
 It supports count aggregations and one entity key. Both features moved to it in

@@ -1,4 +1,4 @@
-"""Flink job plan derived from a FeatureSpec (ADR-008, WP1 stage 3).
+"""Flink job plan derived from a FeatureSpec (ADR-008).
 
 The plan holds everything a generic job needs from a spec: window, lateness,
 dedupe horizon, counters with their filters, and derived values. It supports

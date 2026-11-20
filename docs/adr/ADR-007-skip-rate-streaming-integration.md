@@ -8,7 +8,7 @@
 > **Update 2026-11-13:** The Flink job described in this ADR,
 > `jobs/user_skip_rate_24h.py`, was replaced by the generic spec-driven job
 > `jobs/feature_from_spec.py` with `feature_repo/specs/user_skip_rate_24h.yaml`
-> (ADR-008, WP1 stage 4). The behavior described below is unchanged: window,
+> (ADR-008). The behavior described below is unchanged: window,
 > watermark, lateness, deduplication, conflict handling and output records are
 > the same, and the same integration tests verify them on the generic job. The
 > Redis update policy, the materializer and the guarded store described here

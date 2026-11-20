@@ -297,7 +297,7 @@ flowchart LR
 | E | Metrics, recovery drills, benchmarks, clean-clone demo, notebook, reproducible release | Planned |
 
 Bounded later extensions: cloud staging deployment, Metaflow orchestration,
-MLflow tracking, embedding retrieval. Metaflow and MLflow form Phase 3 of the
+MLflow tracking, embedding retrieval. Metaflow and MLflow are later additions to the
 platform. They do not block the first integrated vertical slice.
 
 ---

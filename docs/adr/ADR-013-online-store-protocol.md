@@ -47,8 +47,8 @@ Goal: the same spec runs on Redis or Cassandra, and one contract test suite is g
 
 - Positive: a new backend implements three things and inherits the decision, the validation and the outcomes. Redis and Cassandra cannot drift apart in their rules.
 - Positive: the outcome stays available for the evidence of ADR-010, because the decision runs in the store and not in the database.
-- Positive: a partition per entity keeps the batch lookup of one entity to one read, which the serving service of WP4 uses.
-- Negative: every replacement costs a read at serial consistency and a Paxos round on the conditional write. The documentation describes several round trips per conditional write. The cost is measured in WP4 and not assumed here.
+- Positive: a partition per entity keeps the batch lookup of one entity to one read, which the serving service uses.
+- Negative: every replacement costs a read at serial consistency and a Paxos round on the conditional write. The documentation describes several round trips per conditional write. The cost is measured in the serving load test and not assumed here.
 - Negative: reads at `LOCAL_QUORUM` are not linearizable. Serving can briefly see the value from before a conditional write that is still running. The failure direction is old, never invented.
 - Negative: the single local node proves the protocol logic. It proves nothing about replication, several datacenters or failure of a node.
 - Negative: the payload is compared as a whole. A larger record makes the condition more expensive.
@@ -85,6 +85,6 @@ One contract test module runs against both backends. Each backend provides a fix
 - The Cassandra version and its Paxos implementation. The behavior of conditional writes differs between versions.
 - The row expiry in detail: whether a row survives its payload. The expiry test has to prove it.
 - A store-neutral exception for contention and unknown outcomes.
-- Serving reads at `SERIAL`, and what they cost. WP4 measures it.
+- Serving reads at `SERIAL`, and what they cost. The serving load test measures it.
 - Several nodes and several datacenters.
 - Creating the schema from a production service rather than the local profile.

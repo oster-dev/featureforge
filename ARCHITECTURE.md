@@ -128,7 +128,7 @@ Kafka range and terminate.
 The dedupe state expires through a processing-time timer that the job registers
 for each event ID when it first sees it. Flink state TTL is not used for this:
 on PyFlink 1.20.3 it did not expire the state (see
-[streaming provenance](docs/streaming-migration.md), stage 4j). Replay
+[streaming provenance](docs/streaming-migration.md), PR #30). Replay
 protection is therefore bounded by the spec's dedupe TTL, and an event
 redelivered after expiry is counted again.
 
@@ -407,9 +407,9 @@ repository) live in `tests/failure_simulations/`, with runbooks in
 
 ```mermaid
 flowchart LR
-    P1[Phase 1<br/>Feature store<br/>Released v0.1.0]:::done
-    P2[Phase 2<br/>Streaming platform<br/>Core delivered, specs in progress]:::wip
-    P3[Phase 3<br/>End-to-end ML<br/>Started]:::wip
+    P1[Feature store<br/>Released v0.1.0]:::done
+    P2[Streaming platform<br/>Core delivered, specs in progress]:::wip
+    P3[End-to-end ML<br/>Started]:::wip
     P1 --> P2 --> P3
 
     classDef done fill:#d4edda,stroke:#28a745,color:#000
