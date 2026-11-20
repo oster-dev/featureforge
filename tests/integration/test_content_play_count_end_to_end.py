@@ -11,16 +11,22 @@ import os
 import subprocess
 import sys
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 from confluent_kafka import Producer
 from confluent_kafka.admin import AdminClient, NewTopic
+from pyspark.sql import functions as F
 from redis import Redis
 
 from featureforge.spec.loader import load_spec
+from featureforge.spec.spark_backfill import backfill_spec, observations_to_frame
 from featureforge.streaming.contracts.events import InteractionEventV1
+from featureforge.streaming.event_log import open_event_table, pinned_events_snapshot_id
+from featureforge.streaming.events_spark import read_events
+from featureforge.streaming.history import open_local_catalog
+from featureforge.streaming.published_spark import create_history_session
 from featureforge.streaming.spec_store import RedisSpecStore
 
 pytestmark = pytest.mark.integration
@@ -234,6 +240,178 @@ def test_content_play_count_reaches_redis_from_events_without_feature_code():
             assert replay == {"stale": 128, "unchanged": 2}
             assert store.read("content_000001") == first
             assert store.read("content_000002") == second
+        finally:
+            keys = list(client.scan_iter(match=f"{key_prefix}:*"))
+            if keys:
+                client.delete(*keys)
+            with contextlib.suppress(Exception):
+                for future in admin.delete_topics(
+                    list(topics.values()), operation_timeout=15
+                ).values():
+                    future.result(timeout=30)
+
+
+def micros(moment):
+    return (moment - datetime(1970, 1, 1, tzinfo=UTC)) // timedelta(microseconds=1)
+
+
+def publish_raw(topic, values):
+    errors = []
+
+    def delivered(error, message):
+        if error is not None:
+            errors.append(str(error))
+
+    producer = Producer({"bootstrap.servers": BOOTSTRAP_SERVERS})
+    for value in values:
+        producer.produce(topic, value=value, on_delivery=delivered)
+    assert producer.flush(15) == 0
+    assert not errors, errors
+
+
+def run_event_writer(topic, group_id, root):
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "featureforge.streaming.event_writer",
+            "--bootstrap-servers",
+            BOOTSTRAP_SERVERS,
+            "--topic",
+            topic,
+            "--group-id",
+            group_id,
+            "--events-root",
+            str(root),
+            "--bounded",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert completed.returncode == 0, (
+        f"event writer failed\nstdout={completed.stdout}\nstderr={completed.stderr}"
+    )
+    return json.loads(completed.stdout)["event_results"]
+
+
+def test_redis_value_equals_the_event_table_evaluation_with_duplicates_and_invalid_payloads(
+    tmp_path,
+):
+    spec = load_spec(SPEC_PATH)
+    run_id = uuid.uuid4().hex
+    topics = {
+        kind: f"featureforge-stream.integration.parity.{kind}.{run_id}"
+        for kind in ("input", "validated", "rejected", "features", "late")
+    }
+    key_prefix = f"featureforge-stream:integration:parity:{run_id}"
+    container_spec = "/opt/flink/specs/content_play_count_1h.yaml"
+    content_a = f"content_a_{run_id}"
+    content_b = f"content_b_{run_id}"
+
+    shared = play("user_a2", content_a, 11, 30)
+    events = [
+        play("user_a1", content_a, 10, 15),
+        play("user_a1", content_a, 11, 30),
+        shared,
+        shared,
+        play("user_a3", content_a, 11, 30),
+        play("user_b1", content_b, 11, 45),
+        play("user_b2", content_b, 11, 45),
+    ]
+    payloads = [event.model_dump_json().encode("utf-8") for event in events]
+    payloads.append(b"{not valid json")
+    payloads.append(json.dumps({"event_id": str(uuid.uuid4())}).encode("utf-8"))
+
+    admin = AdminClient({"bootstrap.servers": BOOTSTRAP_SERVERS})
+    with Redis.from_url(
+        REDIS_URL,
+        decode_responses=True,
+        socket_connect_timeout=3,
+        socket_timeout=3,
+    ) as client:
+        try:
+            create_topics(list(topics.values()))
+            publish_raw(topics["input"], payloads)
+
+            run_in_jobmanager(
+                "validate_and_route_events.py",
+                [
+                    "--bootstrap-servers",
+                    KAFKA_IN_COMPOSE,
+                    "--input-topic",
+                    topics["input"],
+                    "--validated-topic",
+                    topics["validated"],
+                    "--rejected-topic",
+                    topics["rejected"],
+                    "--group-id",
+                    f"validation-{run_id}",
+                    "--bounded",
+                ],
+                "validation job",
+            )
+            run_in_jobmanager(
+                "feature_from_spec.py",
+                [
+                    "--spec",
+                    container_spec,
+                    "--bootstrap-servers",
+                    KAFKA_IN_COMPOSE,
+                    "--input-topic",
+                    topics["validated"],
+                    "--feature-topic",
+                    topics["features"],
+                    "--late-topic",
+                    topics["late"],
+                    "--group-id",
+                    f"content-play-count-{run_id}",
+                    "--job-name",
+                    f"content-play-count-{run_id}",
+                    "--bounded",
+                ],
+                "generic spec-driven job",
+            )
+            run_materializer(topics["features"], key_prefix, f"parity-{run_id}")
+
+            store = RedisSpecStore(client, spec, key_prefix=key_prefix)
+            redis_values = {content: store.read(content) for content in (content_a, content_b)}
+            assert redis_values[content_a].counts == {"play_count": 3}
+            assert redis_values[content_b].counts == {"play_count": 2}
+
+            results = run_event_writer(topics["input"], f"parity-writer-{run_id}", tmp_path)
+            assert results.get("duplicate") == 1, results
+            assert results.get("rejected_invalid_json") == 1, results
+            assert results.get("rejected_event_contract_violation") == 1, results
+
+            table = open_event_table(open_local_catalog(tmp_path))
+            assert table.scan().to_arrow().num_rows == 6
+            snapshot = pinned_events_snapshot_id(table)
+
+            spark = create_history_session(tmp_path)
+            try:
+                observations = observations_to_frame(
+                    spark,
+                    spec,
+                    [
+                        ({"content_id": content}, redis_values[content].observation_time)
+                        for content in redis_values
+                    ],
+                )
+                frame = backfill_spec(spec, read_events(spark, snapshot), observations).withColumn(
+                    "observation_us", F.unix_micros("observation_time")
+                )
+                from_table = {
+                    (row["content_id"], row["observation_us"]): row["play_count"]
+                    for row in frame.collect()
+                }
+            finally:
+                spark.stop()
+
+            for content, value in redis_values.items():
+                key = (content, micros(value.observation_time))
+                assert from_table[key] == value.counts["play_count"], (content, from_table)
         finally:
             keys = list(client.scan_iter(match=f"{key_prefix}:*"))
             if keys:
