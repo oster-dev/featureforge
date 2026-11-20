@@ -34,7 +34,7 @@ recommendation quality.
 FeatureForge is the single platform repository. FeatureForge Stream v0.1.0 is a
 frozen reference implementation whose capabilities were integrated
 incrementally with their provenance and tests (see
-[streaming-migration.md](streaming-migration.md)). The ML-workflow phase extends
+[streaming-migration.md](streaming-migration.md)). The ML workflow work extends
 this repository and does not create a separate platform.
 
 One repository does not imply one process, container, Python environment or

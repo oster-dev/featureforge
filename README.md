@@ -258,13 +258,12 @@ All three use the spec-driven store and materializer. The first two keep their t
 
 ## Status
 
-| Phase | Status |
-|---|---|
-| 1 · Feature store foundation | **Released** as [v0.1.0](https://github.com/oster-dev/featureforge/releases/tag/v0.1.0) |
-| 2 · Streaming feature platform | **Core delivered.** Declarative feature specs: spec model, reference and one generic Flink job running both streaming features are done, including savepoint resume and recovery from a TaskManager crash. A spec-driven Redis store and materializer serve a YAML-only feature end to end. Streaming publication evidence is recorded in an Iceberg history table and read back as published-as-of. Open: JobManager failure and the final demo |
-| 3 · End-to-end ML workflow | **Started.** Label specs and training datasets in two explicit modes (event time and published-as-of) are done. The online and offline parity test over a bounded replay is done. The `build-training-dataset` command, the dataset loader and the Arrow batch loader are done. The event fact store ([ADR-015](docs/adr/ADR-015-iceberg-event-fact-store.md)) keeps validated events as Iceberg facts, and `event_time` datasets read them at a pinned snapshot. Open: a mode that uses only events received by `t`, a table for rejected events and the materialized backfill table |
-
-Details, open items, and known limitations: **[STATUS.md](STATUS.md)**.
+The feature store foundation is released as
+[v0.1.0](https://github.com/oster-dev/featureforge/releases/tag/v0.1.0).
+Spec-driven streaming features, label specs and training datasets in two modes
+(event time and published-as-of) are delivered. Work in progress, planned work
+and known limitations are in **[STATUS.md](STATUS.md)**, the single source for
+the current state.
 
 ---
 

@@ -217,7 +217,7 @@ established in ADR-003.
 ## Notes
 
 - No AWS resources are provisioned by this ADR. This is an architecture and
-  documentation milestone (Day 15), not a deployment milestone.
+  documentation change, not a deployment.
 - The corresponding online-store profile (DynamoDB) is documented separately
   in `docs/aws-production-profile.md`.
 - Local development continues to use `output/offline_store/` and Redis via
