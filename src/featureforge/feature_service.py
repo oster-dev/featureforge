@@ -19,6 +19,7 @@ Freshness = Literal["fresh", "stale", "future"]
 
 MAX_ENTITIES = 100
 MAX_FEATURES = 50
+DEFAULT_NAMESPACE = "featureforge-stream:online"
 
 
 class RequestError(ValueError):
@@ -180,7 +181,13 @@ class FeatureServer:
     returned. The caller owns the Redis client and sets its socket timeouts.
     """
 
-    def __init__(self, client: Redis, specs: Sequence[FeatureSpec]) -> None:
+    def __init__(
+        self,
+        client: Redis,
+        specs: Sequence[FeatureSpec],
+        *,
+        namespace: str = DEFAULT_NAMESPACE,
+    ) -> None:
         self._client = client
         self._specs: dict[tuple[str, int], FeatureSpec] = {}
         self._stores: dict[tuple[str, int], RedisSpecStore] = {}
@@ -189,7 +196,9 @@ class FeatureServer:
             if identity in self._specs:
                 raise ValueError(f"duplicate spec {spec.name} version {spec.version}")
             self._specs[identity] = spec
-            self._stores[identity] = RedisSpecStore(client, spec)
+            self._stores[identity] = RedisSpecStore(
+                client, spec, key_prefix=f"{namespace}:v{spec.version}:{spec.name}"
+            )
         if not self._specs:
             raise ValueError("at least one spec is required")
 

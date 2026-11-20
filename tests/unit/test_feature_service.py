@@ -414,3 +414,10 @@ def test_http_readyz_follows_the_store() -> None:
     down = make_client(FakeRedis(error=ConnectionError("down"))).get("/readyz")
     assert down.status_code == 503
     assert down.json()["status"] == "not_ready"
+
+
+def test_the_namespace_sets_the_key_prefix() -> None:
+    fake = FakeRedis()
+    server = FeatureServer(as_redis(fake), [SKIP_RATE], namespace="custom:ns")
+    server.lookup([FeatureRef(SKIP_RATE.name)], [{"user_id": "u1"}], reference_time=REFERENCE)
+    assert fake.mget_calls == [[f"custom:ns:v{SKIP_RATE.version}:{SKIP_RATE.name}:u1"]]

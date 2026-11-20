@@ -73,7 +73,7 @@ Order follows the [readiness plan](docs/PLATFORM_BLUEPRINT.md):
 1. **Generic engine:** the open parts above.
 2. **History and datasets:** stream history, label specs and training datasets are delivered. The parity test between Redis and published-as-of, the `build-training-dataset` command, the dataset loader and the Arrow batch loader with its read benchmark are delivered too. Open: an Iceberg offline store.
 3. **Online store:** second online backend (Cassandra) behind one contract suite.
-4. **Serving:** the feature-serving service (ADR-016) exists for Redis, with unit tests against a fake store. Tests against a real Redis, the failure drills and the load test with a p99 are open.
+4. **Serving:** the feature-serving service (ADR-016) exists for Redis, with unit tests and integration tests against a real Redis. The failure drills with a stopped and a slow Redis and the load test with a p99 are open.
 5. **Operations:** observability, recovery drills, soak run.
 
 Later: catalog and discovery, embeddings, notebooks, profiling, end-to-end ML
