@@ -280,7 +280,7 @@ jobs:
 
       - name: Upload materialization manifests on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: materialization-manifests
           path: output/materialization_manifests/
@@ -288,7 +288,7 @@ jobs:
 
       - name: Upload offline-store diagnostics on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: offline-store-diagnostics
           path: output/offline_store/
@@ -371,7 +371,7 @@ jobs:
 
       - name: Upload streaming diagnostics artifact
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: streaming-diagnostics
           path: |
@@ -381,7 +381,7 @@ jobs:
 
       - name: Upload streaming test reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: streaming-junit
           path: reports/
