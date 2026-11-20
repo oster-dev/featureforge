@@ -1,6 +1,6 @@
 # ADR-015 Iceberg event fact store and snapshot-pinned event-time datasets
 
-- Status: Accepted. Decides what the event fact store holds, who writes it and how datasets read it. Implemented: the table contract, the idempotent append, the event writer and the snapshot-pinned read of `build-training-dataset --mode event_time`. The open items below remain.
+- Status: Accepted. Decides what the event fact store holds, who writes it and how datasets read it. Implemented: the table contract, the idempotent append, the event writer, the snapshot-pinned read of `build-training-dataset --mode event_time` and the parity test between the writer and the path through Flink to Redis. The open items below remain.
 - Date: 2026-11-19
 - Author: Nico Ostermann
 - Deciders: Nico Ostermann
@@ -57,7 +57,7 @@ Goal: keep the validated events as immutable facts in Iceberg, so that datasets 
 
 ## Verification
 
-Every item has a test except the last one: the parity between a bounded writer run and a run through Flink and Redis is not built. The item about an append after the pin is proven for the frame read at a pinned snapshot (`tests/integration/test_events_spark_read.py`). `--events-snapshot-id` rebuilds a dataset at the recorded snapshot after the table grew (`tests/integration/test_cli_training_dataset.py`).
+Every item has a test. The item about an append after the pin is proven for the frame read at a pinned snapshot (`tests/integration/test_events_spark_read.py`). `--events-snapshot-id` rebuilds a dataset at the recorded snapshot after the table grew (`tests/integration/test_cli_training_dataset.py`).
 
 - Round trip: events through the writer into the table, Spark reads the same events including `ingested_at`.
 - The same batch twice leaves the rows unchanged and keeps the first `ingested_at`.
@@ -66,7 +66,7 @@ Every item has a test except the last one: the parity between a bounded writer r
 - A dataset from the table equals the dataset from the same events as JSONL.
 - An append after the pin does not change the dataset, and the manifest names the snapshot id.
 - Mutation: dropping the duplicate check fails the idempotency test.
-- A bounded run through the writer and one through Flink and Redis agree on the events they saw.
+- A bounded run through the writer and one through Flink and Redis agree on the events they saw. With one duplicate and two invalid payloads in the input, the Redis value equals the spec evaluated on the table at a pinned snapshot, and the writer counts the duplicate and both rejections (`tests/integration/test_content_play_count_end_to_end.py`). For clean input the Flink windows equal that evaluation (`tests/integration/test_generic_job_content_play_count.py`). Both tests cover one input each and do not remove the independent reads described above.
 
 ## Open items
 
