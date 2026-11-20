@@ -308,6 +308,17 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Set up Java 17
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Verify Java runtime
+        run: |
+          echo "JAVA_HOME=$JAVA_HOME"
+          java -version
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -317,8 +328,8 @@ jobs:
       - name: Upgrade pip
         run: python -m pip install --upgrade pip
 
-      - name: Install project and streaming dependencies
-        run: python -m pip install -e ".[dev,streaming]"
+      - name: Install project, Spark and streaming dependencies
+        run: python -m pip install -e ".[dev,spark,streaming]"
 
       - name: Start streaming stack
         run: docker compose up -d --build

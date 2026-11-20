@@ -4,6 +4,7 @@ import contextlib
 import json
 import re
 import subprocess
+import sys
 import time
 from datetime import UTC, datetime, timedelta
 from urllib.request import urlopen
@@ -12,10 +13,16 @@ from uuid import uuid4
 import pytest
 from confluent_kafka import Consumer, Producer, TopicPartition
 from confluent_kafka.admin import AdminClient, NewTopic
+from pyspark.sql import functions as F
 
 from featureforge.spec.flink_plan import build_flink_plan
 from featureforge.spec.loader import load_spec
+from featureforge.spec.spark_backfill import backfill_spec, observations_to_frame
 from featureforge.streaming.contracts.events import InteractionEventV1
+from featureforge.streaming.event_log import open_event_table, pinned_events_snapshot_id
+from featureforge.streaming.events_spark import read_events
+from featureforge.streaming.history import open_local_catalog
+from featureforge.streaming.published_spark import create_history_session
 
 pytestmark = pytest.mark.integration
 
@@ -367,6 +374,154 @@ def test_content_play_count_runs_from_yaml_only():
                 feature_consumer.close()
             if late_consumer is not None:
                 late_consumer.close()
+            with contextlib.suppress(Exception):
+                for future in admin.delete_topics(topics, operation_timeout=15).values():
+                    future.result(timeout=30)
+
+
+def micros(moment: datetime) -> int:
+    return (moment - datetime(1970, 1, 1, tzinfo=UTC)) // timedelta(microseconds=1)
+
+
+def run_event_writer(topic: str, group_id: str, root) -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "featureforge.streaming.event_writer",
+            "--bootstrap-servers",
+            BOOTSTRAP_SERVERS,
+            "--topic",
+            topic,
+            "--group-id",
+            group_id,
+            "--events-root",
+            str(root),
+            "--bounded",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert completed.returncode == 0, (
+        f"event writer failed\nstdout={completed.stdout}\nstderr={completed.stderr}"
+    )
+
+
+def test_flink_windows_equal_the_evaluation_of_the_event_table(tmp_path):
+    spec = load_spec(SPEC_FILE)
+    run_id = uuid4().hex
+    input_topic = f"featureforge-stream.integration.content-parity.input.{run_id}"
+    feature_topic = f"featureforge-stream.integration.content-parity.features.{run_id}"
+    late_topic = f"featureforge-stream.integration.content-parity.late.{run_id}"
+    topics = [input_topic, feature_topic, late_topic]
+    contents = {label: f"content_{label}_{run_id}" for label in PLAYS}
+    progress_content = f"content_progress_{run_id}"
+    minutes = {label: [offset for _, offset in plays] for label, plays in PLAYS.items()}
+    expected_keys = {
+        (contents[label], iso(end))
+        for label, offsets in minutes.items()
+        for end in window_ends(offsets)
+    }
+
+    admin = AdminClient({"bootstrap.servers": BOOTSTRAP_SERVERS})
+    feature_consumer = None
+    job_id = None
+    try:
+        futures = admin.create_topics(
+            [
+                NewTopic(
+                    topic,
+                    num_partitions=1,
+                    replication_factor=1,
+                    config={"message.timestamp.type": "LogAppendTime"},
+                )
+                for topic in topics
+            ],
+            request_timeout=15,
+            operation_timeout=15,
+        )
+        for future in futures.values():
+            future.result(timeout=30)
+
+        feature_consumer = make_consumer(feature_topic)
+        wait_for_free_slot()
+        job_id = submit(
+            run_id=run_id,
+            input_topic=input_topic,
+            feature_topic=feature_topic,
+            late_topic=late_topic,
+        )
+        wait_for_job_running(job_id)
+
+        events = [
+            make_event(user, contents[label], START + timedelta(minutes=offset))
+            for label, plays in PLAYS.items()
+            for user, offset in plays
+        ]
+        events.append(
+            make_event(f"progress_user_{run_id}", progress_content, START + timedelta(minutes=131))
+        )
+        publish(input_topic, events)
+
+        records: dict = {}
+        duplicates: list = []
+        collect_windows(
+            feature_consumer,
+            set(contents.values()),
+            expected_keys,
+            duplicates=duplicates,
+            records=records,
+            seconds=WAIT_SECONDS,
+        )
+        assert set(records) == expected_keys
+        assert not duplicates, duplicates[:5]
+
+        run_event_writer(input_topic, f"parity-writer-{run_id}", tmp_path)
+        table = open_event_table(open_local_catalog(tmp_path))
+        assert table.scan().to_arrow().num_rows == len(events)
+        snapshot = pinned_events_snapshot_id(table)
+
+        flink = {
+            (
+                content_id,
+                micros(datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)),
+            ): (record["play_count"])
+            for (content_id, text), record in records.items()
+        }
+        spark = create_history_session(tmp_path)
+        try:
+            observations = observations_to_frame(
+                spark,
+                spec,
+                [
+                    ({"content_id": content_id}, datetime.fromtimestamp(us / 1_000_000, UTC))
+                    for content_id, us in sorted(flink)
+                ],
+            )
+            frame = backfill_spec(spec, read_events(spark, snapshot), observations).withColumn(
+                "observation_us", F.unix_micros("observation_time")
+            )
+            from_table = {
+                (row["content_id"], row["observation_us"]): row["play_count"]
+                for row in frame.collect()
+            }
+        finally:
+            spark.stop()
+
+        assert from_table == flink
+        for (label, offset), count in HAND_CALCULATED.items():
+            key = (contents[label], micros(START + timedelta(minutes=offset)))
+            assert from_table[key] == count, (label, offset)
+    finally:
+        try:
+            if job_id is not None:
+                run_flink(["cancel", job_id])
+                wait_for_job_terminal(job_id)
+        finally:
+            if feature_consumer is not None:
+                feature_consumer.close()
             with contextlib.suppress(Exception):
                 for future in admin.delete_topics(topics, operation_timeout=15).values():
                     future.result(timeout=30)
