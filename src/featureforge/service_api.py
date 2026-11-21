@@ -6,7 +6,8 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
+from prometheus_client import CONTENT_TYPE_LATEST
 from pydantic import BaseModel, ConfigDict, Field
 from redis import Redis
 
@@ -16,6 +17,7 @@ from featureforge.feature_service import (
     FeatureServer,
     RequestError,
 )
+from featureforge.service_metrics import ServiceMetrics
 from featureforge.spec.loader import load_spec
 
 
@@ -34,7 +36,8 @@ class LookupBody(_Body):
     reference_time: datetime | None = None
 
 
-def create_app(server: FeatureServer) -> FastAPI:
+def create_app(server: FeatureServer, metrics: ServiceMetrics | None = None) -> FastAPI:
+    service_metrics = metrics if metrics is not None else ServiceMetrics()
     app = FastAPI(title="FeatureForge feature serving", version="1")
 
     @app.get("/healthz")
@@ -52,6 +55,10 @@ def create_app(server: FeatureServer) -> FastAPI:
             status_code=200 if ready else 503,
         )
 
+    @app.get("/metrics", include_in_schema=False)
+    def metrics_endpoint() -> Response:
+        return Response(service_metrics.render(), media_type=CONTENT_TYPE_LATEST)
+
     @app.post("/v1/features/lookup")
     def lookup(body: LookupBody) -> JSONResponse:
         try:
@@ -61,12 +68,15 @@ def create_app(server: FeatureServer) -> FastAPI:
                 reference_time=body.reference_time,
             )
         except RequestError as error:
+            service_metrics.record_rejected("request_error")
             return JSONResponse({"detail": str(error)}, status_code=422)
         except FailPolicyError as error:
+            service_metrics.record_rejected("fail_policy")
             return JSONResponse(
                 {"detail": str(error), "features": list(error.features)},
                 status_code=503,
             )
+        service_metrics.record_lookup(result.entries, result.elapsed_ms)
         return JSONResponse(result.to_dict())
 
     return app

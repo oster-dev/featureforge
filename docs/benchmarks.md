@@ -149,6 +149,47 @@ Findings:
 - At 2000 req/s the p99 ranges overlap. No improvement is claimed there.
 - The client used 0.32 to 0.36 cores, so it is not the limit.
 
+## Change 3: metrics endpoint
+
+Commit 9e4220b against main at a9dc5bc. Both runs on a clean tree, same machine,
+same method, 3 runs per rate. Raw data:
+`docs/benchmarks/metrics-before-a9dc5bc.json` and
+`docs/benchmarks/metrics-after-9e4220b.json`.
+
+The service now exports `/metrics`: a latency histogram per backend, a counter
+per entry status and a counter per request outcome. The counters are bound once
+and a lookup increments at most four of them. This change adds work to the hot
+path, so the benchmark measures what it costs. The rule was fixed before the
+run: acceptable if the saturation falls by at most 5 percent, and runs with a
+service p50 above 35 ms are excluded as machine slowdowns.
+
+| Target req/s | Version | Achieved req/s | p50 ms | p99 ms | Service p50 ms | Service p99 ms | Server CPU cores |
+|---|---|---|---|---|---|---|---|
+| 2000 | before | 2000 | 0.87 to 1.14 | 2.83 to 10.64 | 0.70 to 1.00 | 2.62 to 9.98 | 0.53 to 0.65 |
+| 2000 | after | 2000 | 0.89 to 1.34 | 6.66 to 10.05 | 0.71 to 1.21 | 6.21 to 9.59 | 0.52 to 0.64 |
+| 3000 | before | 2999 | 0.94 to 1.00 | 5.96 to 6.34 | 0.85 to 0.90 | 5.48 to 5.76 | 0.84 to 0.87 |
+| 3000 | after | 2999 | 0.91 to 1.16 | 5.80 to 9.16 | 0.81 to 1.07 | 5.40 to 8.69 | 0.85 to 0.88 |
+| 4000 | before | 3998 | 13.90 to 15.49 | 39.44 to 68.72 | 13.74 to 15.33 | 36.46 to 38.97 | 1.26 |
+| 4000 | after | 3374 to 3997 | overload | overload | 29.07 to 39.27 | 43.24 to 47.77 | 1.25 to 1.26 |
+| 4500 | before | 4134 to 4160 | overload | overload | 28.16 to 28.37 | 44.93 to 45.57 | 1.27 |
+| 4500 | after | 4014 to 4033 | overload | overload | 29.08 to 29.25 | 46.65 to 46.87 | 1.26 |
+| 5000 | before | 3457 to 4129 | overload | overload | 28.46 to 38.29 | 45.28 to 46.24 | 1.26 to 1.27 |
+| 5000 | after | 4004 to 4020 | overload | overload | 29.26 to 29.31 | 46.62 to 47.05 | 1.25 to 1.26 |
+
+Findings:
+
+- Saturation of one process: about 4,140 req/s before (five runs at 4500 and
+  5000; the run at 5000/2 with 3,457 req/s and a service p50 of 38.3 ms is
+  excluded by the rule above) and about 4,020 req/s after (six runs, 4,004 to
+  4,033). That is about 3 percent, inside the limit of 5 percent. The noise
+  between two measurement days is 1 to 2 percent.
+- At 2000 and 3000 req/s the CPU per request is the same within the noise
+  (about 0.29 ms).
+- 4000 req/s is now at the knee. One run kept up (3,997 req/s), one reached
+  3,882 req/s with a p99 of 852 ms, one fell to 3,374 req/s (service p50
+  39.3 ms). Before, all three runs kept up.
+- The service runs here as a host process. The container is not measured.
+
 ## Limits
 
 - Client and service share one machine.
@@ -156,6 +197,9 @@ Findings:
 - The 50 ms budget is a socket timeout per Redis operation, not an end-to-end
   deadline.
 - The cause of the slow Redis calls is not known.
+- Three of 36 runs at 4000 req/s or more since change 2 fell to about 85 percent of the
+  capacity with a service p50 near 38 ms (3,538, 3,457 and 3,374 req/s). The cause is
+  not known.
 - One service process only. No claim for several processes or hosts.
 - The low-load latency varies between runs. Do not read the 100 req/s p50 as a
   property of the service.
