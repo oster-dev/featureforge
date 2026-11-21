@@ -73,7 +73,7 @@ Order follows the [readiness plan](docs/PLATFORM_BLUEPRINT.md):
 1. **Generic engine:** the open parts above.
 2. **History and datasets:** stream history, label specs and training datasets are delivered. The parity test between Redis and published-as-of, the `build-training-dataset` command, the dataset loader and the Arrow batch loader with its read benchmark are delivered too. Open: an Iceberg offline store.
 3. **Online store:** second online backend (Cassandra) behind one contract suite.
-4. **Serving:** the feature-serving service (ADR-016) exists for Redis, with unit tests and integration tests against a real Redis. A stopped and a slow Redis (Toxiproxy) give backend_error within the budget and the service recovers. The load test with a p99 is open.
+4. **Serving:** the feature-serving service (ADR-016) exists for Redis, with unit tests and integration tests against a real Redis. A stopped and a slow Redis (Toxiproxy) give backend_error within the budget and the service recovers. The load test is done: from 500 to 2000 req/s the p99 stayed below 20 ms on one laptop and one process saturates at about 3,250 req/s ([docs/benchmarks.md](docs/benchmarks.md)). A profile and the first optimization are open.
 5. **Operations:** observability, recovery drills, soak run.
 
 Later: catalog and discovery, embeddings, notebooks, profiling, end-to-end ML
@@ -107,7 +107,8 @@ workflow (Metaflow, MLflow, registry, rollback).
 | Event ids are deduplicated without expiry | The table drops a repeated `event_id` at any age, the online path only within the TTL (ADR-015). |
 | `published_as_of` reads events from JSONL only | `--events-root` is rejected in that mode. |
 | The event append slows down with the number of data files | `EventLog.append` reads every data file to look up the event ids. One MacBook, 1,000 new events: 0.14 s at 30 files, 0.40 s at 100 and 1.18 s at 300, about 4 ms per file. The row count does not matter: 100,000 and 1 million rows in 30 files take the same time. Nothing is measured beyond 300 files. Compaction is open (ADR-015). By the code, the writer flushes a partial batch at the first idle poll, so every pause of a second writes its own file. `--max-batch-seconds` lets a partial batch wait, so a low rate writes fewer, larger files, and its default of 0 keeps the old behaviour. A filter on `event_time` would hide an event id that comes back with another time. |
-| Few latency or throughput numbers | Dataset reads (ADR-014, `scripts/benchmark_training_loaders.py`) and the event append (ADR-015, `scripts/benchmark_event_append.py`) are measured. Serving latency and the Spark join are not. |
+| Few latency or throughput numbers | Dataset reads (ADR-014, `scripts/benchmark_training_loaders.py`) and the event append (ADR-015, `scripts/benchmark_event_append.py`) are measured. Serving latency is measured on one laptop only (ADR-016, `scripts/benchmark_feature_serving.py`, [docs/benchmarks.md](docs/benchmarks.md)). The Spark join is not. |
+| Some Redis calls hit the 50 ms socket timeout under load | In the serving benchmark 40 entries (100 req/s) and 80 entries (4000 req/s, second run) came back as `backend_error`. The budget is a socket timeout per Redis operation, not an end-to-end deadline. The cause is open. |
 | Older joined and replay tests lack topic cleanup and subprocess timeouts | Tracked in [streaming provenance](docs/streaming-migration.md#open-test-maintenance-items). |
 
 ## Deliberately out of scope
