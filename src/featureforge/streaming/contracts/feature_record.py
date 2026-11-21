@@ -10,8 +10,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from featureforge.spec.compiled_expression import compile_expression
 from featureforge.spec.model import FeatureSpec, Op
-from featureforge.spec.reference import evaluate_expression
 from featureforge.streaming.contracts.count_vector import CountVector
 
 SCHEMA_VERSION = "v1"
@@ -102,63 +102,87 @@ def parse_time(value: object, name: str) -> datetime:
     return parsed.astimezone(UTC)
 
 
+class RecordDecoder:
+    """Parse and validate the records of one spec.
+
+    Built once per spec, so that a read does not recompute the field layout. It
+    returns what parse_feature_record returns and raises what it raises.
+    """
+
+    def __init__(self, spec: FeatureSpec) -> None:
+        self._spec = spec
+        self._entity_key, self._counters, self._derived_names = record_fields(spec)
+        self._expected = {
+            *BASE_FIELDS,
+            self._entity_key,
+            *self._counters,
+            *self._derived_names,
+        }
+        self._expressions = tuple((name, spec.derived[name]) for name in self._derived_names)
+
+    def parse(self, payload: str | bytes) -> FeatureRecord:
+        """Parse and validate one record against its spec. Raises ValueError."""
+        spec = self._spec
+        entity_key = self._entity_key
+        expected = self._expected
+
+        data = json.loads(payload)
+        if not isinstance(data, dict):
+            raise ValueError("record must be a JSON object")
+
+        if data.keys() != expected:
+            raise ValueError(
+                f"record fields do not match spec {spec.name}: "
+                f"missing {sorted(expected - data.keys())}, "
+                f"unexpected {sorted(data.keys() - expected)}"
+            )
+        if data["feature_schema_version"] != SCHEMA_VERSION:
+            raise ValueError(f"feature_schema_version must be {SCHEMA_VERSION}")
+        if data["feature_name"] != spec.name:
+            raise ValueError(f"feature_name must be {spec.name}")
+
+        entity_value = data[entity_key]
+        if not isinstance(entity_value, str) or not ENTITY_VALUE.fullmatch(entity_value):
+            raise ValueError(f"{entity_key} must be a non-empty string without whitespace")
+
+        observation_time = parse_time(data["observation_time"], "observation_time")
+        window_start = parse_time(data["window_start_exclusive"], "window_start_exclusive")
+        if observation_time - window_start != spec.window.size:
+            raise ValueError(f"record window must be exactly {spec.window.size}")
+
+        counts: dict[str, int] = {}
+        for name in self._counters:
+            value = data[name]
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{name} must be a non-negative integer")
+            counts[name] = value
+
+        derived: dict[str, float] = {}
+        for name, expression in self._expressions:
+            value = data[name]
+            if isinstance(value, bool) or not isinstance(value, int | float):
+                raise ValueError(f"{name} must be a number")
+            if not math.isfinite(value):
+                raise ValueError(f"{name} must be finite")
+            try:
+                expected_value = compile_expression(expression)(counts)
+            except ZeroDivisionError as exc:
+                raise ValueError(f"{name} cannot be evaluated for these counts") from exc
+            if not math.isclose(value, expected_value, rel_tol=1e-12, abs_tol=1e-15):
+                raise ValueError(f"{name} must match its spec expression")
+            derived[name] = value
+
+        return FeatureRecord(
+            feature_name=spec.name,
+            entity_key=entity_key,
+            entity_value=entity_value,
+            observation_time=observation_time,
+            window_start_exclusive=window_start,
+            counts=counts,
+            derived=derived,
+        )
+
+
 def parse_feature_record(payload: str | bytes, spec: FeatureSpec) -> FeatureRecord:
     """Parse and validate one record against its spec. Raises ValueError."""
-    entity_key, counters, derived_names = record_fields(spec)
-
-    data = json.loads(payload)
-    if not isinstance(data, dict):
-        raise ValueError("record must be a JSON object")
-
-    expected = {*BASE_FIELDS, entity_key, *counters, *derived_names}
-    if data.keys() != expected:
-        raise ValueError(
-            f"record fields do not match spec {spec.name}: "
-            f"missing {sorted(expected - data.keys())}, "
-            f"unexpected {sorted(data.keys() - expected)}"
-        )
-    if data["feature_schema_version"] != SCHEMA_VERSION:
-        raise ValueError(f"feature_schema_version must be {SCHEMA_VERSION}")
-    if data["feature_name"] != spec.name:
-        raise ValueError(f"feature_name must be {spec.name}")
-
-    entity_value = data[entity_key]
-    if not isinstance(entity_value, str) or not ENTITY_VALUE.fullmatch(entity_value):
-        raise ValueError(f"{entity_key} must be a non-empty string without whitespace")
-
-    observation_time = parse_time(data["observation_time"], "observation_time")
-    window_start = parse_time(data["window_start_exclusive"], "window_start_exclusive")
-    if observation_time - window_start != spec.window.size:
-        raise ValueError(f"record window must be exactly {spec.window.size}")
-
-    counts: dict[str, int] = {}
-    for name in counters:
-        value = data[name]
-        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-            raise ValueError(f"{name} must be a non-negative integer")
-        counts[name] = value
-
-    derived: dict[str, float] = {}
-    for name in derived_names:
-        value = data[name]
-        if isinstance(value, bool) or not isinstance(value, int | float):
-            raise ValueError(f"{name} must be a number")
-        if not math.isfinite(value):
-            raise ValueError(f"{name} must be finite")
-        try:
-            expected_value = evaluate_expression(spec.derived[name], counts)
-        except ZeroDivisionError as exc:
-            raise ValueError(f"{name} cannot be evaluated for these counts") from exc
-        if not math.isclose(value, expected_value, rel_tol=1e-12, abs_tol=1e-15):
-            raise ValueError(f"{name} must match its spec expression")
-        derived[name] = value
-
-    return FeatureRecord(
-        feature_name=spec.name,
-        entity_key=entity_key,
-        entity_value=entity_value,
-        observation_time=observation_time,
-        window_start_exclusive=window_start,
-        counts=counts,
-        derived=derived,
-    )
+    return RecordDecoder(spec).parse(payload)

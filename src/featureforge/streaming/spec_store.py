@@ -12,11 +12,7 @@ from featureforge.streaming.contracts.count_vector import (
     WriteOutcome,
     decide_count_vector_update,
 )
-from featureforge.streaming.contracts.feature_record import (
-    FeatureRecord,
-    parse_feature_record,
-    record_fields,
-)
+from featureforge.streaming.contracts.feature_record import FeatureRecord, RecordDecoder
 
 SUPPORTED_POLICIES = (
     UpdatePolicy.APPEND_ONLY,
@@ -71,7 +67,7 @@ class RedisSpecStore:
             raise UnsupportedPolicyError(
                 f"update_policy {spec.online.update_policy.value} is not supported"
             )
-        record_fields(spec)
+        decoder = RecordDecoder(spec)
 
         prefix = (
             f"featureforge-stream:online:v{spec.version}:{spec.name}"
@@ -82,6 +78,7 @@ class RedisSpecStore:
 
         self._client = client
         self._spec = spec
+        self._decoder = decoder
         self._key_prefix = prefix
         self._ttl_seconds = int(spec.online.ttl.total_seconds())
 
@@ -91,7 +88,7 @@ class RedisSpecStore:
         return f"{self._key_prefix}:{entity_value}"
 
     def _decode(self, payload: str | bytes, *, entity_value: str) -> FeatureRecord:
-        record = parse_feature_record(payload, self._spec)
+        record = self._decoder.parse(payload)
         if record.entity_value != entity_value:
             raise ValueError("stored feature entity does not match requested entity")
         return record
@@ -119,7 +116,7 @@ class RedisSpecStore:
         Connection errors, conflicts and exhausted retries propagate.
         """
         payload = record.to_json()
-        incoming = parse_feature_record(payload, self._spec)
+        incoming = self._decoder.parse(payload)
         key = self.key_for(incoming.entity_value)
 
         for _ in range(MAX_ATTEMPTS):
