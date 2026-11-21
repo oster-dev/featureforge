@@ -1,4 +1,7 @@
-"""Verify the spec-driven Redis store against a local Redis (ADR-009)."""
+"""Redis-specific checks of the spec-driven store (ADR-009).
+
+The shared contract of every backend lives in test_online_store_contract.py.
+"""
 
 import json
 import os
@@ -12,7 +15,6 @@ from redis import Redis
 
 from featureforge.spec.loader import load_spec
 from featureforge.spec.reference import evaluate_expression
-from featureforge.streaming.contracts.count_vector import UpdateConflictError
 from featureforge.streaming.contracts.feature_record import parse_feature_record, stamp
 from featureforge.streaming.spec_store import RedisSpecStore
 
@@ -69,58 +71,6 @@ def make_store(redis_client: Redis) -> Iterator[Callable[..., RedisSpecStore]]:
         keys = list(redis_client.scan_iter(match=f"{prefix}:*"))
         if keys:
             redis_client.delete(*keys)
-
-
-@pytest.mark.parametrize(
-    ("spec", "entity", "counts"),
-    [
-        (PLAY, "user_000001", {"play_count": 3}),
-        (SKIP, "user_000001", {"play_count": 2, "skip_count": 1}),
-        (CONTENT, "content_000001", {"play_count": 4}),
-    ],
-)
-def test_round_trip(make_store, spec, entity, counts):
-    store = make_store(spec)
-    incoming = record(spec, entity, counts)
-
-    assert store.read(entity) is None
-    assert store.write(incoming) == "written"
-    assert store.read(entity) == incoming
-
-
-def test_newer_window_replaces_the_value_with_zero(make_store):
-    store = make_store(PLAY)
-    newer = record(PLAY, "user_000001", {"play_count": 0}, minutes=1)
-
-    assert store.write(record(PLAY, "user_000001", {"play_count": 3})) == "written"
-    assert store.write(newer) == "written"
-    assert store.read("user_000001") == newer
-
-
-@pytest.mark.parametrize(
-    ("incoming_count", "outcome", "stored_count"),
-    [(2, "stale", 3), (3, "unchanged", 3), (4, "written", 4)],
-)
-def test_same_window_corrections_follow_the_policy(
-    make_store, incoming_count, outcome, stored_count
-):
-    store = make_store(PLAY)
-    assert store.write(record(PLAY, "user_000001", {"play_count": 3})) == "written"
-
-    result = store.write(record(PLAY, "user_000001", {"play_count": incoming_count}))
-
-    assert result == outcome
-    assert store.read("user_000001").counts["play_count"] == stored_count
-
-
-def test_incomparable_skip_rate_counts_raise_and_keep_the_value(make_store):
-    store = make_store(SKIP)
-    stored = record(SKIP, "user_000001", {"play_count": 1, "skip_count": 1})
-    assert store.write(stored) == "written"
-
-    with pytest.raises(UpdateConflictError, match="Incomparable"):
-        store.write(record(SKIP, "user_000001", {"play_count": 2, "skip_count": 0}))
-    assert store.read("user_000001") == stored
 
 
 def test_ttl_is_set_and_only_written_updates_refresh_it(make_store, redis_client):
