@@ -6,7 +6,7 @@
 
 **A production-inspired ML feature platform that keeps features correct between offline training and online reads, from batch and streaming sources.**
 
-Proven today: point-in-time training datasets in two modes ([ADR-014](docs/adr/ADR-014-training-datasets.md)), event-time semantics ([ADR-010](docs/adr/ADR-010-time-and-availability-model.md)), idempotent writes into an Iceberg event fact store ([ADR-015](docs/adr/ADR-015-iceberg-event-fact-store.md)) and online/offline parity for one entity over two runs ([test](tests/integration/test_materialize_spec_kafka_to_history.py)). Not measured yet: serving latency and throughput. [STATUS.md](STATUS.md) lists what is delivered and every known limit.
+Proven today: point-in-time training datasets in two modes ([ADR-014](docs/adr/ADR-014-training-datasets.md)), event-time semantics ([ADR-010](docs/adr/ADR-010-time-and-availability-model.md)), idempotent writes into an Iceberg event fact store ([ADR-015](docs/adr/ADR-015-iceberg-event-fact-store.md)) and online/offline parity for one entity over two runs ([test](tests/integration/test_materialize_spec_kafka_to_history.py)). Measured on one laptop: the feature serving service answers 500 to 2,000 requests per second from one process with a p99 below 20 ms and saturates at about 3,250 requests per second ([benchmarks](docs/benchmarks.md)). [STATUS.md](STATUS.md) lists what is delivered and every known limit.
 
 FeatureForge focuses on the parts that make feature platforms trustworthy:
 point-in-time correctness, event-time semantics, idempotent writes, and
