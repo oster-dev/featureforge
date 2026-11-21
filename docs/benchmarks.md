@@ -94,6 +94,61 @@ Findings:
   and 211 us across runs of the same or nearly the same code, so it is not used
   for this comparison.
 
+## Change 2: compile spec expressions once, decode records per spec
+
+Commit a91f732 against main at ab6b3e5. Both runs on a clean tree, same machine,
+same method, 3 runs per rate. Raw data:
+`docs/benchmarks/opt2-before-ab6b3e5.json`,
+`docs/benchmarks/opt2-after-a91f732.json` and
+`docs/benchmarks/opt2-after-high-a91f732.json` (higher rates, after only).
+
+After change 1 the profile of the lookup showed two more costs on every read.
+The derived value of a record was checked by walking the expression tree
+(`_eval`, about 1.1 million `isinstance` calls per 3,000 requests), and the
+field layout of the spec was recomputed (`record_fields`). The change compiles
+each expression once into a function (`spec/compiled_expression.py`) and builds
+a `RecordDecoder` once per spec. `_eval`, the oracle for Flink and Spark, is
+unchanged. `parse_feature_record` keeps its signature. Parity tests compare the
+compiled evaluator with the oracle on every spec expression and on 3,000 random
+expressions, errors included, and compare the decoder with a copy of the
+previous parser on several thousand mutated payloads per spec.
+
+In the profile (cProfile with a CPU timer, 3,000 requests) the function calls
+fell from 3.26 to 2.33 million and the `isinstance` calls from 1.14 million to
+447,000.
+
+| Target req/s | Version | Achieved req/s | p50 ms | p99 ms | Service p50 ms | Service p99 ms | Server CPU cores |
+|---|---|---|---|---|---|---|---|
+| 2000 | before | 2000 | 0.94 to 1.40 | 5.84 to 12.26 | 0.79 to 1.28 | 5.40 to 11.94 | 0.58 to 0.66 |
+| 2000 | after | 2000 | 0.85 to 1.21 | 2.74 to 10.37 | 0.67 to 1.07 | 2.53 to 10.04 | 0.53 to 0.63 |
+| 3000 | before | 2999 | 1.13 to 1.25 | 6.55 to 9.62 | 1.04 to 1.16 | 6.17 to 9.25 | 0.91 to 0.94 |
+| 3000 | after | 2999 | 1.02 to 1.11 | 4.76 to 5.33 | 0.92 to 1.02 | 4.27 to 4.78 | 0.84 to 0.86 |
+| 4000 | before | 3802 to 3828 | overload | overload | 30.72 to 30.86 | 48.38 to 48.58 | 1.24 |
+| 4000 | after | 3997 to 3998 | 23.47 to 26.73 | 41.50 to 97.81 | 23.32 to 26.55 | 37.98 to 40.47 | 1.26 |
+
+Higher rates after the change (one process):
+
+| Target req/s | Achieved req/s | Service p50 ms | Service p99 ms | Server CPU cores |
+|---|---|---|---|---|
+| 4000 | 3538 to 3996 | 28.00 to 37.85 | 41.18 to 44.20 | 1.26 |
+| 4500 | 4092 to 4105 | 28.62 to 28.72 | 45.66 to 45.80 | 1.26 |
+| 5000 | 4074 to 4080 | 28.85 to 28.87 | 45.86 to 46.20 | 1.26 |
+| 6000 | 4094 to 4112 | 28.66 to 28.77 | 45.52 to 45.80 | 1.26 |
+
+Findings:
+
+- One process saturates at about 4,090 req/s (4,074 to 4,112 in the nine runs at
+  4500 to 6000), up from about 3,815 before this change and from about 3,300
+  before change 1, so about 24 percent in total.
+- 4000 req/s is at the edge. In five of six runs the service kept up (3,995 to
+  3,998). In one run it fell behind (3,538 req/s, service p50 37.9 ms). The cause
+  is not known.
+- At 3000 req/s the p99 fell from 6.6 to 9.6 ms to 4.8 to 5.3 ms. The service
+  used about 0.85 instead of 0.92 cores, so about 0.28 instead of 0.31 ms of CPU
+  per request. In saturation it is about 0.31 instead of 0.33 ms.
+- At 2000 req/s the p99 ranges overlap. No improvement is claimed there.
+- The client used 0.32 to 0.36 cores, so it is not the limit.
+
 ## Limits
 
 - Client and service share one machine.
