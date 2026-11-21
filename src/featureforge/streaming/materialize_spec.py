@@ -14,7 +14,7 @@ from featureforge.spec.loader import load_spec
 from featureforge.spec.model import FeatureSpec
 from featureforge.streaming.contracts.feature_record import parse_feature_record
 from featureforge.streaming.history import Evidence, HistoryTable, open_catalog
-from featureforge.streaming.spec_store import RedisSpecStore
+from featureforge.streaming.store_protocol import create_online_store
 
 LOGGER = logging.getLogger(__name__)
 
@@ -112,9 +112,9 @@ def materialize(arguments: argparse.Namespace, spec: FeatureSpec) -> Counter:
         if redis_client.ping() is not True:
             raise RuntimeError("Redis connectivity check failed")
 
-        store = RedisSpecStore(
-            redis_client,
+        store = create_online_store(
             spec,
+            redis_client=redis_client,
             key_prefix=arguments.key_prefix,
         )
         history = open_history(arguments, spec)

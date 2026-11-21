@@ -1,8 +1,7 @@
 # Observability of the feature service
 
 Prometheus and Grafana run in the Compose stack next to the feature service.
-They cover the serving path only. Alerts, runbooks and drills come with the
-rest of the operations phase.
+They cover the serving path only. Alert rules, runbooks and drills do not exist yet.
 
 ## Start
 

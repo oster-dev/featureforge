@@ -1,6 +1,6 @@
 # FeatureForge Status
 
-Last updated: 2026-11-18 · CI: see the
+Last updated: 2026-11-21 · CI: see the
 [Actions page](https://github.com/oster-dev/featureforge/actions)
 
 This file is the single place for what is **delivered**, **in progress**, and
@@ -68,11 +68,13 @@ Related: [README](README.md) · [Architecture](ARCHITECTURE.md) ·
 
 ## Next
 
-Order follows the [readiness plan](docs/PLATFORM_BLUEPRINT.md):
+Order follows the [platform blueprint](docs/PLATFORM_BLUEPRINT.md):
 
 1. **Generic engine:** the open parts above.
 2. **History and datasets:** stream history, label specs and training datasets are delivered. The parity test between Redis and published-as-of, the `build-training-dataset` command, the dataset loader and the Arrow batch loader with its read benchmark are delivered too. Open: an Iceberg offline store.
-3. **Online store:** second online backend (Cassandra) behind one contract suite.
+3. **Online store:** the `OnlineStore` protocol, a store factory and a contract
+   suite are delivered for Redis ([ADR-013](docs/adr/ADR-013-online-store-protocol.md)).
+   The second online backend (Cassandra) is open.
 4. **Serving:** the feature-serving service (ADR-016) exists for Redis, with unit tests and integration tests against a real Redis. A stopped and a slow Redis (Toxiproxy) give backend_error within the budget and the service recovers. The load test is done. Two optimizations raised the saturation point of one process from about 3,300 to about 4,100 req/s on one laptop ([docs/benchmarks.md](docs/benchmarks.md)). The metrics endpoint (`/metrics`) costs about 3 percent of that, so one process now saturates at about 4,000 req/s. More optimizations are open. The service also runs as a container in the Compose stack (`docker compose up -d --build feature-service`, checked with `scripts/smoke_feature_service.py`). Prometheus and a Grafana dashboard run next to it ([docs/observability.md](docs/observability.md)).
 5. **Operations:** observability, recovery drills, soak run.
 

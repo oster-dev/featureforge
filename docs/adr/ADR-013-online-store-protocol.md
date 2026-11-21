@@ -1,6 +1,6 @@
 # ADR-013 Online store protocol and a Cassandra backend
 
-- Status: Accepted. Decides the contract that every online store of a spec keeps and the Cassandra backend behind it. Nothing is implemented yet. Redis stays the reference implementation.
+- Status: Accepted. Decides the contract that every online store of a spec keeps and the Cassandra backend behind it. The protocol, the factory and the contract suite are implemented for Redis, which stays the reference implementation. The Cassandra backend is not implemented yet.
 - Date: 2026-11-18
 - Author: Nico Ostermann
 - Deciders: Nico Ostermann
@@ -86,5 +86,6 @@ One contract test module runs against both backends. Each backend provides a fix
 - The row expiry in detail: whether a row survives its payload. The expiry test has to prove it.
 - A store-neutral exception for contention and unknown outcomes.
 - Serving reads at `SERIAL`, and what they cost. The serving load test measures it.
+- The read path of the service. `FeatureServer.lookup` reads Redis with one `MGET` for all entities and features and is not part of the protocol. The service needs its own reader and a decision before it runs on Cassandra. The change needs a before and after measurement.
 - Several nodes and several datacenters.
 - Creating the schema from a production service rather than the local profile.
