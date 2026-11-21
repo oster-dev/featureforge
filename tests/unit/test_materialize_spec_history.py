@@ -152,7 +152,7 @@ class Run:
         monkeypatch.setattr(module, "Redis", SimpleNamespace(from_url=Mock(return_value=context)))
         monkeypatch.setattr(module, "Consumer", Mock(return_value=self.consumer))
         monkeypatch.setattr(
-            module, "RedisSpecStore", Mock(return_value=FakeStore(self.actions, outcomes))
+            module, "create_online_store", Mock(return_value=FakeStore(self.actions, outcomes))
         )
         monkeypatch.setattr(module, "open_history", Mock(return_value=self.history))
         self.arguments = make_arguments(commit_every=commit_every)

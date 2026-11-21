@@ -202,7 +202,7 @@ def harness(monkeypatch):
 
         monkeypatch.setattr(module.Redis, "from_url", redis_factory)
         monkeypatch.setattr(module, "Consumer", consumer_factory)
-        monkeypatch.setattr(module, "RedisSpecStore", store_factory)
+        monkeypatch.setattr(module, "create_online_store", store_factory)
 
         return argparse.Namespace(
             actions=actions,
@@ -256,8 +256,8 @@ def test_store_receives_client_spec_and_prefix(harness):
     module.materialize(make_arguments(key_prefix="custom"), PLAY)
 
     state.store_factory.assert_called_once_with(
-        state.redis_client,
         PLAY,
+        redis_client=state.redis_client,
         key_prefix="custom",
     )
 
