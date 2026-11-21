@@ -9,7 +9,7 @@ the commit named below. They are measurements, not guarantees.
 |---|---|
 | Machine | Apple M4 Pro, 14 logical CPUs, 24 GB, macOS 26.6.2 |
 | Python | 3.13.9 |
-| Packages | fastapi 0.141.1, uvicorn 0.53.0, starlette 1.6.0, redis 5.3.1, pydantic 2.13.5 |
+| Packages | fastapi 0.141.1, uvicorn 0.53.0, starlette 1.6.0, redis 5.3.1, pydantic 2.13.5, hiredis 3.4.1, uvloop 0.22.1, httptools 0.8.0 |
 | Redis | 7.4.12 in Docker Desktop, AOF enabled |
 | Commit | 26c9a8fc746266041b889070f33c2cb1dc312201, clean tree |
 | Service | one uvicorn process, access log off, `--budget-ms 50` |
