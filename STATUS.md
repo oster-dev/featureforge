@@ -73,7 +73,7 @@ Order follows the [readiness plan](docs/PLATFORM_BLUEPRINT.md):
 1. **Generic engine:** the open parts above.
 2. **History and datasets:** stream history, label specs and training datasets are delivered. The parity test between Redis and published-as-of, the `build-training-dataset` command, the dataset loader and the Arrow batch loader with its read benchmark are delivered too. Open: an Iceberg offline store.
 3. **Online store:** second online backend (Cassandra) behind one contract suite.
-4. **Serving:** the feature-serving service (ADR-016) exists for Redis, with unit tests and integration tests against a real Redis. A stopped and a slow Redis (Toxiproxy) give backend_error within the budget and the service recovers. The load test is done: from 500 to 2000 req/s the p99 stayed below 20 ms on one laptop and one process saturates at about 3,250 req/s ([docs/benchmarks.md](docs/benchmarks.md)). A profile and the first optimization are open.
+4. **Serving:** the feature-serving service (ADR-016) exists for Redis, with unit tests and integration tests against a real Redis. A stopped and a slow Redis (Toxiproxy) give backend_error within the budget and the service recovers. The load test is done. A first optimization raised the saturation point of one process from about 3,300 to about 3,800 req/s on one laptop ([docs/benchmarks.md](docs/benchmarks.md)). More optimizations are open.
 5. **Operations:** observability, recovery drills, soak run.
 
 Later: catalog and discovery, embeddings, notebooks, profiling, end-to-end ML

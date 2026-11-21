@@ -1,5 +1,6 @@
 """Guarded Redis writes for spec-driven count-vector features (ADR-009)."""
 
+import re
 from dataclasses import dataclass
 from typing import cast
 
@@ -36,10 +37,13 @@ class UnsupportedPolicyError(ValueError):
     """The spec asks for an update policy this store does not implement."""
 
 
+_WHITESPACE = re.compile(r"\s")
+
+
 def check_text(value: object, name: str) -> None:
     if not isinstance(value, str):
         raise TypeError(f"{name} must be a string")
-    if not value or any(character.isspace() for character in value):
+    if not value or _WHITESPACE.search(value):
         raise ValueError(f"{name} must be non-empty and contain no whitespace")
 
 

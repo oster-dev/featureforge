@@ -54,6 +54,46 @@ before the main run. At 100 req/s the p50 was 4.7 to 5.1 ms, against 8.5 to
 Both runs show the same saturation point. The spread at low load shows how much
 this machine varies between runs.
 
+## Change 1: parse each spec expression once
+
+Commit 4b1d4cc against main at b4f0306. Both runs on a clean tree, same
+machine, same method, 3 runs per rate. Raw data:
+`docs/benchmarks/opt1-before-b4f0306.json` and
+`docs/benchmarks/opt1-after-4b1d4cc.json`.
+
+A profile of the lookup (cProfile with a CPU timer, 3,000 requests) showed that
+every read of a derived value parsed the expression again (`builtins.compile`,
+5 calls per request) and that the text check walked each entity value
+character by character. The change caches the parsed tree per expression and
+replaces the character loop with one regular expression. The oracle `_eval` is
+unchanged. A parity test compares cached and fresh evaluation on every spec
+expression and on synthetic ones, and compares the new text check with
+`str.isspace` for every Unicode code point.
+
+| Target req/s | Version | Achieved req/s | p50 ms | p99 ms | Service p50 ms | Service p99 ms | Server CPU cores |
+|---|---|---|---|---|---|---|---|
+| 2000 | before | 2000 | 1.04 to 1.39 | 8.61 to 12.29 | 0.89 to 1.27 | 8.04 to 11.67 | 0.64 to 0.71 |
+| 2000 | after | 2000 | 1.07 to 1.15 | 8.16 to 10.67 | 0.92 to 1.01 | 7.80 to 10.41 | 0.60 to 0.62 |
+| 3000 | before | 2999 | 2.80 to 3.27 | 15.61 to 58.46 | 2.67 to 3.13 | 15.38 to 38.87 | 1.14 to 1.15 |
+| 3000 | after | 2999 | 1.13 to 1.81 | 6.73 to 11.43 | 1.04 to 1.69 | 6.34 to 10.55 | 0.90 to 0.95 |
+| 4000 | before | 3303 to 3320 | overload | overload | 35.54 to 35.71 | 54.57 to 55.15 | 1.20 to 1.21 |
+| 4000 | after | 3793 to 3809 | overload | overload | 30.81 to 30.98 | 48.58 to 49.15 | 1.24 |
+
+Findings:
+
+- Saturation moved from 3,303 to 3,320 req/s to 3,793 to 3,809 req/s, about
+  15 percent. The service time at saturation fell from about 35.6 to about
+  30.9 ms (p50).
+- At 3000 req/s the p99 fell from 15.6 to 58.5 ms to 6.7 to 11.4 ms. The
+  service used about 0.92 instead of 1.15 cores, so about 0.31 instead of
+  0.38 ms of CPU per request.
+- At 2000 req/s the p99 ranges overlap. No improvement is claimed there.
+- At 4000 req/s the latency from the due time measures the backlog, which
+  depends on offered load minus capacity. Compare the service time instead.
+- The CPU per request of the stand-alone profiling script varied between 123
+  and 211 us across runs of the same or nearly the same code, so it is not used
+  for this comparison.
+
 ## Limits
 
 - Client and service share one machine.

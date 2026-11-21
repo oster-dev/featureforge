@@ -11,6 +11,7 @@ import operator
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import lru_cache
 from typing import Any
 
 from featureforge.spec.model import Aggregation, FeatureSpec, Op
@@ -35,14 +36,27 @@ _ARITH: dict[type[ast.operator], Callable[[Any, Any], Any]] = {
 }
 
 
-def names_in(expr: str) -> set[str]:
+@lru_cache(maxsize=512)
+def _parsed(expr: str) -> ast.expr:
+    return ast.parse(expr, mode="eval").body
+
+
+@lru_cache(maxsize=512)
+def _names(expr: str) -> frozenset[str]:
     tree = ast.parse(expr, mode="eval")
-    return {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+    return frozenset(node.id for node in ast.walk(tree) if isinstance(node, ast.Name))
+
+
+def names_in(expr: str) -> set[str]:
+    return set(_names(expr))
 
 
 def evaluate_expression(expr: str, names: Mapping[str, Any]) -> Any:
-    """Evaluate a validated expression without eval()."""
-    return _eval(ast.parse(expr, mode="eval").body, names)
+    """Evaluate a validated expression without eval().
+
+    The parsed tree is cached per expression text. _eval only reads it.
+    """
+    return _eval(_parsed(expr), names)
 
 
 def _eval(node: ast.AST, names: Mapping[str, Any]) -> Any:
