@@ -68,7 +68,7 @@ Related: [README](README.md) · [Architecture](ARCHITECTURE.md) ·
 
 ## Next
 
-Order follows the [readiness plan](docs/PLATFORM_BLUEPRINT.md):
+Order follows the [platform blueprint](docs/PLATFORM_BLUEPRINT.md):
 
 1. **Generic engine:** the open parts above.
 2. **History and datasets:** stream history, label specs and training datasets are delivered. The parity test between Redis and published-as-of, the `build-training-dataset` command, the dataset loader and the Arrow batch loader with its read benchmark are delivered too. Open: an Iceberg offline store.
