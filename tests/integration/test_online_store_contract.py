@@ -11,6 +11,7 @@ import time
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -25,7 +26,7 @@ from featureforge.streaming.store_protocol import OnlineStore, create_online_sto
 
 pytestmark = pytest.mark.integration
 
-BACKENDS = ["redis"]
+BACKENDS = os.environ.get("FEATUREFORGE_STORE_BACKENDS", "redis").split(",")
 
 SPECS = Path(__file__).resolve().parents[2] / "feature_repo" / "specs"
 OBSERVATION = datetime(2026, 1, 2, 12, tzinfo=UTC)
@@ -68,25 +69,64 @@ def redis_client() -> Iterator[Redis]:
         yield client
 
 
+def with_backend(spec: FeatureSpec, backend: str) -> FeatureSpec:
+    online = spec.online.model_copy(update={"store": backend})
+    return spec.model_copy(update={"online": online})
+
+
+@pytest.fixture(scope="module")
+def cassandra_keyspace() -> Iterator[tuple[Any, str]]:
+    from cassandra.cluster import EXEC_PROFILE_DEFAULT, Cluster, ExecutionProfile
+    from cassandra.policies import DCAwareRoundRobinPolicy
+
+    from featureforge.streaming.cassandra_schema import ensure_schema
+
+    host = os.environ.get("FEATUREFORGE_CASSANDRA_HOST", "127.0.0.1")
+    profile = ExecutionProfile(
+        load_balancing_policy=DCAwareRoundRobinPolicy(local_dc="datacenter1")
+    )
+    cluster = Cluster(
+        [host],
+        port=9042,
+        connect_timeout=10,
+        execution_profiles={EXEC_PROFILE_DEFAULT: profile},
+    )
+    session = cluster.connect()
+    keyspace = f"ff_contract_{uuid4().hex[:12]}"
+    try:
+        ensure_schema(session, keyspace)
+        yield session, keyspace
+    finally:
+        session.execute(f"DROP KEYSPACE IF EXISTS {keyspace}")
+        cluster.shutdown()
+
+
 @pytest.fixture(params=BACKENDS)
-def make_store(
-    request: pytest.FixtureRequest, redis_client: Redis
-) -> Iterator[Callable[[FeatureSpec], OnlineStore]]:
+def make_store(request: pytest.FixtureRequest) -> Iterator[Callable[[FeatureSpec], OnlineStore]]:
+    backend = request.param
+    redis_client = request.getfixturevalue("redis_client") if backend == "redis" else None
     prefixes: list[str] = []
 
     def factory(spec: FeatureSpec) -> OnlineStore:
-        if request.param == "redis":
-            prefix = f"featureforge-stream:contract:{uuid4().hex}"
+        spec = with_backend(spec, backend)
+        prefix = f"featureforge-stream:contract:{uuid4().hex}"
+        if backend == "redis":
             prefixes.append(prefix)
             return create_online_store(spec, redis_client=redis_client, key_prefix=prefix)
-        raise AssertionError(f"no store for backend {request.param}")
+        if backend == "cassandra":
+            session, keyspace = request.getfixturevalue("cassandra_keyspace")
+            return create_online_store(
+                spec, cassandra_session=session, keyspace=keyspace, key_prefix=prefix
+            )
+        raise AssertionError(f"no store for backend {backend}")
 
     yield factory
 
-    for prefix in prefixes:
-        keys = list(redis_client.scan_iter(match=f"{prefix}:*"))
-        if keys:
-            redis_client.delete(*keys)
+    if redis_client is not None:
+        for prefix in prefixes:
+            keys = list(redis_client.scan_iter(match=f"{prefix}:*"))
+            if keys:
+                redis_client.delete(*keys)
 
 
 @pytest.mark.parametrize(

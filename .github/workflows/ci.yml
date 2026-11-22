@@ -307,7 +307,7 @@ jobs:
           retention-days: 7
 
   cassandra-integration:
-    name: Cassandra schema and conditional writes
+    name: Cassandra schema, store and contract suite
     runs-on: ubuntu-latest
     needs: test
     timeout-minutes: 15
@@ -349,9 +349,11 @@ jobs:
       - name: Run Cassandra integration tests
         env:
           FEATUREFORGE_CASSANDRA_HOST: 127.0.0.1
+          FEATUREFORGE_STORE_BACKENDS: cassandra
         run: |
           python -m pytest -v -m integration \
             tests/integration/test_cassandra_node.py \
+            tests/integration/test_online_store_contract.py \
             --junitxml=/tmp/featureforge-cassandra.xml
 
           python - <<'PYTEST_REPORT'
@@ -359,11 +361,19 @@ jobs:
 
           report = ET.parse("/tmp/featureforge-cassandra.xml")
           cases = report.findall(".//testcase")
-          if not any(
-              case.get("classname", "").split(".")[-1] == "test_cassandra_node"
+          for suite in ("test_cassandra_node", "test_online_store_contract"):
+              if not any(
+                  case.get("classname", "").split(".")[-1] == suite for case in cases
+              ):
+                  raise SystemExit(f"Missing integration test module: {suite}")
+
+          contract = [
+              case
               for case in cases
-          ):
-              raise SystemExit("Missing integration test module: test_cassandra_node")
+              if case.get("classname", "").split(".")[-1] == "test_online_store_contract"
+          ]
+          if not all("cassandra" in case.get("name", "") for case in contract):
+              raise SystemExit("The contract suite did not run for the cassandra backend")
 
           for outcome in ("skipped", "failure", "error"):
               if report.findall(f".//{outcome}"):
