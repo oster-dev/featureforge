@@ -8,7 +8,7 @@ import re
 from dataclasses import dataclass
 
 from featureforge.spec.model import UpdatePolicy
-from featureforge.streaming.contracts.feature_record import FeatureRecord
+from featureforge.streaming.contracts.feature_record import FeatureRecord, RecordDecoder
 
 SUPPORTED_POLICIES = (
     UpdatePolicy.APPEND_ONLY,
@@ -36,3 +36,16 @@ def check_text(value: object, name: str) -> None:
         raise TypeError(f"{name} must be a string")
     if not value or _WHITESPACE.search(value):
         raise ValueError(f"{name} must be non-empty and contain no whitespace")
+
+
+def decode_read(decoder: RecordDecoder, payload: str | None, entity_value: str) -> RecordRead:
+    """Decode one stored payload of a multi-key read without raising on bad data."""
+    if payload is None:
+        return RecordRead()
+    try:
+        record = decoder.parse(payload)
+        if record.entity_value != entity_value:
+            raise ValueError("stored feature entity does not match requested entity")
+        return RecordRead(record=record)
+    except (ValueError, TypeError) as error:
+        return RecordRead(error_type=type(error).__name__)

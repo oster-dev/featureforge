@@ -19,6 +19,7 @@ from featureforge.feature_service import (
 )
 from featureforge.service_metrics import ServiceMetrics
 from featureforge.spec.loader import load_spec
+from featureforge.spec.model import FeatureSpec
 
 
 class _Body(BaseModel):
@@ -89,10 +90,24 @@ def build_server(specs_dir: Path, redis_url: str, budget_ms: float) -> FeatureSe
     return FeatureServer.for_redis(client, specs)
 
 
+def build_cassandra_server(
+    specs: Sequence[FeatureSpec], session: object, budget_ms: float, *, keyspace: str
+) -> FeatureServer:
+    """Build a server that reads from Cassandra. The caller owns the session."""
+    from featureforge.cassandra_serving_reader import CassandraServingReader
+
+    reader = CassandraServingReader(session, specs, keyspace=keyspace, timeout=budget_ms / 1000)
+    return FeatureServer(reader, specs)
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="featureforge-serve", description="Serve spec features.")
     parser.add_argument("--specs-dir", type=Path, default=Path("feature_repo/specs"))
     parser.add_argument("--redis-url", default="redis://127.0.0.1:6379/0")
+    parser.add_argument("--cassandra-host", default="127.0.0.1")
+    parser.add_argument("--cassandra-port", type=int, default=9042)
+    parser.add_argument("--cassandra-keyspace", default="featureforge")
+    parser.add_argument("--cassandra-local-dc", default="datacenter1")
     parser.add_argument("--budget-ms", type=float, default=50.0)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8080)
@@ -101,14 +116,35 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     import uvicorn
 
-    app = create_app(build_server(args.specs_dir, args.redis_url, args.budget_ms))
-    uvicorn.run(
-        app,
-        host=args.host,
-        port=args.port,
-        log_level="warning" if args.quiet else "info",
-        access_log=not args.quiet,
-    )
+    specs = [load_spec(path) for path in sorted(args.specs_dir.glob("*.yaml"))]
+    backends = sorted({str(spec.online.store) for spec in specs})
+    if len(backends) != 1:
+        parser.error(f"the specs must name one online store, found: {', '.join(backends)}")
+
+    def serve(server: FeatureServer) -> None:
+        uvicorn.run(
+            create_app(server),
+            host=args.host,
+            port=args.port,
+            log_level="warning" if args.quiet else "info",
+            access_log=not args.quiet,
+        )
+
+    if backends[0] == "cassandra":
+        from featureforge.streaming.cassandra_connection import open_session
+
+        with open_session(
+            args.cassandra_host, args.cassandra_port, local_dc=args.cassandra_local_dc
+        ) as session:
+            serve(
+                build_cassandra_server(
+                    specs, session, args.budget_ms, keyspace=args.cassandra_keyspace
+                )
+            )
+    elif backends[0] == "redis":
+        serve(build_server(args.specs_dir, args.redis_url, args.budget_ms))
+    else:
+        parser.error(f"unsupported online store: {backends[0]}")
 
 
 if __name__ == "__main__":
