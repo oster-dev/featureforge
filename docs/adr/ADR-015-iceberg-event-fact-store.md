@@ -70,10 +70,18 @@ Every item has a test. The item about an append after the pin is proven for the 
 
 ## Open items
 
+Carried by other work, see [STATUS.md](../../STATUS.md):
+
+- Compaction, retention and an observable writer lag belong to operations (Next, item 5).
+  The cost of many data files is a known gap.
+- Several writers and several partitions are known gaps. Until they are decided, one writer
+  per table is the rule.
+
+Open, with no work item yet:
+
 - A mode that uses only events received by `t`.
 - `backfill-spec` reading the table.
 - A table for rejected events.
-- Several writers and several partitions, compaction and retention.
 - A production catalog and a neutral catalog name.
 - Event contract versions and schema evolution.
 - The materialized backfill table, with its own name rule, as a later ADR.
