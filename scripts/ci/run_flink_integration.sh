@@ -26,6 +26,7 @@ MODULES=(
   tests/integration/test_materialize_spec_kafka_to_cassandra.py
   tests/integration/test_materialize_spec_kafka_to_history.py
   tests/integration/test_content_play_count_end_to_end.py
+  tests/integration/test_cassandra_end_to_end.py
 )
 
 wait_for_slots() {

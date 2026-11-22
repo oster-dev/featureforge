@@ -9,7 +9,7 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src/ ./src/
 
-RUN pip install ".[serve]" \
+RUN pip install ".[serve,cassandra]" \
     && pip check \
     && python -c "import featureforge.service_api; print('Service import: OK')"
 
