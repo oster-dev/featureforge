@@ -90,7 +90,7 @@ def fresh_reference(spec: FeatureSpec) -> datetime:
 
 def test_a_written_record_is_served_as_ok(client: Redis, namespace: str) -> None:
     write(client, namespace, SKIP, "u1", OBSERVATION)
-    server = FeatureServer(client, [SKIP], namespace=namespace)
+    server = FeatureServer.for_redis(client, [SKIP], namespace=namespace)
     result = server.lookup(
         [FeatureRef(SKIP.name)], [{"user_id": "u1"}], reference_time=fresh_reference(SKIP)
     )
@@ -101,7 +101,7 @@ def test_a_written_record_is_served_as_ok(client: Redis, namespace: str) -> None
 
 
 def test_an_unknown_entity_is_missing(client: Redis, namespace: str) -> None:
-    server = FeatureServer(client, [SKIP], namespace=namespace)
+    server = FeatureServer.for_redis(client, [SKIP], namespace=namespace)
     result = server.lookup(
         [FeatureRef(SKIP.name)], [{"user_id": "nobody"}], reference_time=fresh_reference(SKIP)
     )
@@ -110,7 +110,7 @@ def test_an_unknown_entity_is_missing(client: Redis, namespace: str) -> None:
 
 def test_an_old_record_is_stale_and_keeps_its_value(client: Redis, namespace: str) -> None:
     write(client, namespace, SKIP, "u1", OBSERVATION)
-    server = FeatureServer(client, [SKIP], namespace=namespace)
+    server = FeatureServer.for_redis(client, [SKIP], namespace=namespace)
     late = OBSERVATION + SKIP.freshness_slo + timedelta(minutes=1)
     (entry,) = server.lookup(
         [FeatureRef(SKIP.name)], [{"user_id": "u1"}], reference_time=late
@@ -123,7 +123,7 @@ def test_an_expired_key_is_missing(client: Redis, namespace: str) -> None:
     write(client, namespace, SKIP, "u1", OBSERVATION)
     client.pexpire(f"{key_prefix(namespace, SKIP)}:u1", 1)
     time.sleep(0.05)
-    server = FeatureServer(client, [SKIP], namespace=namespace)
+    server = FeatureServer.for_redis(client, [SKIP], namespace=namespace)
     result = server.lookup(
         [FeatureRef(SKIP.name)], [{"user_id": "u1"}], reference_time=fresh_reference(SKIP)
     )
@@ -133,7 +133,7 @@ def test_an_expired_key_is_missing(client: Redis, namespace: str) -> None:
 def test_a_corrupt_value_fails_only_its_own_entry(client: Redis, namespace: str) -> None:
     write(client, namespace, SKIP, "good", OBSERVATION)
     client.set(f"{key_prefix(namespace, SKIP)}:bad", "{not json")
-    server = FeatureServer(client, [SKIP], namespace=namespace)
+    server = FeatureServer.for_redis(client, [SKIP], namespace=namespace)
     bad, good = server.lookup(
         [FeatureRef(SKIP.name)],
         [{"user_id": "bad"}, {"user_id": "good"}],
@@ -147,7 +147,7 @@ def test_a_request_makes_one_mget_and_no_get(client: Redis, namespace: str) -> N
     for entity in ("u1", "u2"):
         write(client, namespace, PLAY, entity, OBSERVATION)
         write(client, namespace, SKIP, entity, OBSERVATION)
-    server = FeatureServer(client, [PLAY, SKIP], namespace=namespace)
+    server = FeatureServer.for_redis(client, [PLAY, SKIP], namespace=namespace)
     mget_before = command_calls(client, "mget")
     get_before = command_calls(client, "get")
     result = server.lookup(
@@ -166,7 +166,7 @@ def test_the_default_namespace_matches_the_key_the_store_writes(client: Redis) -
     key = store.key_for(entity)
     try:
         assert store.write(make_record(SKIP, entity, OBSERVATION)) == "written"
-        result = FeatureServer(client, [SKIP]).lookup(
+        result = FeatureServer.for_redis(client, [SKIP]).lookup(
             [FeatureRef(SKIP.name)], [{"user_id": entity}], reference_time=fresh_reference(SKIP)
         )
         assert result.entries[0].status == "ok"
@@ -189,7 +189,7 @@ def test_the_builder_loads_every_real_spec_and_reads_a_real_redis(redis_url: str
 
 def test_an_unreachable_redis_gives_backend_errors_and_hides_the_address() -> None:
     dead = Redis.from_url("redis://127.0.0.1:1/0", socket_connect_timeout=0.2, socket_timeout=0.2)
-    server = FeatureServer(dead, [SKIP])
+    server = FeatureServer.for_redis(dead, [SKIP])
     started = time.perf_counter()
     result = server.lookup(
         [FeatureRef(SKIP.name)], [{"user_id": "u1"}], reference_time=fresh_reference(SKIP)

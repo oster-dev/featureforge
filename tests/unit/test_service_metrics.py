@@ -74,12 +74,13 @@ def _payload(spec: FeatureSpec, entity_value: str, observation: datetime) -> str
 
 
 def _client(spec: FeatureSpec, redis: Any) -> TestClient:
-    return TestClient(create_app(FeatureServer(redis, [spec]), ServiceMetrics()))
+    return TestClient(create_app(FeatureServer.for_redis(redis, [spec]), ServiceMetrics()))
 
 
 def _key(spec: FeatureSpec, entity_value: str) -> str:
-    server = FeatureServer(FakeRedis(), [spec])
-    return server._stores[(spec.name, spec.version)].key_for(entity_value)
+    from featureforge.serving_reader import DEFAULT_NAMESPACE
+
+    return f"{DEFAULT_NAMESPACE}:v{spec.version}:{spec.name}:{entity_value}"
 
 
 def _lookup(client: TestClient, spec: FeatureSpec, entities: list[str], feature: str | None = None):

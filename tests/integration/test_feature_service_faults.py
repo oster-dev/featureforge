@@ -145,7 +145,7 @@ def test_a_slow_redis_gives_a_timeout_within_the_budget_and_recovers(
     toxiproxy: Toxiproxy, direct: Redis, proxied: Redis, namespace: str
 ) -> None:
     write(direct, namespace, "u1")
-    server = FeatureServer(proxied, [SKIP], namespace=namespace)
+    server = FeatureServer.for_redis(proxied, [SKIP], namespace=namespace)
 
     entry, _ = lookup(server)
     assert entry.status == "ok"
@@ -165,7 +165,7 @@ def test_a_stopped_redis_gives_a_backend_error_fast_and_recovers(
     toxiproxy: Toxiproxy, direct: Redis, proxied: Redis, namespace: str
 ) -> None:
     write(direct, namespace, "u1")
-    server = FeatureServer(proxied, [SKIP], namespace=namespace)
+    server = FeatureServer.for_redis(proxied, [SKIP], namespace=namespace)
 
     entry, _ = lookup(server)
     assert entry.status == "ok"
@@ -197,8 +197,10 @@ def test_over_http_a_slow_redis_is_a_200_or_a_503_with_the_fail_policy(
         "entities": [{"user_id": "u1"}],
         "reference_time": REFERENCE.isoformat(),
     }
-    omitting = TestClient(create_app(FeatureServer(proxied, [SKIP], namespace=namespace)))
-    strict = TestClient(create_app(FeatureServer(proxied, [failing], namespace=namespace)))
+    omitting = TestClient(create_app(FeatureServer.for_redis(proxied, [SKIP], namespace=namespace)))
+    strict = TestClient(
+        create_app(FeatureServer.for_redis(proxied, [failing], namespace=namespace))
+    )
 
     toxiproxy.add_latency(PROXY, SLOW_MS)
 

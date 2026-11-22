@@ -219,3 +219,28 @@ caffeinate -dimsu python scripts/benchmark_feature_serving.py
 ```
 
 The script writes a JSON file to `output/benchmarks/`.
+
+## Change 4: ServingReader (ADR-016)
+
+Question: does moving the Redis read behind a `ServingReader` slow the service down?
+
+Method: `scripts/benchmark_feature_serving.py --rates 2000,3000,4000,4500,5000 --repeats 3`,
+one uvicorn process, Redis in Docker on the same laptop, 1,000,000 users. Before: commit
+`3746261`. After: commit `54ae65f`. Raw data is in `docs/benchmarks/`.
+
+| Target req/s | Achieved before | Achieved after | p99 ms before | p99 ms after | Server cores before | Server cores after |
+|---|---|---|---|---|---|---|
+| 2000 | 2000 | 2000 | 4.8 | 6.7 | 0.56 | 0.59 |
+| 3000 | 2999 | 2999 | 10.0 | 7.9 | 0.91 | 0.86 |
+| 4000 | 3969 | 3989 | 332 | 104 | 1.25 | 1.25 |
+| 4500 | 4030 | 3952 | overload | overload | 1.26 | 1.25 |
+| 5000 | 4033 | 4023 | overload | overload | 1.26 | 1.25 |
+
+Values are means of three runs. Saturation of one process: 4,032 req/s before, 3,988 after
+(-1.1 %; -0.5 % without one slow run). The acceptance limit was -3 %. CPU per request and
+latency below saturation do not differ beyond run-to-run noise.
+
+Limits: one laptop, three runs per rate, differences below about 1 % cannot be resolved.
+An earlier after-run (`change4-after-54ae65f-first-run.json`) had one 2000 req/s run with
+1850 not-ok entries and a p99 of 65 ms. The cause is not known, it did not repeat, and the
+run is excluded from the numbers above.
