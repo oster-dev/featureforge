@@ -29,6 +29,9 @@ Goal: one network contract that returns a feature vector for several entities wi
 | Stale values | A `stale` entry keeps its value, so the caller sees the value and its age and decides. |
 | Freshness | Evaluated at request time as `reference_time - observation_time` against `freshness_slo` of the spec. |
 | Reads | One `MGET` per request over the keys of all requested features. One round trip, not one per key or feature. This assumes a single Redis node. A cluster needs one call per hash slot. |
+| Readers | The service reads through a `ServingReader`. `fetch(plan)` takes the pairs of spec and entity value of a request and returns one `RecordRead` per pair, in the same order. `ping()` backs `readyz`. A reader raises when its backend fails and never returns a partial result. The service turns the exception into `backend_error` for every entry of the request and applies the fallback policy per feature, as before. A reader that returns a different number of items than it was asked for is a `ProtocolError`. The reader is chosen by `online.store`. One process serves one backend, and specs that name different backends fail at startup. |
+| Redis reader | One `MGET` over the keys of all pairs, as in the row above. It is the reference reader and its behavior does not change. |
+| Cassandra reader | One query per entity partition: `SELECT feature, payload FROM <keyspace>.online_features WHERE entity_key = ? AND entity_value = ? AND feature IN ?`, with the key prefixes of the requested features. All queries of a request run concurrently and the request waits for all of them. A failure of any query fails the request, because a partial result would depend on timing. Reads use `LOCAL_QUORUM`, a constructor argument as in ADR-013. The timeout of a query is the budget of the request. A request starts at most one query per entity, so at most 100. Whether that fan-out is acceptable is a measurement in `docs/benchmarks.md` and not an assumption of this ADR. |
 | Isolation | A corrupt record is `backend_error` for its own entry. The other entries of the request stay valid. |
 | Timeouts | A budget per request, default 50 ms. A request makes one round trip to one store, so the budget is the socket and connect timeout of the Redis client. A separate timeout per backend call matters once a request reads from several backends. The values are first targets and not SLOs. A timeout is `backend_error`, and `error_type` is the name of the exception class, for example `TimeoutError`. |
 | Retries | None in the request path. A retry hides tail latency inside the budget. |
@@ -80,4 +83,5 @@ The latency of the service is measured in a separate change and reported in `doc
 
 - `FeatureRecord` carries no `published_at`. The field stays null until the record gains it.
 - Synchronous or asynchronous Redis client: decided after profiling.
-- gRPC, authentication and a multi-read for Cassandra.
+- The Cassandra reader is decided above and not implemented yet.
+- gRPC and authentication.

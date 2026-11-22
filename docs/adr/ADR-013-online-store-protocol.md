@@ -86,6 +86,6 @@ One contract test module runs against both backends. Each backend provides a fix
 - The row expiry in detail: whether a row survives its payload. The expiry test has to prove it.
 - A store-neutral exception for contention and unknown outcomes.
 - Serving reads at `SERIAL`, and what they cost. The serving load test measures it.
-- The read path of the service. `FeatureServer.lookup` reads Redis with one `MGET` for all entities and features and is not part of the protocol. The service needs its own reader and a decision before it runs on Cassandra. The change needs a before and after measurement.
+- The read path of the service is decided in ADR-016 (one reader per backend) and implemented backend by backend.
 - Several nodes and several datacenters.
 - Creating the schema from a production service rather than the local profile.
