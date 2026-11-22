@@ -1,6 +1,6 @@
 # ADR-013 Online store protocol and a Cassandra backend
 
-- Status: Accepted. Decides the contract that every online store of a spec keeps and the Cassandra backend behind it. The protocol, the factory and the contract suite are implemented for Redis, which stays the reference implementation. The Cassandra backend is not implemented yet.
+- Status: Accepted. Decides the contract that every online store of a spec keeps and the Cassandra backend behind it. The protocol, the factory, the Redis store and the Cassandra store are implemented, and one contract suite runs for both. The service and the materializer do not use the Cassandra store yet. Redis stays the reference implementation.
 - Date: 2026-11-18
 - Author: Nico Ostermann
 - Deciders: Nico Ostermann

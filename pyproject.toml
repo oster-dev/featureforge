@@ -92,6 +92,10 @@ files = ["src"]
 module = ["pyarrow", "pyarrow.*"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = ["cassandra", "cassandra.*"]
+ignore_missing_imports = true
+
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["featureforge*"]
