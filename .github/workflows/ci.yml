@@ -354,6 +354,7 @@ jobs:
           python -m pytest -v -m integration \
             tests/integration/test_cassandra_node.py \
             tests/integration/test_online_store_contract.py \
+            tests/integration/test_cassandra_serving_reader.py \
             --junitxml=/tmp/featureforge-cassandra.xml
 
           python - <<'PYTEST_REPORT'
@@ -361,7 +362,11 @@ jobs:
 
           report = ET.parse("/tmp/featureforge-cassandra.xml")
           cases = report.findall(".//testcase")
-          for suite in ("test_cassandra_node", "test_online_store_contract"):
+          for suite in (
+              "test_cassandra_node",
+              "test_online_store_contract",
+              "test_cassandra_serving_reader",
+          ):
               if not any(
                   case.get("classname", "").split(".")[-1] == suite for case in cases
               ):
