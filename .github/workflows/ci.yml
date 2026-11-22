@@ -249,6 +249,7 @@ jobs:
             tests/integration/test_cli_training_dataset.py \
             tests/integration/test_feature_service_redis.py \
             tests/integration/test_feature_service_faults.py \
+            tests/integration/test_online_store_contract.py \
             --junitxml=/tmp/featureforge-streaming-redis.xml
 
           python - <<'PYTEST_REPORT'
@@ -270,6 +271,7 @@ jobs:
               "test_cli_training_dataset",
               "test_feature_service_redis",
               "test_feature_service_faults",
+              "test_online_store_contract",
           )
           for suite in required_suites:
               if not any(
