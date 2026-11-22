@@ -76,7 +76,8 @@ Order follows the [platform blueprint](docs/PLATFORM_BLUEPRINT.md):
    suite are delivered ([ADR-013](docs/adr/ADR-013-online-store-protocol.md)).
    A local Cassandra node (Compose profile `cassandra`), the table schema and a
    Cassandra store are in place, and the contract suite runs for both backends. The
-   service and the materializer still use Redis only.
+   materializer writes to the backend that the spec names, and the service still
+   reads Redis only.
 4. **Serving:** the feature-serving service (ADR-016) exists for Redis, with unit tests and integration tests against a real Redis. A stopped and a slow Redis (Toxiproxy) give backend_error within the budget and the service recovers. The load test is done. Two optimizations raised the saturation point of one process from about 3,300 to about 4,100 req/s on one laptop ([docs/benchmarks.md](docs/benchmarks.md)). The metrics endpoint (`/metrics`) costs about 3 percent of that, so one process now saturates at about 4,000 req/s. More optimizations are open. The service also runs as a container in the Compose stack (`docker compose up -d --build feature-service`, checked with `scripts/smoke_feature_service.py`). Prometheus and a Grafana dashboard run next to it ([docs/observability.md](docs/observability.md)).
 5. **Operations:** observability, recovery drills, soak run.
 
