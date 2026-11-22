@@ -1,7 +1,10 @@
 """CassandraServingReader against a local node, next to the store that writes (ADR-016)."""
 
+import json
 import os
 from collections.abc import Iterator
+from datetime import UTC, datetime
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -10,12 +13,44 @@ from cassandra.cluster import EXEC_PROFILE_DEFAULT, Cluster, ExecutionProfile
 from cassandra.policies import DCAwareRoundRobinPolicy
 
 from featureforge.cassandra_serving_reader import CassandraServingReader
+from featureforge.spec.loader import load_spec
+from featureforge.spec.reference import evaluate_expression
 from featureforge.streaming.cassandra_schema import TABLE, ensure_schema
 from featureforge.streaming.cassandra_store import CassandraSpecStore
+from featureforge.streaming.contracts.feature_record import stamp
 from featureforge.streaming.store_common import RecordRead
-from tests.unit.test_cassandra_serving_reader import PLAY, SKIP, payload_for, prefix
 
 pytestmark = pytest.mark.integration
+
+SPECS = Path(__file__).resolve().parents[2] / "feature_repo" / "specs"
+OBSERVATION = datetime(2026, 1, 2, 12, tzinfo=UTC)
+
+
+def on_cassandra(spec):
+    return spec.model_copy(update={"online": spec.online.model_copy(update={"store": "cassandra"})})
+
+
+PLAY = on_cassandra(load_spec(SPECS / "user_play_count_1h.yaml"))
+SKIP = on_cassandra(load_spec(SPECS / "user_skip_rate_24h.yaml"))
+
+
+def prefix(spec):
+    return f"v{spec.version}:{spec.name}"
+
+
+def payload_for(entity, count):
+    counts = {"play_count": count}
+    data = {
+        "feature_schema_version": "v1",
+        "feature_name": PLAY.name,
+        PLAY.keys[0]: entity,
+        "observation_time": stamp(OBSERVATION),
+        "window_start_exclusive": stamp(OBSERVATION - PLAY.window.size),
+        **counts,
+    }
+    for name, expression in PLAY.derived.items():
+        data[name] = evaluate_expression(expression, counts)
+    return json.dumps(data)
 
 
 @pytest.fixture(scope="module")
