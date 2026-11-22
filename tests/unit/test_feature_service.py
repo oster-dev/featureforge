@@ -96,7 +96,7 @@ def lookup(
     features: list[FeatureRef],
     entities: list[dict[str, str]],
 ) -> Any:
-    server = FeatureServer(as_redis(fake), specs)
+    server = FeatureServer.for_redis(as_redis(fake), specs)
     return server.lookup(features, entities, reference_time=REFERENCE)
 
 
@@ -279,7 +279,7 @@ def test_the_highest_version_is_used_unless_one_is_named() -> None:
     v2 = SKIP_RATE.model_copy(update={"version": 2})
     fake = FakeRedis()
     store_record(fake, v2, "u1", fresh_time(v2))
-    server = FeatureServer(as_redis(fake), [SKIP_RATE, v2])
+    server = FeatureServer.for_redis(as_redis(fake), [SKIP_RATE, v2])
     entity = [{"user_id": "u1"}]
     latest = server.lookup([FeatureRef(SKIP_RATE.name)], entity, reference_time=REFERENCE)
     pinned = server.lookup([FeatureRef(SKIP_RATE.name, 1)], entity, reference_time=REFERENCE)
@@ -305,14 +305,14 @@ def test_the_highest_version_is_used_unless_one_is_named() -> None:
 def test_malformed_requests_are_request_errors(
     features: list[FeatureRef], entities: list[dict[str, str]], reference: datetime
 ) -> None:
-    server = FeatureServer(as_redis(FakeRedis()), [SKIP_RATE])
+    server = FeatureServer.for_redis(as_redis(FakeRedis()), [SKIP_RATE])
     with pytest.raises(RequestError):
         server.lookup(features, entities, reference_time=reference)
 
 
 def test_a_malformed_request_never_reaches_the_store() -> None:
     fake = FakeRedis()
-    server = FeatureServer(as_redis(fake), [SKIP_RATE])
+    server = FeatureServer.for_redis(as_redis(fake), [SKIP_RATE])
     with pytest.raises(RequestError):
         server.lookup([FeatureRef("no_such_feature")], [{"user_id": "u1"}])
     assert fake.mget_calls == []
@@ -320,7 +320,7 @@ def test_a_malformed_request_never_reaches_the_store() -> None:
 
 def test_two_specs_with_the_same_name_and_version_are_rejected() -> None:
     with pytest.raises(ValueError, match="duplicate spec"):
-        FeatureServer(as_redis(FakeRedis()), [SKIP_RATE, SKIP_RATE])
+        FeatureServer.for_redis(as_redis(FakeRedis()), [SKIP_RATE, SKIP_RATE])
 
 
 def _spec_data() -> dict[str, Any]:
@@ -355,7 +355,7 @@ BODY: dict[str, Any] = {
 
 
 def make_client(fake: FakeRedis, specs: list[FeatureSpec] | None = None) -> TestClient:
-    return TestClient(create_app(FeatureServer(as_redis(fake), specs or [SKIP_RATE])))
+    return TestClient(create_app(FeatureServer.for_redis(as_redis(fake), specs or [SKIP_RATE])))
 
 
 def test_http_lookup_returns_one_entry_with_a_status() -> None:
@@ -418,6 +418,6 @@ def test_http_readyz_follows_the_store() -> None:
 
 def test_the_namespace_sets_the_key_prefix() -> None:
     fake = FakeRedis()
-    server = FeatureServer(as_redis(fake), [SKIP_RATE], namespace="custom:ns")
+    server = FeatureServer.for_redis(as_redis(fake), [SKIP_RATE], namespace="custom:ns")
     server.lookup([FeatureRef(SKIP_RATE.name)], [{"user_id": "u1"}], reference_time=REFERENCE)
     assert fake.mget_calls == [[f"custom:ns:v{SKIP_RATE.version}:{SKIP_RATE.name}:u1"]]

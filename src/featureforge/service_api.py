@@ -86,7 +86,7 @@ def build_server(specs_dir: Path, redis_url: str, budget_ms: float) -> FeatureSe
     timeout = budget_ms / 1000
     client = Redis.from_url(redis_url, socket_timeout=timeout, socket_connect_timeout=timeout)
     specs = [load_spec(path) for path in sorted(specs_dir.glob("*.yaml"))]
-    return FeatureServer(client, specs)
+    return FeatureServer.for_redis(client, specs)
 
 
 def main(argv: Sequence[str] | None = None) -> None:

@@ -6,20 +6,21 @@ import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal
 
-from redis import Redis
-
+from featureforge.serving_reader import DEFAULT_NAMESPACE, ServingReader
 from featureforge.spec.model import FallbackPolicy, FeatureSpec
 from featureforge.streaming.contracts.feature_record import ENTITY_VALUE
-from featureforge.streaming.spec_store import RecordRead, RedisSpecStore
+from featureforge.streaming.store_common import RecordRead
+
+if TYPE_CHECKING:
+    from redis import Redis
 
 Status = Literal["ok", "missing", "stale", "backend_error"]
 Freshness = Literal["fresh", "stale", "future"]
 
 MAX_ENTITIES = 100
 MAX_FEATURES = 50
-DEFAULT_NAMESPACE = "featureforge-stream:online"
 
 
 class RequestError(ValueError):
@@ -174,36 +175,40 @@ def _apply_fallback(spec: FeatureSpec, entry: FeatureEntry) -> tuple[FeatureEntr
 
 
 class FeatureServer:
-    """Serve spec-defined features from Redis with an explicit status per value.
+    """Serve spec-defined features through a reader with an explicit status per value.
 
-    A request makes one MGET over the keys of all requested features. Connection
-    errors and timeouts become backend_error entries. Exception messages are not
-    returned. The caller owns the Redis client and sets its socket timeouts.
+    A request asks its reader once for the values of all requested pairs of entity and
+    feature. A reader that raises turns every entry of the request into backend_error,
+    and exception messages are not returned. The Redis reader makes one MGET over all
+    keys. The caller owns the connection of the reader.
     """
 
-    def __init__(
-        self,
-        client: Redis,
-        specs: Sequence[FeatureSpec],
-        *,
-        namespace: str = DEFAULT_NAMESPACE,
-    ) -> None:
-        self._client = client
+    def __init__(self, reader: ServingReader, specs: Sequence[FeatureSpec]) -> None:
+        self._reader = reader
         self._specs: dict[tuple[str, int], FeatureSpec] = {}
-        self._stores: dict[tuple[str, int], RedisSpecStore] = {}
         for spec in specs:
             identity = (spec.name, spec.version)
             if identity in self._specs:
                 raise ValueError(f"duplicate spec {spec.name} version {spec.version}")
             self._specs[identity] = spec
-            self._stores[identity] = RedisSpecStore(
-                client, spec, key_prefix=f"{namespace}:v{spec.version}:{spec.name}"
-            )
         if not self._specs:
             raise ValueError("at least one spec is required")
 
+    @classmethod
+    def for_redis(
+        cls,
+        client: Redis,
+        specs: Sequence[FeatureSpec],
+        *,
+        namespace: str = DEFAULT_NAMESPACE,
+    ) -> FeatureServer:
+        """Build a server that reads from Redis. The caller sets the socket timeouts."""
+        from featureforge.redis_serving_reader import RedisServingReader
+
+        return cls(RedisServingReader(client, specs, namespace=namespace), specs)
+
     def ping(self) -> bool:
-        return bool(self._client.ping())
+        return self._reader.ping()
 
     def _resolve(self, ref: FeatureRef) -> FeatureSpec:
         versions = sorted(version for name, version in self._specs if name == ref.name)
@@ -234,13 +239,12 @@ class FeatureServer:
             raise RequestError("a feature is requested twice")
 
         plan = [(spec, _entity_value(entity, spec)) for entity in entities for spec in specs]
-        keys = [self._stores[(spec.name, spec.version)].key_for(value) for spec, value in plan]
 
         error_type: str | None = None
-        payloads: list[Any] = []
+        reads: list[RecordRead] = []
         try:
-            payloads = list(cast("list[Any]", self._client.mget(keys)))
-            if len(payloads) != len(keys):
+            reads = self._reader.fetch(plan)
+            if len(reads) != len(plan):
                 error_type = "ProtocolError"
         except Exception as error:
             error_type = type(error).__name__
@@ -248,11 +252,7 @@ class FeatureServer:
         entries: list[FeatureEntry] = []
         failed: list[str] = []
         for index, (spec, value) in enumerate(plan):
-            read = (
-                None
-                if error_type is not None
-                else self._stores[(spec.name, spec.version)].decode_read(payloads[index], value)
-            )
+            read = None if error_type is not None else reads[index]
             entry, fails = _apply_fallback(
                 spec, _build_entry(spec, value, read, error_type, reference)
             )
