@@ -123,7 +123,7 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     def serve(server: FeatureServer) -> None:
         uvicorn.run(
-            create_app(server),
+            create_app(server, ServiceMetrics(backends[0])),
             host=args.host,
             port=args.port,
             log_level="warning" if args.quiet else "info",
