@@ -1,9 +1,11 @@
 """Materialize the Kafka updates of any spec-driven feature into Redis (ADR-009)."""
 
 import argparse
+import contextlib
 import json
 import logging
 from collections import Counter
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -12,9 +14,10 @@ from redis import Redis
 
 from featureforge.spec.loader import load_spec
 from featureforge.spec.model import FeatureSpec
+from featureforge.streaming.cassandra_schema import DEFAULT_KEYSPACE, ensure_schema
 from featureforge.streaming.contracts.feature_record import parse_feature_record
 from featureforge.streaming.history import Evidence, HistoryTable, open_catalog
-from featureforge.streaming.store_protocol import create_online_store
+from featureforge.streaming.store_protocol import OnlineStore, create_online_store
 
 LOGGER = logging.getLogger(__name__)
 
@@ -43,6 +46,10 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--topic", default=None)
     parser.add_argument("--group-id", required=True)
     parser.add_argument("--key-prefix", default=None)
+    parser.add_argument("--cassandra-host", default="127.0.0.1")
+    parser.add_argument("--cassandra-port", type=int, default=9042)
+    parser.add_argument("--cassandra-local-dc", default="datacenter1")
+    parser.add_argument("--keyspace", default=DEFAULT_KEYSPACE)
     parser.add_argument("--commit-every", type=int, default=1000)
     parser.add_argument("--bounded", action="store_true")
     parser.add_argument(
@@ -58,6 +65,44 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
         "Omit to use the SQLite file under --history-root.",
     )
     return parser.parse_args(argv)
+
+
+@contextlib.contextmanager
+def open_online_store(arguments: argparse.Namespace, spec: FeatureSpec) -> Iterator[OnlineStore]:
+    """Open the online store that the spec names and close its connection afterwards."""
+    backend = spec.online.store
+    if backend == "redis":
+        with Redis.from_url(
+            arguments.redis_url,
+            decode_responses=True,
+            socket_connect_timeout=3,
+            socket_timeout=3,
+        ) as redis_client:
+            if redis_client.ping() is not True:
+                raise RuntimeError("Redis connectivity check failed")
+            yield create_online_store(
+                spec,
+                redis_client=redis_client,
+                key_prefix=arguments.key_prefix,
+            )
+    elif backend == "cassandra":
+        # The driver is an optional dependency, so it loads only for this backend.
+        from featureforge.streaming.cassandra_connection import open_session
+
+        with open_session(
+            arguments.cassandra_host,
+            arguments.cassandra_port,
+            local_dc=arguments.cassandra_local_dc,
+        ) as session:
+            ensure_schema(session, arguments.keyspace)
+            yield create_online_store(
+                spec,
+                cassandra_session=session,
+                keyspace=arguments.keyspace,
+                key_prefix=arguments.key_prefix,
+            )
+    else:
+        raise ValueError(f"online store {backend} is not supported")
 
 
 def commit_offset(
@@ -103,20 +148,7 @@ def materialize(arguments: argparse.Namespace, spec: FeatureSpec) -> Counter:
     topic = arguments.topic or default_topic(spec)
     results: Counter = Counter()
 
-    with Redis.from_url(
-        arguments.redis_url,
-        decode_responses=True,
-        socket_connect_timeout=3,
-        socket_timeout=3,
-    ) as redis_client:
-        if redis_client.ping() is not True:
-            raise RuntimeError("Redis connectivity check failed")
-
-        store = create_online_store(
-            spec,
-            redis_client=redis_client,
-            key_prefix=arguments.key_prefix,
-        )
+    with open_online_store(arguments, spec) as store:
         history = open_history(arguments, spec)
         pending: list[Evidence] = []
 

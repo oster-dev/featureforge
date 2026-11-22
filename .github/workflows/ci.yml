@@ -389,6 +389,7 @@ jobs:
     timeout-minutes: 45
 
     env:
+      COMPOSE_PROFILES: cassandra
       FEATUREFORGE_REDIS_URL: redis://127.0.0.1:6379/0
       FLINK_REST_URL: http://127.0.0.1:8081
 
@@ -424,21 +425,21 @@ jobs:
 
       - name: Wait for streaming services
         run: |
-          for service in kafka jobmanager redis; do
+          for service in kafka jobmanager redis cassandra; do
             container="$(docker compose ps -q "$service")"
             test -n "$container" || {
               echo "Missing container for service: $service"
               exit 1
             }
 
-            for attempt in $(seq 1 30); do
+            for attempt in $(seq 1 60); do
               status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$container")"
               if [ "$status" = "healthy" ]; then
                 echo "$service is healthy"
                 break
               fi
 
-              if [ "$attempt" = "30" ]; then
+              if [ "$attempt" = "60" ]; then
                 echo "$service did not become healthy"
                 docker compose logs "$service" --no-color
                 exit 1
