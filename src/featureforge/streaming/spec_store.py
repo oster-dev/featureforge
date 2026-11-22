@@ -1,46 +1,24 @@
 """Guarded Redis writes for spec-driven count-vector features (ADR-009)."""
 
-import re
-from dataclasses import dataclass
 from typing import cast
 
 from redis import Redis
 from redis.exceptions import WatchError
 
-from featureforge.spec.model import FeatureSpec, UpdatePolicy
+from featureforge.spec.model import FeatureSpec
 from featureforge.streaming.contracts.count_vector import (
     WriteOutcome,
     decide_count_vector_update,
 )
 from featureforge.streaming.contracts.feature_record import FeatureRecord, RecordDecoder
-
-SUPPORTED_POLICIES = (
-    UpdatePolicy.APPEND_ONLY,
-    UpdatePolicy.COMPONENTWISE_MONOTONIC,
+from featureforge.streaming.store_common import (
+    SUPPORTED_POLICIES,
+    RecordRead,
+    UnsupportedPolicyError,
+    check_text,
 )
+
 MAX_ATTEMPTS = 16
-
-
-@dataclass(frozen=True)
-class RecordRead:
-    """One decoded read: a record, no record, or the type of a decoding error."""
-
-    record: FeatureRecord | None = None
-    error_type: str | None = None
-
-
-class UnsupportedPolicyError(ValueError):
-    """The spec asks for an update policy this store does not implement."""
-
-
-_WHITESPACE = re.compile(r"\s")
-
-
-def check_text(value: object, name: str) -> None:
-    if not isinstance(value, str):
-        raise TypeError(f"{name} must be a string")
-    if not value or _WHITESPACE.search(value):
-        raise ValueError(f"{name} must be non-empty and contain no whitespace")
 
 
 class RedisSpecStore:

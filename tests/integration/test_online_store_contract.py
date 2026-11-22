@@ -15,7 +15,6 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
-from redis import Redis
 
 from featureforge.spec.loader import load_spec
 from featureforge.spec.model import FeatureSpec
@@ -57,7 +56,9 @@ def with_ttl(spec: FeatureSpec, seconds: int) -> FeatureSpec:
 
 
 @pytest.fixture
-def redis_client() -> Iterator[Redis]:
+def redis_client() -> Iterator[Any]:
+    from redis import Redis
+
     url = os.environ.get("FEATUREFORGE_REDIS_URL", "redis://127.0.0.1:6379/0")
     with Redis.from_url(
         url,

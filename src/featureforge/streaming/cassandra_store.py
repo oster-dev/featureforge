@@ -12,7 +12,7 @@ from featureforge.streaming.contracts.count_vector import (
     decide_count_vector_update,
 )
 from featureforge.streaming.contracts.feature_record import FeatureRecord, RecordDecoder
-from featureforge.streaming.spec_store import (
+from featureforge.streaming.store_common import (
     SUPPORTED_POLICIES,
     UnsupportedPolicyError,
     check_text,

@@ -10,7 +10,7 @@ import pytest
 
 from featureforge.spec.loader import load_spec
 from featureforge.spec.reference import _eval, _parsed, evaluate_expression, names_in
-from featureforge.streaming.spec_store import _WHITESPACE, check_text
+from featureforge.streaming.store_common import _WHITESPACE, check_text
 
 SPECS_DIR = Path(__file__).resolve().parents[2] / "feature_repo" / "specs"
 
