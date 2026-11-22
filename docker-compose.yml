@@ -207,10 +207,31 @@ services:
       - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana-data:/var/lib/grafana
 
+  cassandra:
+    image: cassandra:5.0.9
+    profiles: ["cassandra"]
+    environment:
+      CASSANDRA_CLUSTER_NAME: featureforge
+      CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
+      CASSANDRA_DC: datacenter1
+      CASSANDRA_RACK: rack1
+      MAX_HEAP_SIZE: 1G
+    ports:
+      - "127.0.0.1:9042:9042"
+    volumes:
+      - cassandra-data:/var/lib/cassandra
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'DESCRIBE CLUSTER' > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 18
+      start_period: 60s
+
 volumes:
   prometheus-data:
   grafana-data:
   kafka-data:
   redis-data:
   iceberg-catalog-data:
+  cassandra-data:
   flink-savepoints:
