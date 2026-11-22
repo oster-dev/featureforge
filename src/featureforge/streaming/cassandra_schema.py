@@ -44,6 +44,12 @@ def _describe(actual: dict[str, tuple[str, int, str]]) -> str:
     return f"table {TABLE} does not match ADR-013: " + "; ".join(sorted(problems))
 
 
+def check_keyspace(keyspace: str) -> None:
+    """Raise ValueError unless the name is a plain lowercase CQL identifier."""
+    if not isinstance(keyspace, str) or not _KEYSPACE.fullmatch(keyspace):
+        raise ValueError("keyspace must match [a-z][a-z0-9_]{0,47}")
+
+
 def ensure_schema(
     session: CqlSession,
     keyspace: str = DEFAULT_KEYSPACE,
@@ -51,8 +57,7 @@ def ensure_schema(
     replication_factor: int = 1,
 ) -> None:
     """Create the keyspace and the table if absent, then verify the table."""
-    if not isinstance(keyspace, str) or not _KEYSPACE.fullmatch(keyspace):
-        raise ValueError("keyspace must match [a-z][a-z0-9_]{0,47}")
+    check_keyspace(keyspace)
     if replication_factor < 1:
         raise ValueError("replication_factor must be positive")
 
