@@ -351,7 +351,7 @@ jobs:
           FEATUREFORGE_CASSANDRA_HOST: 127.0.0.1
         run: |
           python -m pytest -v -m integration \
-            tests/integration/test_cassandra_schema.py \
+            tests/integration/test_cassandra_node.py \
             --junitxml=/tmp/featureforge-cassandra.xml
 
           python - <<'PYTEST_REPORT'
@@ -360,10 +360,10 @@ jobs:
           report = ET.parse("/tmp/featureforge-cassandra.xml")
           cases = report.findall(".//testcase")
           if not any(
-              case.get("classname", "").split(".")[-1] == "test_cassandra_schema"
+              case.get("classname", "").split(".")[-1] == "test_cassandra_node"
               for case in cases
           ):
-              raise SystemExit("Missing integration test module: test_cassandra_schema")
+              raise SystemExit("Missing integration test module: test_cassandra_node")
 
           for outcome in ("skipped", "failure", "error"):
               if report.findall(f".//{outcome}"):
