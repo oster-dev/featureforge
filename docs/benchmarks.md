@@ -349,8 +349,11 @@ python scripts/compare_benchmarks.py docs/benchmarks/adr016-redis-5ae169a.json d
 How to read it:
 
 - The repeats of one rate are reduced to their median. A change is marked `better` or `worse`
-  only when it is at least 5 percent and the ranges of the repeats do not overlap. Otherwise the
+  only when it is at least 10 percent and the ranges of the repeats do not overlap. Otherwise the
   cell says `same`. With fewer than three repeats on one side it says `inconclusive`.
+  The threshold is above the 7 percent by which two runs of the same code differed in the
+  p50 near saturation (`docs/benchmarks/explore-baseline-1-f4076ce-dirty.json` against
+  `explore-baseline-2-f4076ce-dirty.json`).
 - The lines above the table say up to which rate each report stays within the latency target:
   p99 at most 25 ms in every repeat, at most 0.1 percent of the entries not ok, and at least
   99 percent of the rate achieved.

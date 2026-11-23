@@ -59,7 +59,7 @@ def report_of(tmp_path: Path, name: str, rows: list[dict[str, Any]], **kwargs: A
     return compare.load_report(write(tmp_path, name, rows, **kwargs))
 
 
-def test_a_change_needs_five_percent_and_ranges_that_do_not_overlap():
+def test_a_change_needs_ten_percent_and_ranges_that_do_not_overlap():
     worse = compare.compare_values([10.0, 10.2, 10.1], [12.0, 12.1, 12.2], lower_is_better=True)
     small = compare.compare_values([10.0, 10.2, 10.1], [10.5, 10.6, 10.55], lower_is_better=True)
     overlapping = compare.compare_values(
@@ -235,3 +235,14 @@ def test_increases_of_a_hundred_percent_or_more_are_shown_as_factors():
     delta = compare.compare_values([1.0, 1.1, 1.2], [10.0, 11.0, 12.0], lower_is_better=True)
 
     assert "(x10.0) worse" in compare.cell(delta, compare.fmt_cpu)
+
+
+def test_a_change_of_seven_percent_is_noise_by_default_and_counts_with_a_lower_threshold():
+    base = [10.0, 10.0, 10.0]
+    new = [10.7, 10.7, 10.7]
+
+    default = compare.compare_values(base, new, lower_is_better=True)
+    strict = compare.compare_values(base, new, lower_is_better=True, min_change=0.05)
+
+    assert default.verdict == "same"
+    assert strict.verdict == "worse"

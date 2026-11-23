@@ -4,7 +4,7 @@
 
 Both files come from `scripts/benchmark_feature_serving.py`. The runs are grouped by target
 rate, and the repeats of one rate are reduced to their median. A change counts only when it
-is at least 5 percent and the ranges of the repeats of the two reports do not overlap. With
+is at least 10 percent and the ranges of the repeats of the two reports do not overlap. With
 fewer than three repeats on one side the verdict is inconclusive. The script also says up to
 which rate each report stays within the latency target. It exits with 1 when the new report
 has entries that are not ok, beyond a small budget, at a rate where the base had none. Speed
@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-MIN_CHANGE = 0.05
+MIN_CHANGE = 0.10
 MIN_REPEATS = 3
 SLO_P99_MS = 25.0
 MAX_NOT_OK_RATIO = 0.001
