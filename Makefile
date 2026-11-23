@@ -23,7 +23,7 @@ FRESHNESS_MAX_LAG_HOURS ?= 24
         validate validate-specs test-spec test-streaming clean \
         docker-config docker-up docker-down \
         check-freshness e2e e2e-no-skip e2e-clean e2e-clean-all \
-        materialize-incremental demo
+        materialize-incremental demo bench-compare
 
 help:
 	@echo "FeatureForge development commands:"
@@ -43,6 +43,9 @@ help:
 	@echo "  make docker-up                Start local infrastructure"
 	@echo "  make docker-down              Stop local infrastructure"
 	@echo "  make clean                    Remove local caches and generated output"
+	@echo ""
+	@echo "Benchmarks:"
+	@echo "  make bench-compare BASE=a.json NEW=b.json   Compare two benchmark reports (COMPARE_ARGS for options)"
 	@echo ""
 	@echo "Reliability checks:"
 	@echo "  make check-freshness          Validate canonical offline feature freshness"
@@ -174,3 +177,7 @@ demo: e2e check-freshness
 	$(PYTHON) feature_repo/personalization_demo.py \
 		--user-id $(USER_ID) \
 		--top-k $(TOP_K)
+
+bench-compare:
+	@test -n "$(BASE)" -a -n "$(NEW)" || { echo "usage: make bench-compare BASE=a.json NEW=b.json"; exit 2; }
+	$(PYTHON) scripts/compare_benchmarks.py $(BASE) $(NEW) $(COMPARE_ARGS)
