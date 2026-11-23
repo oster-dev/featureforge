@@ -484,3 +484,34 @@ jobs:
       - name: Stop streaming stack
         if: always()
         run: docker compose down -v
+
+  bench-smoke:
+    name: Benchmark smoke (Redis)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install project and CI dependencies
+        run: python -m pip install -e ".[dev,feature-store,spark,streaming]"
+
+      - name: Run the benchmark smoke preset
+        run: python scripts/run_serving_benchmark.py smoke --backend redis --no-compose-check --no-inhibit
