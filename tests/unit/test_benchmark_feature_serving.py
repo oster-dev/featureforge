@@ -164,3 +164,63 @@ def test_the_table_has_one_row_per_rate() -> None:
         "| 100 | 1 | 100 | 1.00 | 2.00 | 3.00 | 4.00 | 5.00 | 0.50 | 2.50 | 0 | 0 | 0.50 | 0.70 |"
         in table
     )
+
+
+def test_the_backend_defaults_to_redis_and_the_cassandra_options_have_defaults():
+    args = bench.parse_args([])
+
+    assert args.backend == "redis"
+    assert args.cassandra_host == "127.0.0.1"
+    assert args.cassandra_keyspace == "ff_loadtest"
+
+
+def test_the_backend_option_rejects_other_values():
+    with pytest.raises(SystemExit):
+        bench.parse_args(["--backend", "memcached"])
+
+
+def test_cassandra_specs_are_copies_of_the_benchmarked_specs_with_only_the_store_changed(tmp_path):
+    directory = bench.write_cassandra_specs(tmp_path / "specs")
+
+    for name in bench.FEATURES:
+        original = (bench.SPECS_DIR / f"{name}.yaml").read_text()
+        copy = (directory / f"{name}.yaml").read_text()
+        assert "store: redis" not in copy
+        assert copy.replace("store: cassandra", "store: redis") == original
+
+
+def test_a_spec_that_does_not_name_redis_exactly_once_is_rejected(tmp_path, monkeypatch):
+    source = tmp_path / "source"
+    source.mkdir()
+    for name in bench.FEATURES:
+        (source / f"{name}.yaml").write_text("online:\n  store: cassandra\n")
+    monkeypatch.setattr(bench, "SPECS_DIR", source)
+
+    with pytest.raises(ValueError, match="exactly once"):
+        bench.write_cassandra_specs(tmp_path / "out")
+
+
+def test_cassandra_rows_cover_every_user_and_feature_with_its_ttl():
+    templates = [
+        ("user_id", "v1:a", '{"user_id":"__E__"}', 100),
+        ("user_id", "v1:b", '{"user_id":"__E__"}', 200),
+    ]
+
+    rows = list(bench.cassandra_rows(3, templates))
+
+    assert len(rows) == 6
+    assert rows[0] == ("user_id", "u1", "v1:a", '{"user_id":"u1"}', 100)
+    assert rows[-1] == ("user_id", "u3", "v1:b", '{"user_id":"u3"}', 200)
+    assert {row[1] for row in rows} == {"u1", "u2", "u3"}
+
+
+def test_the_payload_template_keeps_the_token_and_is_valid_for_its_spec():
+    for spec in bench.load_specs():
+        payload = bench.payload_template(spec)
+
+        assert bench.TOKEN in payload
+        assert json.loads(payload.replace(bench.TOKEN, "u7"))[spec.keys[0]] == "u7"
+
+
+def test_the_environment_can_be_read_without_a_redis_client():
+    assert bench.environment(None)["redis_server"] is None

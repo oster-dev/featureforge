@@ -27,6 +27,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -357,7 +358,102 @@ def seed(client: Any, entities: int, batch: int = 10_000) -> str:
     return reference_time()
 
 
-def start_server(redis_url: str, port: int, budget_ms: float) -> subprocess.Popen[bytes]:
+def payload_template(spec: Any) -> str:
+    """One valid record of a spec, with the entity value left as TOKEN."""
+    from featureforge.spec.reference import evaluate_expression
+    from featureforge.streaming.contracts.feature_record import parse_feature_record, stamp
+
+    counts = {a.name: 3 for a in spec.aggregations}
+    data: dict[str, Any] = {
+        "feature_schema_version": "v1",
+        "feature_name": spec.name,
+        spec.keys[0]: TOKEN,
+        "observation_time": stamp(OBSERVATION),
+        "window_start_exclusive": stamp(OBSERVATION - spec.window.size),
+        **counts,
+    }
+    for name, expression in spec.derived.items():
+        data[name] = evaluate_expression(expression, counts)
+    payload = json.dumps(data, sort_keys=True, separators=(",", ":"))
+    parse_feature_record(payload.replace(TOKEN, "u1"), spec)
+    return payload
+
+
+def cassandra_rows(
+    entities: int, templates: list[tuple[str, str, str, int]]
+) -> Iterator[tuple[str, str, str, str, int]]:
+    """Yield (entity key, entity value, feature, payload, ttl) for every user and feature."""
+    for rank in range(1, entities + 1):
+        entity = f"u{rank}"
+        for entity_key, feature, payload, ttl in templates:
+            yield (entity_key, entity, feature, payload.replace(TOKEN, entity), ttl)
+
+
+def write_cassandra_specs(directory: Path) -> Path:
+    """Copy the benchmarked specs with store: cassandra, as the end-to-end test does."""
+    directory.mkdir(parents=True, exist_ok=True)
+    for name in FEATURES:
+        text = (SPECS_DIR / f"{name}.yaml").read_text()
+        if text.count("store: redis") != 1:
+            raise ValueError(f"{name}.yaml must name store: redis exactly once")
+        (directory / f"{name}.yaml").write_text(text.replace("store: redis", "store: cassandra"))
+    return directory
+
+
+def cassandra_seeded_entities(session: Any, keyspace: str) -> int | None:
+    from featureforge.streaming.cassandra_schema import TABLE
+
+    row = session.execute(
+        f"SELECT payload FROM {keyspace}.{TABLE} "
+        "WHERE entity_key = %s AND entity_value = %s AND feature = %s",
+        ("loadtest", "seed", "marker"),
+    ).one()
+    return None if row is None else int(json.loads(row.payload)["entities"])
+
+
+def seed_cassandra(session: Any, keyspace: str, entities: int, concurrency: int = 64) -> str:
+    """Write one valid row per user and feature, and return the reference time."""
+    from cassandra.concurrent import execute_concurrent_with_args
+
+    from featureforge.streaming.cassandra_schema import TABLE
+
+    templates = [
+        (
+            spec.keys[0],
+            f"v{spec.version}:{spec.name}",
+            payload_template(spec),
+            int(spec.online.ttl.total_seconds()),
+        )
+        for spec in load_specs()
+    ]
+    statement = session.prepare(
+        f"INSERT INTO {keyspace}.{TABLE} (entity_key, entity_value, feature, payload) "
+        "VALUES (?, ?, ?, ?) USING TTL ?"
+    )
+    for success, result in execute_concurrent_with_args(
+        session,
+        statement,
+        cassandra_rows(entities, templates),
+        concurrency=concurrency,
+        results_generator=True,
+    ):
+        if not success:
+            raise result
+    marker_ttl = min(template[3] for template in templates) - 300
+    session.execute(
+        f"INSERT INTO {keyspace}.{TABLE} (entity_key, entity_value, feature, payload) "
+        f"VALUES (%s, %s, %s, %s) USING TTL {marker_ttl}",
+        ("loadtest", "seed", "marker", json.dumps({"entities": entities})),
+    )
+    return reference_time()
+
+
+def start_server(
+    redis_url: str,
+    port: int,
+    budget_ms: float,
+    extra_arguments: list[str] | None = None,
+) -> subprocess.Popen[bytes]:
     command = [
         sys.executable,
         "-m",
@@ -369,6 +465,7 @@ def start_server(redis_url: str, port: int, budget_ms: float) -> subprocess.Pope
         "--budget-ms",
         str(budget_ms),
         "--quiet",
+        *(extra_arguments or []),
     ]
     process = subprocess.Popen(command, stdout=subprocess.DEVNULL)
     for _ in range(60):
@@ -412,7 +509,7 @@ def environment(client: Any) -> dict[str, Any]:
             check=False,
         ).stdout.strip()
         cpu = brand or cpu
-    info = client.info()
+    info = client.info() if client is not None else {}
     return {
         "platform": platform.platform(),
         "cpu": cpu,
@@ -437,6 +534,9 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--connections", type=int, default=32)
     parser.add_argument("--redis-url", default="redis://127.0.0.1:6379/1")
+    parser.add_argument("--backend", choices=("redis", "cassandra"), default="redis")
+    parser.add_argument("--cassandra-host", default="127.0.0.1")
+    parser.add_argument("--cassandra-keyspace", default="ff_loadtest")
     parser.add_argument("--port", type=int, default=18080)
     parser.add_argument("--budget-ms", type=float, default=50.0)
     parser.add_argument("--seed", type=int, default=7)
@@ -445,7 +545,95 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def main_cassandra(args: argparse.Namespace) -> int:
+    """Run the benchmark against a service that reads from Cassandra (ADR-016)."""
+    import tempfile
+
+    from featureforge.streaming.cassandra_connection import open_session
+    from featureforge.streaming.cassandra_schema import TABLE, ensure_schema
+
+    rates = [int(value) for value in args.rates.split(",")]
+    keyspace = args.cassandra_keyspace
+    with tempfile.TemporaryDirectory() as directory, open_session(args.cassandra_host) as session:
+        specs_dir = write_cassandra_specs(Path(directory))
+        ensure_schema(session, keyspace)
+        seeded = cassandra_seeded_entities(session, keyspace)
+        if args.reseed or seeded != args.entities:
+            print(f"Seeding {args.entities} users in keyspace {keyspace} ...", file=sys.stderr)
+            session.execute(f"TRUNCATE {keyspace}.{TABLE}", timeout=300)
+            started = time.time()
+            reference = seed_cassandra(session, keyspace, args.entities)
+            print(f"Seeded in {time.time() - started:.0f} s.", file=sys.stderr)
+        else:
+            reference = reference_time()
+        server = start_server(
+            args.redis_url,
+            args.port,
+            args.budget_ms,
+            extra_arguments=[
+                "--specs-dir",
+                str(specs_dir),
+                "--cassandra-host",
+                args.cassandra_host,
+                "--cassandra-keyspace",
+                keyspace,
+            ],
+        )
+        rows: list[dict[str, Any]] = []
+        try:
+            print(f"Warm-up at {rates[0]} req/s for {args.warmup:.0f} s ...", file=sys.stderr)
+            run_rate(args, server.pid, reference, rates[0], args.warmup)
+            for rate in rates:
+                for repeat in range(1, args.repeats + 1):
+                    print(
+                        f"Measuring {rate} req/s, run {repeat} of {args.repeats}, "
+                        f"for {args.duration:.0f} s ...",
+                        file=sys.stderr,
+                    )
+                    row = run_rate(args, server.pid, reference, rate, args.duration)
+                    row["repeat"] = repeat
+                    rows.append(row)
+        finally:
+            server.terminate()
+            server.wait(timeout=10)
+        details = environment(None)
+        details["cassandra_server"] = (
+            session.execute("SELECT release_version FROM system.local").one().release_version
+        )
+        details["packages"]["cassandra-driver"] = importlib.metadata.version("cassandra-driver")
+    report = {
+        "generated_at": datetime.now(UTC).isoformat(),
+        "setup": {
+            "backend": "cassandra",
+            "entities": args.entities,
+            "cassandra_keyspace": keyspace,
+            "cassandra_rows_expected": args.entities * len(FEATURES),
+            "read_consistency": "LOCAL_QUORUM",
+            "entities_per_request": args.entities_per_request,
+            "features": list(FEATURES),
+            "access_pattern": "Zipf-like, exponent about 1",
+            "budget_ms": args.budget_ms,
+            "warmup_s": args.warmup,
+            "repeats": args.repeats,
+            "service": "one uvicorn process, access log off",
+        },
+        "environment": details,
+        "results": rows,
+    }
+    output = args.output or Path(
+        f"output/benchmarks/feature-serving-cassandra-{datetime.now(UTC):%Y%m%dT%H%M%SZ}.json"
+    )
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(report, indent=2))
+    print(render_table(rows))
+    print(f"\nWrote {output}", file=sys.stderr)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    if args.backend == "cassandra":
+        return main_cassandra(args)
     from redis import Redis
 
     args = parse_args(argv)
@@ -486,6 +674,7 @@ def main(argv: list[str] | None = None) -> int:
         "generated_at": datetime.now(UTC).isoformat(),
         "setup": {
             "entities": args.entities,
+            "backend": "redis",
             "redis_keys": keys,
             "entities_per_request": args.entities_per_request,
             "features": list(FEATURES),
