@@ -336,3 +336,26 @@ python scripts/benchmark_feature_serving.py --backend cassandra --entities 10000
 docker compose exec cassandra nodetool flush ff_loadtest
 caffeinate -i python scripts/benchmark_feature_serving.py --backend cassandra --entities 1000000 --rates 500,1000,1250,1500,1750,2000 --repeats 3 --duration 30 --warmup 10
 ```
+
+## Compare two reports
+
+`scripts/compare_benchmarks.py` compares two JSON reports of the benchmark script, for example
+before and after a change, or two backends:
+
+```bash
+python scripts/compare_benchmarks.py docs/benchmarks/adr016-redis-5ae169a.json docs/benchmarks/adr016-cassandra-5ae169a.json --label-base redis --label-new cassandra
+```
+
+How to read it:
+
+- The repeats of one rate are reduced to their median. A change is marked `better` or `worse`
+  only when it is at least 5 percent and the ranges of the repeats do not overlap. Otherwise the
+  cell says `same`. With fewer than three repeats on one side it says `inconclusive`.
+- The lines above the table say up to which rate each report stays within the latency target:
+  p99 at most 25 ms in every repeat, at most 0.1 percent of the entries not ok, and at least
+  99 percent of the rate achieved.
+- The exit code is 1 only when the new report has entries that are not ok, beyond that budget, at
+  a rate where the base had none, or request errors where the base had none. Speed never changes
+  the exit code.
+- Compare reports from one machine only. The script warns when the machine, the setup or the
+  rates differ and when a report was measured on a dirty working tree.
