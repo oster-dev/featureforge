@@ -83,5 +83,5 @@ The latency of the service is measured in a separate change and reported in `doc
 
 - `FeatureRecord` carries no `published_at`. The field stays null until the record gains it.
 - Synchronous or asynchronous Redis client: decided after profiling.
-- The Cassandra reader is implemented (`CassandraServingReader`). Its measurement against Redis is open.
+- The Cassandra reader is implemented (`CassandraServingReader`) and measured against Redis in [docs/benchmarks.md](../benchmarks.md).
 - gRPC and authentication.

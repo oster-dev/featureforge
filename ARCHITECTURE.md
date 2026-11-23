@@ -424,8 +424,7 @@ flowchart LR
 ```
 
 Planned and **not implemented**: a `window_replace` store policy, further
-operators in Flink, a Cassandra backend, serving service with
-load tests, observability and recovery drills, ML workflow with registry and
+operators in Flink, alerts, recovery drills and a soak run, ML workflow with registry and
 rollback. Scope and order: [STATUS.md](STATUS.md) and
 [docs/PLATFORM_BLUEPRINT.md](docs/PLATFORM_BLUEPRINT.md).
 

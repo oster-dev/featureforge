@@ -1,6 +1,6 @@
 # FeatureForge Status
 
-Last updated: 2026-11-22 · CI: see the
+Last updated: 2026-11-23 · CI: see the
 [Actions page](https://github.com/oster-dev/featureforge/actions)
 
 This file is the single place for what is **delivered**, **in progress**, and
@@ -80,8 +80,7 @@ Order follows the [platform blueprint](docs/PLATFORM_BLUEPRINT.md):
    suite are delivered ([ADR-013](docs/adr/ADR-013-online-store-protocol.md)).
    A local Cassandra node (Compose profile `cassandra`), the table schema and a
    Cassandra store are in place, and the contract suite runs for both backends. The
-   materializer writes to the backend that the spec names, and the service still
-   reads Redis only.
+   materializer writes to the backend that the spec names, and the service reads either backend, chosen by `online.store` ([ADR-016](docs/adr/ADR-016-feature-serving.md)).
 4. **Serving:** the feature-serving service (ADR-016) exists for Redis, with unit tests and integration tests against a real Redis. A stopped and a slow Redis (Toxiproxy) give backend_error within the budget and the service recovers. The load test is done. Two optimizations raised the saturation point of one process from about 3,300 to about 4,100 req/s on one laptop ([docs/benchmarks.md](docs/benchmarks.md)). The metrics endpoint (`/metrics`) costs about 3 percent of that, so one process now saturates at about 4,000 req/s. More optimizations are open. The service also runs as a container in the Compose stack (`docker compose up -d --build feature-service`, checked with `scripts/smoke_feature_service.py`). Prometheus and a Grafana dashboard run next to it ([docs/observability.md](docs/observability.md)).
    Reads go through a `ServingReader` (PR #104). The Redis reader is the reference. The
    Cassandra reader makes one partition read per entity, run concurrently, with
@@ -124,7 +123,7 @@ workflow (Metaflow, MLflow, registry, rollback).
 | The event append slows down with the number of data files | `EventLog.append` reads every data file to look up the event ids. One MacBook, 1,000 new events: 0.14 s at 30 files, 0.40 s at 100 and 1.18 s at 300, about 4 ms per file. The row count does not matter: 100,000 and 1 million rows in 30 files take the same time. Nothing is measured beyond 300 files. Compaction is open (ADR-015). By the code, the writer flushes a partial batch at the first idle poll, so every pause of a second writes its own file. `--max-batch-seconds` lets a partial batch wait, so a low rate writes fewer, larger files, and its default of 0 keeps the old behaviour. A filter on `event_time` would hide an event id that comes back with another time. |
 | Few latency or throughput numbers | Dataset reads (ADR-014, `scripts/benchmark_training_loaders.py`) and the event append (ADR-015, `scripts/benchmark_event_append.py`) are measured. Serving latency is measured on one laptop only (ADR-016, `scripts/benchmark_feature_serving.py`, [docs/benchmarks.md](docs/benchmarks.md)). The Spark join is not. |
 | Some Redis calls hit the 50 ms socket timeout under load | In the serving benchmark 40 entries (100 req/s) and 80 entries (4000 req/s, second run) came back as `backend_error`. The budget is a socket timeout per Redis operation, not an end-to-end deadline. The cause is open. |
-| One serving benchmark run had 1,850 entries that were not `ok` | In Change 4 one run at 2000 req/s had 1,850 not-ok entries and a p99 of 65 ms. The benchmark summary does not record which status they had, the cause is open, and a second full run did not repeat it ([docs/benchmarks.md](docs/benchmarks.md)). |
+| One serving benchmark run had 1,850 entries that were not `ok` | In Change 4 one run at 2000 req/s had 1,850 not-ok entries and a p99 of 65 ms. The report of that run did not record which status they had (reports now count them in `entry_statuses`), the cause is open, and a second full run did not repeat it ([docs/benchmarks.md](docs/benchmarks.md)). |
 | Older joined and replay tests lack topic cleanup and subprocess timeouts | Tracked in [streaming provenance](docs/streaming-migration.md#open-test-maintenance-items). |
 
 ## Deliberately out of scope
