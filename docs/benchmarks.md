@@ -359,3 +359,72 @@ How to read it:
   the exit code.
 - Compare reports from one machine only. The script warns when the machine, the setup or the
   rates differ and when a report was measured on a dirty working tree.
+
+## Change 5: plain tuple rows from Cassandra (ADR-016)
+
+Question: does reading the Cassandra rows as plain tuples (`tuple_factory`) instead of named
+tuples raise the saturation point of the service?
+
+Method: an A/B on a clean tree, run alternately as base, new, base, new. Base is `f4076ce`, new
+is `209da76` (the merge commit of the change). Each run had 1,000,000 users, a warm-up of 30 s at
+1,500 req/s and then 3 runs of 30 s at 1,500, 2,000, 2,250 and 2,500 req/s, with one service
+process. Cassandra was seeded in 146 s and flushed, and no compaction was pending. Prometheus,
+Grafana, Kafka, Flink and the Compose feature service were stopped. Raw data is in
+`docs/benchmarks/change5-*.json`. Values are the medians of the three runs, first of round 1 and
+then of round 2.
+
+Throughput, CPU and entries that are not ok:
+
+| Target req/s | Achieved base | Achieved new | CPU ms per request base | CPU ms per request new | Not ok base | Not ok new |
+|---|---|---|---|---|---|---|
+| 1500 | 1500, 1500 | 1500, 1500 | 0.65, 0.65 | 0.58, 0.59 | 0, 180 | 0, 1230 |
+| 2000 | 1621, 1635 | 1998, 1998 | 0.60, 0.60 | 0.50, 0.50 | 10240, 9360 | 0, 150 |
+| 2250 | 1647, 1647 | 2105, 2113 | 0.59, 0.60 | 0.47, 0.46 | 10600, 11420 | 500, 1130 |
+| 2500 | 1642, 1644 | 2104, 2104 | 0.59, 0.60 | 0.47, 0.46 | 13000, 13780 | 130, 60 |
+
+Latency, counted from the time a request was due:
+
+| Target req/s | p50 base | p50 new | p99 base | p99 new |
+|---|---|---|---|---|
+| 1500 | 8.96, 9.28 ms | 2.95, 3.07 ms | 45.6, 42.4 ms | 15.9, 42.8 ms |
+| 2000 | 3.55, 3.45 s | 18.5, 23.9 ms | 6.96, 6.67 s | 70.1, 108.5 ms |
+| 2250 | 5.55, 5.54 s | 1.03, 1.08 s | 10.9, 10.9 s | 2.07, 1.98 s |
+| 2500 | 7.82, 7.85 s | 2.86, 2.87 s | 15.5, 15.5 s | 5.62, 5.56 s |
+
+Findings:
+
+- The saturation point rose from about 1,660 req/s (1,662 and 1,655 highest achieved) to about
+  2,110 req/s (2,107 and 2,118), 27 percent more. At 2,000 req/s the new code held the rate with a
+  p99 of 70 to 109 ms, and the base reached 1,621 to 1,635 req/s with a queue of seconds.
+- The CPU time per request in the service fell by about 10 percent at 1,500 req/s and by 16 to
+  22 percent from 2,000 req/s.
+- The p50 at 1,500 req/s fell from 9.0 to 9.3 ms to 3.0 to 3.1 ms in both rounds.
+- The p99 at 1,500 req/s was 15.9 ms in round 1 and 42.8 ms in round 2, the base had 45.6 and
+  42.4 ms. The gain in the tail at this rate did not repeat.
+- Entries that are not ok at 1,500 req/s: none in round 1, and in round 2 up to 0.18 percent of the
+  entries in one run of the new code against 0.04 percent for the base. The cause is not known.
+- Two runs of the base against each other (`base-1` and `base-2`, commit `f4076ce`) show no
+  change at any rate with a threshold of 10 percent. The p50 at 1,500 req/s differs by 4 percent
+  and the highest achieved rate by 0.4 percent.
+
+Variants that were tried on a dirty tree before this change (`docs/benchmarks/explore-*`, one
+baseline before and one after the variants, 1,250 to 2,000 req/s) and not adopted: protocol
+version 4 instead of 5 changed the CPU per request by at most 6 percent, within the noise of the
+two baselines, and a switch interval of 1 ms was worse from 1,750 req/s on (1,556 and 1,407
+req/s achieved at 1,750 and 2,000 req/s, against 1,650 and 1,646).
+
+Limits:
+
+- Client and service share one machine, and Cassandra is one node in Docker Desktop.
+- Two rounds of three runs. The p99 at 1,500 req/s differs between the rounds.
+- The rates 1,250 and 1,750 were not part of this series, so it is not measured where between
+  1,000 and 2,000 req/s the p99 target of 25 ms stops holding with the new code.
+- It is not known why the saturation point rose by more (27 percent) than the CPU per request
+  fell (up to 22 percent).
+- One service process only.
+
+Compare the reports:
+
+```bash
+python scripts/compare_benchmarks.py docs/benchmarks/change5-base-1-f4076ce.json docs/benchmarks/change5-new-1-209da76.json --label-base base-1 --label-new new-1 --min-change 0.10
+```
