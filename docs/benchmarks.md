@@ -244,3 +244,95 @@ Limits: one laptop, three runs per rate, differences below about 1 % cannot be r
 An earlier after-run (`change4-after-54ae65f-first-run.json`) had one 2000 req/s run with
 1850 not-ok entries and a p99 of 65 ms. The cause is not known, it did not repeat, and the
 run is excluded from the numbers above.
+
+## Cassandra against Redis (ADR-016)
+
+Question: how does the service behave when the `ServingReader` reads from Cassandra instead of
+Redis, on the same laptop and under the same load?
+
+Method: `scripts/benchmark_feature_serving.py --backend redis|cassandra`, one uvicorn process
+with `--budget-ms 50`, commit `5ae169a` with a clean tree, 1,000,000 users with 2 features
+each, open load from 4 client processes, 10 s warm-up, 30 s per run, 3 runs per rate. Both
+backends ran one after the other in the same session. Prometheus, Grafana, Kafka, Flink and the
+Compose feature service were stopped, and the machine was kept awake with `caffeinate -i`.
+
+- Redis: 7.4.12 in Docker Desktop, AOF enabled, one `MGET` per request, 2,000,001 keys,
+  seeded in 8 s.
+- Cassandra: 5.0.9 in Docker Desktop, one node, keyspace `ff_loadtest`, 2,000,000 rows plus one
+  seed marker, driver cassandra-driver 3.30.1, one partition read per entity (5 per request,
+  run concurrently) at LOCAL_QUORUM. Seeded in 147 s, followed by `nodetool flush` and a wait
+  until no compaction was pending.
+
+Raw data: `docs/benchmarks/adr016-redis-5ae169a.json`,
+`docs/benchmarks/adr016-cassandra-5ae169a.json` and the container CPU samples
+`docs/benchmarks/adr016-cassandra-container-cpu-5ae169a.txt` (one line every 10 s).
+Ranges cover the three runs per rate.
+
+Redis:
+
+| Target req/s | Achieved req/s | p50 ms | p99 ms | Server cores |
+|---|---|---|---|---|
+| 500 | 500 | 2.56 to 3.89 | 6.54 to 7.98 | 0.37 to 0.39 |
+| 1000 | 1000 | 1.66 to 1.97 | 3.86 to 7.49 | 0.46 to 0.51 |
+| 1500 | 1500 | 1.21 to 1.34 | 4.46 to 7.47 | 0.52 to 0.56 |
+| 2000 | 1999 to 2000 | 1.08 to 1.36 | 5.79 to 11.77 | 0.57 to 0.67 |
+| 3000 | 2999 | 1.03 to 1.10 | 8.64 to 9.46 | 0.89 to 0.91 |
+| 4000 | 3995 to 3997 | 37.0 to 38.9 | 59.2 to 133.4 | 1.25 |
+
+Cassandra:
+
+| Target req/s | Achieved req/s | p50 | p99 | Server cores |
+|---|---|---|---|---|
+| 500 | 500 | 3.88 to 4.49 ms | 11.96 to 15.71 ms | 0.48 to 0.51 |
+| 1000 | 1000 | 2.96 to 3.78 ms | 17.48 to 19.36 ms | 0.69 to 0.72 |
+| 1250 | 1250 | 4.45 to 4.80 ms | 24.14 to 26.76 ms | 0.80 to 0.83 |
+| 1500 | 1499 to 1500 | 8.01 to 9.60 ms | 40.19 to 46.61 ms | 0.91 to 0.99 |
+| 1750 | 1664 to 1674 | 0.67 to 0.92 s | 1.43 to 1.58 s | 0.98 |
+| 2000 | 1662 to 1667 | 3.1 to 3.2 s | 5.96 to 6.06 s | 0.98 |
+
+Findings:
+
+- Redis held 3,000 req/s with a p99 below 10 ms in every run. At 4,000 req/s it reached
+  3,995 to 3,997 req/s with a queue (service p50 29 ms, 1.25 cores), in line with the
+  saturation of about 4,000 req/s in change 4.
+- The service with Cassandra held 1,500 req/s and saturated at 1,662 to 1,674 req/s, at 0.98
+  CPU cores. At saturation the service time was 72 ms (p50) and 116 to 121 ms (p99).
+- Below the limit the p99 with Cassandra was higher at every rate: 12.0 to 15.7 ms against
+  6.5 to 8.0 ms at 500 req/s, and 40.2 to 46.6 ms against 4.5 to 7.5 ms at 1,500 req/s.
+- CPU per request in the service: 0.35 to 0.37 ms with Redis and 0.61 to 0.66 ms with
+  Cassandra at 1,500 req/s.
+- The SLO target of p99 at most 25 ms held with Cassandra up to 1,000 req/s. At 1,250 req/s two
+  runs were below 25 ms and one was at 26.76 ms. At 1,500 req/s it did not hold.
+- The Cassandra container used 33 to 79 percent of one core during the runs, mostly 40 to 65
+  percent, and 2.4 to 2.6 GiB of memory. The service process was at 0.98 cores at saturation.
+  The limit of this setup is therefore in the service process, not in the Cassandra container.
+- Errors: 0 in all runs. Entries that are not ok: 0 with Redis. With Cassandra: 10 in run 1 at
+  500 req/s, none from 1,000 to 1,500 req/s, 1,730 to 2,350 at 1,750 req/s and 2,800 to
+  3,130 at 2,000 req/s. Every count is a multiple of 10, so whole requests failed, which
+  matches a reader that raises. All of them are `backend_error`.
+
+Limits:
+
+- Client and service share one machine. Cassandra is one node in Docker Desktop, so there is no
+  replication and no network.
+- Cassandra's own capacity was not measured. The container stayed below one core.
+- The cause of the `backend_error` requests is not known. The benchmark counts statuses and
+  does not record the `error_type` that the service returns.
+- The container CPU samples cannot be assigned to single rates, because each sample takes
+  about 12 s.
+- Earlier trial runs, taken right after seeding or with the monitoring stack running, are not
+  part of these numbers. They showed the same saturation point (1,601 to 1,626 req/s).
+- At 500 req/s the p50 is higher than at 1,000 req/s with both backends. Do not read the low-load
+  latency as a property of the service.
+- The CPU cost per request was not broken down. It is not known whether the five partition
+  reads, the driver or the conversion of the rows takes most of it.
+- One service process only. No claim for several processes or hosts.
+
+Repeat for Cassandra:
+
+```bash
+docker compose up -d cassandra
+python scripts/benchmark_feature_serving.py --backend cassandra --entities 1000000 --rates 100 --repeats 1 --duration 5 --warmup 2 --reseed
+docker compose exec cassandra nodetool flush ff_loadtest
+caffeinate -i python scripts/benchmark_feature_serving.py --backend cassandra --entities 1000000 --rates 500,1000,1250,1500,1750,2000 --repeats 3 --duration 30 --warmup 10
+```

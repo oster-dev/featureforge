@@ -1,0 +1,708 @@
+{
+  "generated_at": "2026-11-23T09:16:21.122134+00:00",
+  "setup": {
+    "entities": 1000000,
+    "backend": "redis",
+    "redis_keys": 2000001,
+    "entities_per_request": 5,
+    "features": [
+      "user_play_count_1h",
+      "user_skip_rate_24h"
+    ],
+    "access_pattern": "Zipf-like, exponent about 1",
+    "budget_ms": 50.0,
+    "warmup_s": 10.0,
+    "repeats": 3,
+    "service": "one uvicorn process, access log off"
+  },
+  "environment": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "cpu": "Apple M4 Pro",
+    "logical_cpus": 14,
+    "memory_bytes": 25769803776,
+    "python": "3.13.9",
+    "packages": {
+      "fastapi": "0.141.1",
+      "uvicorn": "0.53.0",
+      "starlette": "1.6.0",
+      "redis": "5.3.1",
+      "pydantic": "2.13.5",
+      "numpy": "2.5.3",
+      "psutil": "7.2.2"
+    },
+    "redis_server": "7.4.12",
+    "redis_aof_enabled": true,
+    "git": {
+      "commit": "5ae169a6da5a92d9fa868b47c9a5e91af46f6bcd",
+      "dirty": false
+    }
+  },
+  "results": [
+    {
+      "target_rps": 500,
+      "scheduled": 15000,
+      "completed": 15000,
+      "achieved_rps": 499.9594449560261,
+      "errors": 0,
+      "error_rate": 0.0,
+      "entries_total": 150000,
+      "entries_not_ok": 0,
+      "entry_statuses": {
+        "ok": 150000
+      },
+      "latency_ms": {
+        "p50": 3.8885835674591362,
+        "p90": 4.890712222550064,
+        "p95": 5.213135317899287,
+        "p99": 7.981807707110442,
+        "p99.9": 15.24820808996455,
+        "max": 22.690666955895722
+      },
+      "service_ms": {
+        "p50": 3.3941040164791048,
+        "p90": 4.334045748692006,
+        "p95": 4.6153809933457515,
+        "p99": 6.036880869651216,
+        "p99.9": 14.30021636083275,
+        "max": 21.996499970555305
+      },
+      "max_in_flight": 3,
+      "reconnects": 0,
+      "duration_s": 30.0,
+      "server_cpu_cores": 0.3721885703785501,
+      "client_cpu_cores": 0.1578618363673042,
+      "workers": 4,
+      "connections_per_worker": 13,
+      "repeat": 1
+    },
+    {
+      "target_rps": 500,
+      "scheduled": 15000,
+      "completed": 15000,
+      "achieved_rps": 500.00649036843765,
+      "errors": 0,
+      "error_rate": 0.0,
+      "entries_total": 150000,
+      "entries_not_ok": 0,
+      "entry_statuses": {
+        "ok": 150000
+      },
+      "latency_ms": {
+        "p50": 2.784603973850608,
+        "p90": 4.305645462591201,
+        "p95": 4.67149763717316,
+        "p99": 6.71223642188125,
+        "p99.9": 22.815232891939036,
+        "max": 32.90033305529505
+      },
+      "service_ms": {
+        "p50": 2.2157710045576096,
+        "p90": 3.493700292892754,
+        "p95": 3.849665989400819,
+        "p99": 5.310041856719185,
+        "p99.9": 21.18274605181076,
+        "max": 32.06966700963676
+      },
+      "max_in_flight": 4,
+      "reconnects": 0,
+      "duration_s": 30.0,
+      "server_cpu_cores": 0.3657825648619224,
+      "client_cpu_cores": 0.13985191462328542,
+      "workers": 4,
+      "connections_per_worker": 13,
+      "repeat": 2
+    },
+    {
+      "target_rps": 500,
+      "scheduled": 15000,
+      "completed": 15000,
+      "achieved_rps": 500.0087314025024,
+      "errors": 0,
+      "error_rate": 0.0,
+      "entries_total": 150000,
+      "entries_not_ok": 0,
+      "entry_statuses": {
+        "ok": 150000
+      },
+      "latency_ms": {
+        "p50": 2.561333531048149,
+        "p90": 3.7901920382864773,
+        "p95": 4.188929608790204,
+        "p99": 6.5448832826223295,
+        "p99.9": 14.958618686068876,
+        "max": 26.440749992616475
+      },
+      "service_ms": {
+        "p50": 1.9445419893600047,
+        "p90": 2.9873582883737986,
+        "p95": 3.3302646363154054,
+        "p99": 4.974563613068313,
+        "p99.9": 12.386620036675923,
+        "max": 25.97037493251264
+      },
+      "max_in_flight": 4,
+      "reconnects": 0,
+      "duration_s": 30.0,
+      "server_cpu_cores": 0.3895954845010178,
+      "client_cpu_cores": 0.15268205174875019,
+      "workers": 4,
+      "connections_per_worker": 13,
+      "repeat": 3
+    },
+    {
+      "target_rps": 1000,
+      "scheduled": 30000,
+      "completed": 30000,
+      "achieved_rps": 999.8973771976689,
+      "errors": 0,
+      "error_rate": 0.0,
+      "entries_total": 300000,
+      "entries_not_ok": 0,
+      "entry_statuses": {
+        "ok": 300000
+      },
+      "latency_ms": {
+        "p50": 1.6640829853713512,
+        "p90": 2.1120915189385414,
+        "p95": 2.3980829922948033,
+        "p99": 3.8573281606659235,
+        "p99.9": 12.598472146084587,
+        "max": 18.351083039306104
+      },
+      "service_ms": {
+        "p50": 1.3594169868156314,
+        "p90": 1.8123834277503195,
+        "p95": 2.08633819129318,
+        "p99": 3.483225986128663,
+        "p99.9": 12.076386282569771,
+        "max": 18.010249943472445
+      },
+      "max_in_flight": 5,
+      "reconnects": 0,
+      "duration_s": 30.0,
+      "server_cpu_cores": 0.46064616877451375,
+      "client_cpu_cores": 0.1662984730256422,
+      "workers": 4,
+      "connections_per_worker": 25,
+      "repeat": 1
+    },
+    {
+      "target_rps": 1000,
+      "scheduled": 30000,
+      "completed": 30000,
+      "achieved_rps": 999.8799282853126,
+      "errors": 0,
+      "error_rate": 0.0,
+      "entries_total": 300000,
+      "entries_not_ok": 0,
+      "entry_statuses": {
+        "ok": 300000
+      },
+      "latency_ms": {
+        "p50": 1.9704584265127778,
+        "p90": 2.536637417506427,
+        "p95": 3.0943985853809854,
+        "p99": 7.488909531384701,
+        "p99.9": 18.09967754560141,
+        "max": 29.575709020718932
+      },
+      "service_ms": {
+        "p50": 1.674042025115341,
+        "p90": 2.234758052509279,
+        "p95": 2.7751291287131608,
+        "p99": 6.823501769686111,
+        "p99.9": 17.2393404291951,
+        "max": 29.298334033228457
+      },
+      "max_in_flight": 7,
+      "reconnects": 0,
+      "duration_s": 30.0,
+      "server_cpu_cores": 0.5075522910470354,
+      "client_cpu_cores": 0.1774113036504118,
+      "workers": 4,
+      "connections_per_worker": 25,
+      "repeat": 2
+    },
+    {
+      "target_rps": 1000,
+      "scheduled": 30000,
+      "completed": 30000,
+      "achieved_rps": 999.9167222038146,
+      "errors": 0,
+      "error_rate": 0.0,
+      "entries_total": 300000,
+      "entries_not_ok": 0,
+      "entry_statuses": {
+        "ok": 300000
+      },
+      "latency_ms": {
+        "p50": 1.6869170358404517,
+        "p90": 2.3322541965171695,
+        "p95": 2.6285975996870548,
+        "p99": 4.70064996508881,
+        "p99.9": 14.244884472689627,
+        "max": 23.920416948385537
+      },
+      "service_ms": {
+        "p50": 1.3773960527032614,
+        "p90": 2.0304252742789686,
+        "p95": 2.325131284305826,
+        "p99": 4.23746758373454,
+        "p99.9": 12.384507799638014,
+        "max": 20.203125081025064
+      },
+      "max_in_flight": 6,
+      "reconnects": 0,
+      "duration_s": 30.0,
+      "server_cpu_cores": 0.5080386522226072,
+      "client_cpu_cores": 0.179370300105463,
+      "workers": 4,
+      "connections_per_worker": 25,
+      "repeat": 3
+    },
+    {
+      "target_rps": 1500,
+      "scheduled": 45000,
+      "completed": 45000,
+      "achieved_rps": 1499.854066300872,
+      "errors": 0,
+      "error_rate": 0.0,
+      "entries_total": 450000,
+      "entries_not_ok": 0,
+      "entry_statuses": {
+        "ok": 450000
+      },
+      "latency_ms": {
+        "p50": 1.2220833450555801,
+        "p90": 1.6487577115185557,
+        "p95": 1.9731680979020891,
+        "p99": 6.216293422039598,
+        "p99.9": 15.66593196557391,
+        "max": 22.888041101396084
+      },
+      "service_ms": {
+        "p50": 1.0158955119550228,
+        "p90": 1.4229622785933316,
+        "p95": 1.7536874918732737,
+        "p99": 5.496473814128021,
+        "p99.9": 15.132169622229902,
+        "max": 22.529041045345366
+      },
+      "max_in_flight": 8,
+      "reconnects": 0,
+      "duration_s": 30.0,
+      "server_cpu_cores": 0.5611232051275017,
+      "client_cpu_cores": 0.20024874193495684,
+      "workers": 4,
+      "connections_per_worker": 32,
+      "repeat": 1
+    },
+    {
+      "target_rps": 1500,
+      "scheduled": 45000,
+      "completed": 45000,
+      "achieved_rps": 1499.7606215590552,
+      "errors": 0,
+      "error_rate": 0.0,
+      "entries_total": 450000,
+      "entries_not_ok": 0,
+      "entry_statuses": {
+        "ok": 450000
+      },
+      "latency_ms": {
+        "p50": 1.3411245308816433,
+        "p90": 1.7191285034641623,
+        "p95": 2.1838812797795977,
+        "p99": 7.467994556063811,
+        "p99.9": 16.197006559698416,
+        "max": 24.319207994267344
+      },
+      "service_ms": {
+        "p50": 1.117395469918847,
+        "p90": 1.4993958873674271,
+        "p95": 1.961762475548311,
+        "p99": 6.860671339091008,
+        "p99.9": 15.406990231946553,
+        "max": 24.049792089499533
+      },
+      "max_in_flight": 9,
+      "reconnects": 0,
+      "duration_s": 30.0,
+      "server_cpu_cores": 0.5445153540171898,
+      "client_cpu_cores": 0.20099809567578109,
+      "workers": 4,
+      "connections_per_worker": 32,
+      "repeat": 2
+    },
+    {
+      "target_rps": 1500,
+      "scheduled": 45000,
+      "completed": 45000,
+      "achieved_rps": 1499.6999871210942,
+      "errors": 0,
+      "error_rate": 0.0,
+      "entries_total": 450000,
+      "entries_not_ok": 0,
+      "entry_statuses": {
+        "ok": 450000
+      },
+      "latency_ms": {
+        "p50": 1.2092915712855756,
+        "p90": 1.5436335350386796,
+        "p95": 1.8560875323601063,
+        "p99": 4.463874961948031,
+        "p99.9": 18.13940455927525,
+        "max": 34.193249652162194
+      },
+      "service_ms": {
+        "p50": 0.8888330776244402,
+        "p90": 1.1947541614063084,
+        "p95": 1.5410933818202457,
+        "p99": 4.018200071295747,
+        "p99.9": 17.61467464407941,
+        "max": 34.118666080757976
+      },
+      "max_in_flight": 13,
+      "reconnects": 0,
+      "duration_s": 30.0,
+      "server_cpu_cores": 0.5203094835992099,
+      "client_cpu_cores": 0.19248662030631716,
+      "workers": 4,
+      "connections_per_worker": 32,
+      "repeat": 3
+    },
+    {
+      "target_rps": 2000,
+      "scheduled": 60000,
+      "completed": 60000,
+      "achieved_rps": 1999.6313235749058,
+      "errors": 0,
+      "error_rate": 0.0,
+      "entries_total": 600000,
+      "entries_not_ok": 0,
+      "entry_statuses": {
+        "ok": 600000
+      },
+      "latency_ms": {
+        "p50": 1.0791040258482099,
+        "p90": 1.6507910331711173,
+        "p95": 2.2759642160963263,
+        "p99": 5.794760124990727,
+        "p99.9": 12.673555389279555,
+        "max": 25.37995798047632
+      },
+      "service_ms": {
+        "p50": 0.854520476423204,
+        "p90": 1.3834207202307873,
+        "p95": 2.037460106657818,
+        "p99": 5.216266213683415,
+        "p99.9": 11.787366434931883,
+        "max": 24.883916950784624
+      },
+      "max_in_flight": 11,
+      "reconnects": 0,
+      "duration_s": 30.0,
+      "server_cpu_cores": 0.5698894673238976,
+      "client_cpu_cores": 0.2124132516326979,
+      "workers": 4,
+      "connections_per_worker": 32,
+      "repeat": 1
+    },
+    {
+      "target_rps": 2000,
+      "scheduled": 60000,
+      "completed": 60000,
+      "achieved_rps": 1999.4801406941742,
+      "errors": 0,
+      "error_rate": 0.0,
+      "entries_total": 600000,
+      "entries_not_ok": 0,
+      "entry_statuses": {
+        "ok": 600000
+      },
+      "latency_ms": {
+        "p50": 1.3246251037344337,
+        "p90": 2.014012588188052,
+        "p95": 2.5982357445172903,
+        "p99": 9.932150733657203,
+        "p99.9": 20.230834055343035,
+        "max": 24.17745895218104
+      },
+      "service_ms": {
+        "p50": 1.1134999804198742,
+        "p90": 1.7493916209787128,
+        "p95": 2.372465241933241,
+        "p99": 9.2412003758364,
+        "p99.9": 18.80331664881679,
+        "max": 23.236499982886016
+      },
+      "max_in_flight": 12,
+      "reconnects": 0,
+      "duration_s": 30.0,
+      "server_cpu_cores": 0.6616338237536213,
+      "client_cpu_cores": 0.23685106877575796,
+      "workers": 4,
+      "connections_per_worker": 32,
+      "repeat": 2
+    },
+    {
+      "target_rps": 2000,
+      "scheduled": 60000,
+      "completed": 60000,
+      "achieved_rps": 1999.5177218554945,
+      "errors": 0,
+      "error_rate": 0.0,
+      "entries_total": 600000,
+      "entries_not_ok": 0,
+      "entry_statuses": {
+        "ok": 600000
+      },
+      "latency_ms": {
+        "p50": 1.3590000453405082,
+        "p90": 1.989196264185011,
+        "p95": 2.9487226216588156,
+        "p99": 11.77484421641566,
+        "p99.9": 21.823617479996887,
+        "max": 31.80774999782443
+      },
+      "service_ms": {
+        "p50": 1.1766874813474715,
+        "p90": 1.7772540799342096,
+        "p95": 2.721420821035277,
+        "p99": 10.687870454275988,
+        "p99.9": 21.327538414742016,
+        "max": 29.100499930791557
+      },
+      "max_in_flight": 15,
+      "reconnects": 0,
+      "duration_s": 30.0,
+      "server_cpu_cores": 0.6694590933541071,
+      "client_cpu_cores": 0.2354115464508163,
+      "workers": 4,
+      "connections_per_worker": 32,
+      "repeat": 3
+    },
+    {
+      "target_rps": 3000,
+      "scheduled": 90000,
+      "completed": 90000,
+      "achieved_rps": 2999.170079652972,
+      "errors": 0,
+      "error_rate": 0.0,
+      "entries_total": 900000,
+      "entries_not_ok": 0,
+      "entry_statuses": {
+        "ok": 900000
+      },
+      "latency_ms": {
+        "p50": 1.071500708349049,
+        "p90": 2.2228965419344617,
+        "p95": 3.1313663581386226,
+        "p99": 9.389143208973056,
+        "p99.9": 17.63205816433771,
+        "max": 29.7541250474751
+      },
+      "service_ms": {
+        "p50": 0.9476249106228352,
+        "p90": 2.0558792282827203,
+        "p95": 2.948169084265828,
+        "p99": 8.519179108552606,
+        "p99.9": 15.292980970931323,
+        "max": 29.156291973777115
+      },
+      "max_in_flight": 22,
+      "reconnects": 0,
+      "duration_s": 30.0,
+      "server_cpu_cores": 0.9064517954498876,
+      "client_cpu_cores": 0.30685419498060956,
+      "workers": 4,
+      "connections_per_worker": 32,
+      "repeat": 1
+    },
+    {
+      "target_rps": 3000,
+      "scheduled": 90000,
+      "completed": 90000,
+      "achieved_rps": 2999.1423160788227,
+      "errors": 0,
+      "error_rate": 0.0,
+      "entries_total": 900000,
+      "entries_not_ok": 0,
+      "entry_statuses": {
+        "ok": 900000
+      },
+      "latency_ms": {
+        "p50": 1.0271875653415918,
+        "p90": 2.0709250587970023,
+        "p95": 3.038181917509065,
+        "p99": 8.64407796994781,
+        "p99.9": 14.148355425684798,
+        "max": 18.084040959365666
+      },
+      "service_ms": {
+        "p50": 0.9027909254655242,
+        "p90": 1.9078003475442533,
+        "p95": 2.8653517423663297,
+        "p99": 8.003393692197225,
+        "p99.9": 11.829566163127403,
+        "max": 16.851541004143655
+      },
+      "max_in_flight": 14,
+      "reconnects": 0,
+      "duration_s": 30.0,
+      "server_cpu_cores": 0.886566462213936,
+      "client_cpu_cores": 0.30979100125080783,
+      "workers": 4,
+      "connections_per_worker": 32,
+      "repeat": 2
+    },
+    {
+      "target_rps": 3000,
+      "scheduled": 90000,
+      "completed": 90000,
+      "achieved_rps": 2999.121965351692,
+      "errors": 0,
+      "error_rate": 0.0,
+      "entries_total": 900000,
+      "entries_not_ok": 0,
+      "entry_statuses": {
+        "ok": 900000
+      },
+      "latency_ms": {
+        "p50": 1.1018956429325044,
+        "p90": 2.2079622140154247,
+        "p95": 3.4662263467907914,
+        "p99": 9.460119991563241,
+        "p99.9": 16.474846403580532,
+        "max": 27.38825068809092
+      },
+      "service_ms": {
+        "p50": 0.9800624684430659,
+        "p90": 2.046958077698946,
+        "p95": 3.2651044777594542,
+        "p99": 8.762195190647601,
+        "p99.9": 14.70625063031912,
+        "max": 22.87420805078
+      },
+      "max_in_flight": 21,
+      "reconnects": 0,
+      "duration_s": 30.0,
+      "server_cpu_cores": 0.8883635552442765,
+      "client_cpu_cores": 0.3038427321875235,
+      "workers": 4,
+      "connections_per_worker": 32,
+      "repeat": 3
+    },
+    {
+      "target_rps": 4000,
+      "scheduled": 120000,
+      "completed": 120000,
+      "achieved_rps": 3996.032489192939,
+      "errors": 0,
+      "error_rate": 0.0,
+      "entries_total": 1200000,
+      "entries_not_ok": 0,
+      "entry_statuses": {
+        "ok": 1200000
+      },
+      "latency_ms": {
+        "p50": 37.102603528182954,
+        "p90": 99.07235454302283,
+        "p95": 116.72676216694525,
+        "p99": 133.44469354720783,
+        "p99.9": 142.90945383161375,
+        "max": 152.59816590696573
+      },
+      "service_ms": {
+        "p50": 28.994332998991013,
+        "p90": 37.997333181556314,
+        "p95": 38.9005922828801,
+        "p99": 45.13859168626367,
+        "p99.9": 56.718186883024146,
+        "max": 136.97970903012902
+      },
+      "max_in_flight": 153,
+      "reconnects": 0,
+      "duration_s": 30.0,
+      "server_cpu_cores": 1.2534744705748906,
+      "client_cpu_cores": 0.3315603414608498,
+      "workers": 4,
+      "connections_per_worker": 32,
+      "repeat": 1
+    },
+    {
+      "target_rps": 4000,
+      "scheduled": 120000,
+      "completed": 120000,
+      "achieved_rps": 3996.665176988499,
+      "errors": 0,
+      "error_rate": 0.0,
+      "entries_total": 1200000,
+      "entries_not_ok": 0,
+      "entry_statuses": {
+        "ok": 1200000
+      },
+      "latency_ms": {
+        "p50": 38.86381245683879,
+        "p90": 75.47980033559726,
+        "p95": 86.01754310075188,
+        "p99": 98.49075169651762,
+        "p99.9": 108.27830434742017,
+        "max": 148.08316598646343
+      },
+      "service_ms": {
+        "p50": 29.054791491944343,
+        "p90": 38.13067440642044,
+        "p95": 39.12391247577033,
+        "p99": 46.252717952011146,
+        "p99.9": 55.2955080979738,
+        "max": 147.9613749543205
+      },
+      "max_in_flight": 117,
+      "reconnects": 0,
+      "duration_s": 30.0,
+      "server_cpu_cores": 1.252273544691602,
+      "client_cpu_cores": 0.32669006917525123,
+      "workers": 4,
+      "connections_per_worker": 32,
+      "repeat": 2
+    },
+    {
+      "target_rps": 4000,
+      "scheduled": 120000,
+      "completed": 120000,
+      "achieved_rps": 3995.0016482300084,
+      "errors": 0,
+      "error_rate": 0.0,
+      "entries_total": 1200000,
+      "entries_not_ok": 0,
+      "entry_statuses": {
+        "ok": 1200000
+      },
+      "latency_ms": {
+        "p50": 36.993667017668486,
+        "p90": 48.59251220477745,
+        "p95": 52.39752490888349,
+        "p99": 59.22370841843076,
+        "p99.9": 65.63530342525358,
+        "max": 97.58445806801319
+      },
+      "service_ms": {
+        "p50": 29.102958040311933,
+        "p90": 38.20846629096195,
+        "p95": 38.93921531853266,
+        "p99": 45.47303628409279,
+        "p99.9": 53.16962933039766,
+        "max": 97.46545797679573
+      },
+      "max_in_flight": 72,
+      "reconnects": 0,
+      "duration_s": 30.0,
+      "server_cpu_cores": 1.2520899677352677,
+      "client_cpu_cores": 0.3246111803953986,
+      "workers": 4,
+      "connections_per_worker": 32,
+      "repeat": 3
+    }
+  ]
+}
