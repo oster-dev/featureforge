@@ -456,3 +456,62 @@ What the runner does and why:
   commit in the name, and compare two reports with `make bench-compare BASE=a.json NEW=b.json`
   (see "Compare two reports").
 - Compare reports from one machine only. The numbers of a laptop are not the numbers of a server.
+
+## Baselines after change 5 (ADR-016)
+
+Question: where do the two backends stand today, measured with the runner (`make bench-record`)?
+
+Method: commit `8989796`, clean tree, one uvicorn process, 1,000,000 users, a warm-up of 30 s, then
+3 runs of 30 s per rate. Cassandra was measured first (seeded in 146 s, flushed, no compaction
+pending), then Redis (seeded in 8 s). Prometheus, Grafana, Kafka, Flink and the Compose feature
+service were stopped. Raw data: `docs/benchmarks/baseline-cassandra-8989796.json` and
+`docs/benchmarks/baseline-redis-8989796.json`. Ranges cover the three runs, and "not ok" lists the
+entries that are not ok of each run.
+
+Redis:
+
+| Target req/s | Achieved req/s | p50 ms | p99 ms | CPU ms per request | Not ok |
+|---|---|---|---|---|---|
+| 500 | 500 | 2.49 to 3.30 | 6.59 to 7.62 | 0.68 to 0.76 | 0, 0, 0 |
+| 1000 | 1000 | 1.69 to 1.92 | 4.19 to 39.34 | 0.50 to 0.53 | 0, 400, 0 |
+| 2000 | 2000 | 0.95 to 1.29 | 5.44 to 9.61 | 0.28 to 0.33 | 0, 0, 0 |
+| 3000 | 2999 | 1.04 to 1.10 | 6.77 to 7.75 | 0.29 to 0.30 | 0, 0, 0 |
+| 4000 | 3993 to 3996 | 35.0 to 37.5 | 59.5 to 82.6 | 0.31 | 0, 0, 0 |
+
+Cassandra:
+
+| Target req/s | Achieved req/s | p50 | p99 | CPU ms per request | Not ok |
+|---|---|---|---|---|---|
+| 500 | 500 | 3.83 to 4.23 ms | 9.56 to 21.31 ms | 0.94 to 1.00 | 520, 430, 0 |
+| 1000 | 1000 | 2.61 to 3.12 ms | 10.30 to 11.41 ms | 0.62 to 0.65 | 0, 0, 0 |
+| 1500 | 1500 | 2.97 to 3.35 ms | 16.31 to 23.21 ms | 0.58 to 0.61 | 0, 0, 240 |
+| 2000 | 1987 to 1999 | 17.8 to 62.1 ms | 68.9 to 216.2 ms | 0.48 to 0.50 | 150, 0, 0 |
+| 2500 | 2085 to 2098 | 2.84 to 3.06 s | 5.72 to 5.95 s | 0.46 to 0.47 | 0, 0, 0 |
+
+Findings:
+
+- Redis held 3,000 req/s with a p99 of at most 7.75 ms in every run. At 4,000 req/s it kept the rate
+  (3,993 to 3,996) with a queue (service p50 29 ms, 1.25 CPU cores), as in change 4.
+- Cassandra held 1,500 req/s with a p99 of 16 to 23 ms and kept the rate at 2,000 req/s with a p99
+  of 69 to 216 ms. It saturated at about 2,090 req/s (2,085 to 2,098 at 2,500 req/s).
+- The p99 target of 25 ms held at every measured rate up to 3,000 req/s for Redis (by the median of
+  the runs) and at 500, 1,000 and 1,500 req/s for Cassandra (by the median of the runs).
+- CPU time per request in the service from 2,000 req/s on: 0.28 to 0.33 ms with Redis and 0.46 to
+  0.50 ms with Cassandra, about 1.5 times as much. Before change 5 it was about twice as much.
+- Single runs had short bursts of requests with `backend_error` and a high p99.9, with both
+  backends: Redis at 1,000 req/s (run 2: 400 entries, p99 39.3 ms), Cassandra at 500 req/s (runs 1
+  and 2: 520 and 430 entries), at 1,500 req/s (run 3: 240) and at 2,000 req/s (run 1: 150). The
+  cause is not known. They hit rates far from saturation and both backends, so the machine
+  (macOS, Docker Desktop) is a suspect.
+
+Limits:
+
+- Client and service share one machine. Both databases run in Docker Desktop, and Cassandra is one
+  node.
+- Cassandra had its episodes at the first rate in two of three runs. The same happened in the
+  other Cassandra series of this day (30 s or less of warm-up after the seed). Whether a longer
+  warm-up avoids it was not tested.
+- The comparison script reports a failure for Cassandra against Redis at 500 req/s because of
+  these episodes. The medians above are the better summary.
+- Cassandra was measured before Redis, 17 minutes apart.
+- One service process only.
