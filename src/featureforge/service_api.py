@@ -131,10 +131,15 @@ def main(argv: Sequence[str] | None = None) -> None:
         )
 
     if backends[0] == "cassandra":
+        from cassandra.query import tuple_factory
+
         from featureforge.streaming.cassandra_connection import open_session
 
         with open_session(
-            args.cassandra_host, args.cassandra_port, local_dc=args.cassandra_local_dc
+            args.cassandra_host,
+            args.cassandra_port,
+            local_dc=args.cassandra_local_dc,
+            row_factory=tuple_factory,
         ) as session:
             serve(
                 build_cassandra_server(
