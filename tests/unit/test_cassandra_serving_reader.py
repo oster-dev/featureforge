@@ -208,3 +208,26 @@ def test_decoding_is_the_same_as_in_the_redis_store(payload):
     assert decode_read(RecordDecoder(PLAY), payload, ENTITY) == redis_store.decode_read(
         payload, ENTITY
     )
+
+
+class TupleSession(FakeSession):
+    def execute_async(self, statement, parameters, timeout=None):
+        future = super().execute_async(statement, parameters, timeout)
+        future.rows = [tuple(row) for row in future.rows]
+        return future
+
+
+def test_plain_tuple_rows_give_the_same_reads_as_named_tuples():
+    stored = {
+        (PLAY.keys[0], "u1", prefix(PLAY)): payload_for("u1", 1),
+        (PLAY.keys[0], "u2", prefix(PLAY)): payload_for("u2", 2),
+    }
+    plan = [(PLAY, "u2"), (PLAY, "u3"), (PLAY, "u1")]
+
+    named = CassandraServingReader(FakeSession(stored), [PLAY]).fetch(plan)
+    plain = CassandraServingReader(TupleSession(stored), [PLAY]).fetch(plan)
+
+    assert plain == named
+    assert plain[0].record is not None
+    assert plain[0].record.counts["play_count"] == 2
+    assert plain[1] == RecordRead()

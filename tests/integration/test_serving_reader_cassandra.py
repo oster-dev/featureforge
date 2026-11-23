@@ -11,10 +11,12 @@ import pytest
 from cassandra import InvalidRequest
 from cassandra.cluster import EXEC_PROFILE_DEFAULT, Cluster, ExecutionProfile
 from cassandra.policies import DCAwareRoundRobinPolicy
+from cassandra.query import tuple_factory
 
 from featureforge.cassandra_serving_reader import CassandraServingReader
 from featureforge.spec.loader import load_spec
 from featureforge.spec.reference import evaluate_expression
+from featureforge.streaming.cassandra_connection import open_session
 from featureforge.streaming.cassandra_schema import TABLE, ensure_schema
 from featureforge.streaming.cassandra_store import CassandraSpecStore
 from featureforge.streaming.contracts.feature_record import stamp
@@ -120,3 +122,25 @@ def test_a_missing_table_fails_when_the_reader_is_built(session):
 
 def test_ping_reaches_the_node(session, keyspace):
     assert CassandraServingReader(session, [PLAY], keyspace=keyspace, timeout=2.0).ping() is True
+
+
+@pytest.fixture(scope="module")
+def tuple_session() -> Iterator:
+    host = os.environ.get("FEATUREFORGE_CASSANDRA_HOST", "127.0.0.1")
+    with open_session(host, row_factory=tuple_factory) as plain:
+        yield plain
+
+
+def test_a_session_with_plain_tuples_gives_the_same_reads(session, tuple_session, keyspace):
+    put(session, keyspace, PLAY, "u1", 3)
+    put(session, keyspace, PLAY, "u2", 5)
+    plan = [(PLAY, "u2"), (PLAY, "u3"), (PLAY, "u1"), (SKIP, "u1")]
+    named = CassandraServingReader(session, [PLAY, SKIP], keyspace=keyspace, timeout=2.0)
+    plain = CassandraServingReader(tuple_session, [PLAY, SKIP], keyspace=keyspace, timeout=2.0)
+
+    reads = plain.fetch(plan)
+
+    assert reads == named.fetch(plan)
+    assert reads[0].record is not None
+    assert reads[0].record.counts["play_count"] == 5
+    assert reads[1] == RecordRead()

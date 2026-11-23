@@ -26,6 +26,10 @@ class CassandraServingReader:
     the driver gave up, and the node has its own read timeout. The statement is prepared
     when the reader is built, so a missing table fails at startup. The caller owns the
     session and the schema.
+
+    The reader takes the two columns of a row by position, so it works with named tuples and
+    with plain tuples. The service opens its session with `tuple_factory`, because the default
+    row factory builds a named tuple class for every result.
     """
 
     def __init__(
@@ -81,8 +85,8 @@ class CassandraServingReader:
         ]
         payloads: dict[tuple[str, str, str], str | None] = {}
         for (entity_key, value), future in futures:
-            for row in future.result():
-                payloads[(entity_key, value, row.feature)] = row.payload
+            for feature, payload in future.result():
+                payloads[(entity_key, value, feature)] = payload
         reads: list[RecordRead] = []
         for spec, value in plan:
             entity_key, prefix, decoder = self._specs[(spec.name, spec.version)]
