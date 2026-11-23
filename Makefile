@@ -18,12 +18,13 @@ USER_ID ?= user_000290
 TOP_K ?= 5
 FRESHNESS_REFERENCE_TIME ?= $(BACKFILL_END)T00:00:00+00:00
 FRESHNESS_MAX_LAG_HOURS ?= 24
+BENCH_BACKEND ?= redis
 
 .PHONY: help setup install lint format check test test-unit test-integration \
         validate validate-specs test-spec test-streaming clean \
         docker-config docker-up docker-down \
         check-freshness e2e e2e-no-skip e2e-clean e2e-clean-all \
-        materialize-incremental demo bench-compare
+        materialize-incremental demo bench-compare bench-smoke bench-record
 
 help:
 	@echo "FeatureForge development commands:"
@@ -46,6 +47,8 @@ help:
 	@echo ""
 	@echo "Benchmarks:"
 	@echo "  make bench-compare BASE=a.json NEW=b.json   Compare two benchmark reports (COMPARE_ARGS for options)"
+	@echo "  make bench-smoke [BENCH_BACKEND=cassandra]   Check that the benchmark tool and the backend work (about 1 minute)"
+	@echo "  make bench-record [BENCH_BACKEND=cassandra]  Record a full benchmark (about 20 minutes, clean tree, only the backend services)"
 	@echo ""
 	@echo "Reliability checks:"
 	@echo "  make check-freshness          Validate canonical offline feature freshness"
@@ -181,3 +184,9 @@ demo: e2e check-freshness
 bench-compare:
 	@test -n "$(BASE)" -a -n "$(NEW)" || { echo "usage: make bench-compare BASE=a.json NEW=b.json"; exit 2; }
 	$(PYTHON) scripts/compare_benchmarks.py $(BASE) $(NEW) $(COMPARE_ARGS)
+
+bench-smoke:
+	$(PYTHON) scripts/run_serving_benchmark.py smoke --backend $(BENCH_BACKEND)
+
+bench-record:
+	$(PYTHON) scripts/run_serving_benchmark.py record --backend $(BENCH_BACKEND)

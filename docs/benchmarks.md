@@ -431,3 +431,28 @@ Compare the reports:
 ```bash
 python scripts/compare_benchmarks.py docs/benchmarks/change5-base-1-f4076ce.json docs/benchmarks/change5-new-1-209da76.json --label-base base-1 --label-new new-1 --min-change 0.10
 ```
+
+## Run a benchmark
+
+You need `make setup` and Docker. Start the services of the backend (`docker compose up -d redis` or
+`docker compose up -d cassandra`), then:
+
+```bash
+make bench-smoke                          # about 1 minute, checks that the tool and Redis work
+make bench-smoke BENCH_BACKEND=cassandra  # the same with Cassandra, in its own keyspace
+make bench-record BENCH_BACKEND=cassandra # about 20 minutes, a full report
+```
+
+What the runner does and why:
+
+- `smoke` uses 2,000 users and 5 s per run. It shows that the tool works and its numbers are not
+  published. With Redis it replaces the data of the benchmark database.
+- `record` needs a clean working tree and only the services of the backend, because other
+  services (Kafka, Flink, Grafana) change the result. If something is wrong it says what and how to
+  fix it. It seeds fresh data, because the data expires after two hours. With Cassandra it flushes
+  the table and waits until no compaction is pending, because compaction right after the seed
+  caused errors in the first runs.
+- The report is written to `output/benchmarks/`. To keep it, copy it to `docs/benchmarks/` with the
+  commit in the name, and compare two reports with `make bench-compare BASE=a.json NEW=b.json`
+  (see "Compare two reports").
+- Compare reports from one machine only. The numbers of a laptop are not the numbers of a server.
