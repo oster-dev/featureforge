@@ -253,6 +253,7 @@ demo_user_unknown    backend_error  -                 -  ConnectionError
 ```
 
 In a GitHub Codespace or a VS Code dev container ([.devcontainer](.devcontainer/devcontainer.json)) Python, Docker and `make` are set up for you, and `make quickstart` runs as above.
+On a fresh Codespace without a prebuild, the workspace was ready after about 4 minutes 20 seconds and `make quickstart` took about 1 minute 15 seconds including the image pulls (one measurement, 2026-11-24).
 
 ### Full development setup
 
