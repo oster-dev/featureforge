@@ -149,3 +149,37 @@ def test_the_compose_check_can_be_skipped(monkeypatch):
     code = runner.main(["smoke", "--no-compose-check", "--dry-run", "--no-inhibit"])
 
     assert code == 0
+
+
+def test_the_warmup_option_defaults_to_the_preset_and_rejects_negative_values():
+    assert runner.parse_args(["record"]).warmup is None
+    assert runner.parse_args(["record", "--warmup", "120"]).warmup == 120
+    with pytest.raises(SystemExit):
+        runner.parse_args(["record", "--warmup", "-1"])
+
+
+def plan_lines(monkeypatch, capsys, *options):
+    patch_environment(monkeypatch, [], {"cassandra"})
+    monkeypatch.setattr(runner, "run", lambda command: pytest.fail("must not run"))
+
+    code = runner.main(["record", "--backend", "cassandra", *options, "--dry-run", "--no-inhibit"])
+
+    assert code == 0
+    lines = capsys.readouterr().out.splitlines()
+    seed = next(line for line in lines if line.startswith("seed:"))
+    measure = next(line for line in lines if line.startswith("measure:"))
+    return seed, measure
+
+
+def test_the_warmup_option_reaches_the_measuring_step_and_not_the_seed(monkeypatch, capsys):
+    seed, measure = plan_lines(monkeypatch, capsys, "--warmup", "120")
+
+    assert "--warmup 2 " in seed
+    assert "--warmup 120 " in measure
+    assert "--warmup 120" not in seed
+
+
+def test_without_the_warmup_option_the_preset_decides(monkeypatch, capsys):
+    _, measure = plan_lines(monkeypatch, capsys)
+
+    assert "--warmup 30 " in measure

@@ -236,6 +236,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("preset", choices=sorted(PRESETS))
     parser.add_argument("--backend", choices=("redis", "cassandra"), default="redis")
     parser.add_argument("--rates", help="replace the rates of the preset, for example 500,1000")
+    parser.add_argument(
+        "--warmup", type=int, help="replace the warm-up of the preset in seconds, for example 120"
+    )
     parser.add_argument("--output", type=Path)
     parser.add_argument("--force", action="store_true", help="continue despite errors")
     parser.add_argument("--dry-run", action="store_true", help="print the plan, run nothing")
@@ -245,13 +248,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--no-inhibit", action="store_true", help="do not keep the machine from sleeping"
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.warmup is not None and args.warmup < 0:
+        parser.error("--warmup must not be negative")
+    return args
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     preset = PRESETS[args.preset]
     rates = args.rates or preset.rates[args.backend]
+    warmup = preset.warmup if args.warmup is None else args.warmup
     services = None if args.no_compose_check else running_services()
     if services is None and not args.no_compose_check:
         print(
@@ -303,7 +310,7 @@ def main(argv: list[str] | None = None) -> int:
                 rates=rates,
                 repeats=preset.repeats,
                 duration=preset.duration,
-                warmup=preset.warmup,
+                warmup=warmup,
                 output=output,
                 reseed=not seed_first,
                 inhibitor=inhibitor,
