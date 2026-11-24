@@ -219,15 +219,14 @@ class FeatureServer:
             raise RequestError(f"unknown version {version} of feature {ref.name}")
         return self._specs[(ref.name, version)]
 
-    def lookup(
-        self,
-        features: Sequence[FeatureRef],
-        entities: Sequence[Mapping[str, str]],
-        *,
-        reference_time: datetime | None = None,
-    ) -> LookupResult:
-        started = time.perf_counter()
-        reference = _reference_time(reference_time)
+    @property
+    def supports_async(self) -> bool:
+        """True when the reader can fetch without a worker thread."""
+        return getattr(self._reader, "has_async", False) is True
+
+    def _plan(
+        self, features: Sequence[FeatureRef], entities: Sequence[Mapping[str, str]]
+    ) -> list[tuple[FeatureSpec, str]]:
         if not 1 <= len(features) <= MAX_FEATURES:
             raise RequestError(f"features must hold 1 to {MAX_FEATURES} items")
         if not 1 <= len(entities) <= MAX_ENTITIES:
@@ -238,17 +237,16 @@ class FeatureServer:
         if len(set(identities)) != len(identities):
             raise RequestError("a feature is requested twice")
 
-        plan = [(spec, _entity_value(entity, spec)) for entity in entities for spec in specs]
+        return [(spec, _entity_value(entity, spec)) for entity in entities for spec in specs]
 
-        error_type: str | None = None
-        reads: list[RecordRead] = []
-        try:
-            reads = self._reader.fetch(plan)
-            if len(reads) != len(plan):
-                error_type = "ProtocolError"
-        except Exception as error:
-            error_type = type(error).__name__
-
+    @staticmethod
+    def _result(
+        plan: Sequence[tuple[FeatureSpec, str]],
+        reads: list[RecordRead],
+        error_type: str | None,
+        reference: datetime,
+        started: float,
+    ) -> LookupResult:
         entries: list[FeatureEntry] = []
         failed: list[str] = []
         for index, (spec, value) in enumerate(plan):
@@ -267,3 +265,45 @@ class FeatureServer:
             entries=tuple(entries),
             elapsed_ms=(time.perf_counter() - started) * 1000,
         )
+
+    def lookup(
+        self,
+        features: Sequence[FeatureRef],
+        entities: Sequence[Mapping[str, str]],
+        *,
+        reference_time: datetime | None = None,
+    ) -> LookupResult:
+        started = time.perf_counter()
+        reference = _reference_time(reference_time)
+        plan = self._plan(features, entities)
+
+        error_type: str | None = None
+        reads: list[RecordRead] = []
+        try:
+            reads = self._reader.fetch(plan)
+            if len(reads) != len(plan):
+                error_type = "ProtocolError"
+        except Exception as error:
+            error_type = type(error).__name__
+        return self._result(plan, reads, error_type, reference, started)
+
+    async def lookup_async(
+        self,
+        features: Sequence[FeatureRef],
+        entities: Sequence[Mapping[str, str]],
+        *,
+        reference_time: datetime | None = None,
+    ) -> LookupResult:
+        started = time.perf_counter()
+        reference = _reference_time(reference_time)
+        plan = self._plan(features, entities)
+
+        error_type: str | None = None
+        reads: list[RecordRead] = []
+        try:
+            reads = await self._reader.fetch_async(plan)  # type: ignore[attr-defined]
+            if len(reads) != len(plan):
+                error_type = "ProtocolError"
+        except Exception as error:
+            error_type = type(error).__name__
+        return self._result(plan, reads, error_type, reference, started)
