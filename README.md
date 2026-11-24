@@ -63,6 +63,8 @@ flowchart LR
     subgraph Serving
         FEAST[Feast]
         REDIS[(Redis<br/>online store)]
+        CASS[(Cassandra<br/>online store)]
+        SVC[Feature serving service<br/>ServingReader · status per entry · budget]
         API[Unified online client<br/>availability · freshness]
     end
 
@@ -76,10 +78,14 @@ flowchart LR
     GEN --> PD & SP --> OFF --> GATE --> FEAST
     FEAST -->|historical retrieval| TRAIN
     FEAST -->|materialization| REDIS
-    EV --> VAL --> FJ --> MAT --> REDIS
+    EV --> VAL --> FJ --> MAT
+    MAT -->|online.store redis| REDIS
+    MAT -->|online.store cassandra| CASS
     VAL --> REJ
     FJ --> LATE
     REDIS --> API
+    REDIS -->|ServingReader| SVC
+    CASS -->|ServingReader| SVC
     MAT --> HIST
     EV --> WRITER --> FACT
     FACT -->|event_time · pinned snapshot| DS
