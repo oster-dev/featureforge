@@ -130,6 +130,7 @@ class LoadResult:
     reconnects: int = 0
     entries_total: int = 0
     entry_statuses: dict[str, int] = field(default_factory=dict)
+    entry_error_types: dict[str, int] = field(default_factory=dict)
     max_in_flight: int = 0
     duration_s: float = 0.0
 
@@ -179,6 +180,10 @@ async def run_load(
         for entry in entries:
             name = str(entry.get("status"))
             result.entry_statuses[name] = result.entry_statuses.get(name, 0) + 1
+            error_type = entry.get("error_type")
+            if error_type:
+                kind = str(error_type)
+                result.entry_error_types[kind] = result.entry_error_types.get(kind, 0) + 1
             result.entries_total += 1
 
     tasks = []
@@ -219,6 +224,10 @@ def summarize(results: list[LoadResult], target_rate: int) -> dict[str, Any]:
     for result in results:
         for name, count in result.entry_statuses.items():
             statuses[name] = statuses.get(name, 0) + count
+    error_types: dict[str, int] = {}
+    for result in results:
+        for name, count in result.entry_error_types.items():
+            error_types[name] = error_types.get(name, 0) + count
     entries_total = sum(r.entries_total for r in results)
     duration = max(r.duration_s for r in results)
     latency = percentile_dict(latencies)
@@ -235,6 +244,7 @@ def summarize(results: list[LoadResult], target_rate: int) -> dict[str, Any]:
         "entries_total": entries_total,
         "entries_not_ok": entries_total - statuses.get("ok", 0),
         "entry_statuses": statuses,
+        "entry_error_types": error_types,
         "latency_ms": latency,
         "service_ms": service,
         "max_in_flight": max(r.max_in_flight for r in results),

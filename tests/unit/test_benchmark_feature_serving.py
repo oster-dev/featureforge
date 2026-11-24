@@ -22,9 +22,12 @@ REFERENCE = "2026-01-02T12:02:30+00:00"
 
 
 async def stub_server(
-    delay: float = 0.0, status: int = 200, close_after_each: bool = False
+    delay: float = 0.0,
+    status: int = 200,
+    close_after_each: bool = False,
+    entries: list[dict[str, Any]] | None = None,
 ) -> tuple[asyncio.AbstractServer, int]:
-    body = json.dumps({"entries": [{"status": "ok"}, {"status": "missing"}]}).encode()
+    body = json.dumps({"entries": entries or [{"status": "ok"}, {"status": "missing"}]}).encode()
 
     async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
@@ -224,3 +227,52 @@ def test_the_payload_template_keeps_the_token_and_is_valid_for_its_spec():
 
 def test_the_environment_can_be_read_without_a_redis_client():
     assert bench.environment(None)["redis_server"] is None
+
+
+def test_summarize_adds_up_the_error_types_of_the_entries_that_are_not_ok() -> None:
+    first = bench.LoadResult(
+        scheduled=10,
+        latencies_ms=[1.0] * 10,
+        entries_total=100,
+        entry_statuses={"ok": 90, "backend_error": 10},
+        entry_error_types={"TimeoutError": 10},
+        duration_s=1.0,
+    )
+    second = bench.LoadResult(
+        scheduled=10,
+        latencies_ms=[1.0] * 10,
+        entries_total=100,
+        entry_statuses={"ok": 95, "backend_error": 5},
+        entry_error_types={"TimeoutError": 3, "ConnectionError": 2},
+        duration_s=1.0,
+    )
+
+    row = bench.summarize([first, second], 100)
+
+    assert row["entry_error_types"] == {"TimeoutError": 13, "ConnectionError": 2}
+
+
+def test_summarize_reports_no_error_types_when_every_entry_is_ok() -> None:
+    result = bench.LoadResult(
+        scheduled=10,
+        latencies_ms=[1.0] * 10,
+        entries_total=100,
+        entry_statuses={"ok": 100},
+        duration_s=1.0,
+    )
+
+    assert bench.summarize([result], 100)["entry_error_types"] == {}
+
+
+def test_the_error_type_of_an_entry_is_counted_next_to_its_status() -> None:
+    entries = [
+        {"status": "ok", "error_type": None},
+        {"status": "backend_error", "error_type": "TimeoutError"},
+        {"status": "backend_error", "error_type": "TimeoutError"},
+        {"status": "backend_error", "error_type": "ConnectionError"},
+    ]
+
+    result = run(rate=100, count=20, connections=2, entries=entries)
+
+    assert result.entry_statuses == {"ok": 20, "backend_error": 60}
+    assert result.entry_error_types == {"TimeoutError": 40, "ConnectionError": 20}
