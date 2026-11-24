@@ -232,7 +232,25 @@ make quickstart
 fresh value (`ok`), one whose value is older than the freshness SLO of 5 minutes (`stale`) and one
 that was never written (`missing`). `make quickstart-failure` then stops Redis and asks again:
 every entry comes back as `backend_error` and never as a zero. The first run builds the service
-image, which takes a few minutes.
+image, which took 24 s of the 46 s that the whole command took on an Apple M4 Pro with a warm pip
+cache. Expected output:
+
+```text
+wrote demo_user_fresh: written
+wrote demo_user_old: written
+
+entity               status         play_count    age_s  note
+demo_user_fresh      ok             7                60  fresh
+demo_user_old        stale          4              1200  stale
+demo_user_unknown    missing        -                 -  -
+
+Stopping Redis and asking again ...
+
+entity               status         play_count    age_s  note
+demo_user_fresh      backend_error  -                 -  ConnectionError
+demo_user_old        backend_error  -                 -  ConnectionError
+demo_user_unknown    backend_error  -                 -  ConnectionError
+```
 
 ### Full development setup
 
