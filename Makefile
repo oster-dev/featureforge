@@ -24,7 +24,8 @@ BENCH_BACKEND ?= redis
         validate validate-specs test-spec test-streaming clean \
         docker-config docker-up docker-down \
         check-freshness e2e e2e-no-skip e2e-clean e2e-clean-all \
-        materialize-incremental demo bench-compare bench-smoke bench-record
+        materialize-incremental demo bench-compare bench-smoke bench-record quickstart \
+        quickstart-failure
 
 help:
 	@echo "FeatureForge development commands:"
@@ -59,6 +60,8 @@ help:
 	@echo "  make e2e-clean                Clean run artifacts, then run e2e"
 	@echo "  make materialize-incremental  Materialize current features to now (UTC)"
 	@echo "  make demo                     Run e2e, online lookup, and ranking demo"
+	@echo "  make quickstart               Start Redis and the feature service, write three demo values, read them"
+	@echo "  make quickstart-failure       Same, then stop Redis and read again (backend_error)"
 	@echo ""
 	@echo "Storage and freshness contract:"
 	@echo "  OUTPUT_DIR                    Run artifacts such as source data and manifests"
@@ -190,3 +193,11 @@ bench-smoke:
 
 bench-record:
 	$(PYTHON) scripts/run_serving_benchmark.py record --backend $(BENCH_BACKEND)
+
+quickstart:
+	docker compose up -d --build --wait redis feature-service
+	$(PYTHON) scripts/quickstart.py
+
+quickstart-failure:
+	docker compose up -d --build --wait redis feature-service
+	$(PYTHON) scripts/quickstart.py --with-failure

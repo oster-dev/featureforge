@@ -217,6 +217,25 @@ All of the above run in CI on every pull request and push to `main`, plus a nigh
 
 Prerequisites: Python 3.11–3.13, Docker, GNU Make.
 
+### See the serving path in a few minutes
+
+```bash
+git clone https://github.com/oster-dev/featureforge.git
+cd featureforge
+python3 -m venv .venv && source .venv/bin/activate
+python -m pip install -e ".[serve]"
+make quickstart
+```
+
+`make quickstart` starts Redis and the feature serving service, writes two demo values for
+`user_play_count_1h` through the spec store and asks the service about three users: one with a
+fresh value (`ok`), one whose value is older than the freshness SLO of 5 minutes (`stale`) and one
+that was never written (`missing`). `make quickstart-failure` then stops Redis and asks again:
+every entry comes back as `backend_error` and never as a zero. The first run builds the service
+image, which takes a few minutes.
+
+### Full development setup
+
 ```bash
 git clone [https://github.com/oster-dev/featureforge.git](https://github.com/oster-dev/featureforge.git)
 cd featureforge
