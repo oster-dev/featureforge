@@ -567,3 +567,91 @@ Limits
   about 15 percent per run is still possible.
 - `entry_error_types` is empty in every run, because nothing failed. The experiment does not say
   what the bursts are.
+
+## Change 6: read Redis on the event loop (ADR-016)
+
+Commit `5793a15` against main at `514f735`. Both runs on a clean tree, same machine, same
+method, 3 runs per rate, alternately base, new, base, new. Raw data
+`docs/benchmarks/change6-base-1-514f735.json`, `change6-new-1-5793a15.json`,
+`change6-base-2-514f735.json` and `change6-new-2-5793a15.json`.
+
+Question: does reading Redis with an asynchronous client on the event loop, instead of a
+blocking client in a worker thread, raise the saturation point of one process?
+
+What changed. `RedisServingReader` has `fetch_async`, which makes the same single MGET with
+`redis.asyncio`, and `FeatureServer` has `lookup_async`. The endpoint is an `async def` and uses
+the asynchronous path when the reader offers it. Otherwise it runs `lookup` in the thread pool,
+as before, which is what the Cassandra reader still does. The pool has 40 connections, like the
+40 worker threads before, a request waits for a free connection without a limit, and the socket
+timeout is still the budget. The synchronous `fetch` is unchanged. `tests/unit/test_async_serving.py`
+compares both paths for ok, missing and stale values, a wrong number of values and a failing
+backend, through the reader, the server and the endpoint.
+
+Why this change. A profile of the running service at 3,500 reqs, taken before the change, showed
+little time in the feature code. The service used 1.05 cores. The busiest thread, probably the
+event loop, used 0.36 cores. The 45 other threads used 0.69 cores, and 27 percent of all CPU time
+was system time. A stand-alone test of only the client path (10 keys per MGET, 60,000 requests,
+concurrency 32) needed 0.153 ms of CPU per request with a worker thread and 0.070 ms with the
+asynchronous client. The scripts of these two measurements are not in the repository, and their
+numbers are not part of the series below.
+
+Rule, fixed before the run. The change is accepted if the saturation point (the highest rate
+achieved at 5,000 and 6,000 reqs) is at least 5 percent higher in both rounds, if there are no
+new entries that are not ok and no request errors, and if the CPU per request at 3,000 reqs does
+not rise.
+
+Each run had 1,000,000 users, one seed of 8 s, a warm-up of 10 s at 3,000 reqs and then 3 runs
+of 30 s per rate, with one service process. Redis was the only Compose service running, and the
+machine was kept awake with `caffeinate -dimsu`. Values are the medians of the three runs, first
+of round 1 and then of round 2.
+
+| Target reqs | Achieved base | Achieved new | CPU ms per request base | CPU ms per request new | p99 base | p99 new | Not ok |
+|---|---|---|---|---|---|---|---|
+| 3000 | 2999, 2999 | 2999, 2999 | 0.30, 0.29 | 0.24, 0.23 | 10.94, 11.36 ms | 5.25, 5.23 ms | 0, 0 |
+| 4000 | 3991, 3995 | 3998, 3998 | 0.31, 0.31 | 0.21, 0.21 | 101.68, 72.07 ms | 10.39, 10.72 ms | 0, 0 |
+| 4500 | 3987, 4009 | 4498, 4498 | 0.31, 0.31 | 0.20, 0.21 | 3.87, 3.70 s | 15.31, 15.48 ms | 0, 0 |
+| 5000 | 4016, 4023 | 4791, 4878 | 0.31, 0.31 | 0.19, 0.19 | 7.32, 7.25 s | 1.39 s, 0.84 s | 0, 0 |
+| 6000 | 4020, 4016 | 4860, 4850 | 0.31, 0.31 | 0.19, 0.19 | 14.72, 14.68 s | 7.01, 7.08 s | 0, 0 |
+
+Findings
+
+- The saturation point rose from about 4,030 reqs (highest achieved 4,033 and 4,031) to about
+  4,880 reqs (4,881 and 4,887), 21 percent more in both rounds. The rule asked for 5 percent.
+- The CPU time per request fell from 0.30 and 0.29 ms to 0.24 and 0.23 ms at 3,000 reqs (21 and
+  23 percent), from 0.31 to 0.21 ms at 4,000 reqs and from 0.31 to 0.19 ms at 5,000 and 6,000 reqs
+  (39 percent). At 3,000 reqs the service used 0.66 to 0.74 cores instead of 0.88 to 0.90.
+- The p99 at 3,000 reqs fell from 10.9 and 11.4 ms to 5.3 and 5.2 ms. With the new code the p99
+  target of at most 25 ms held in every run up to 4,500 reqs, with the base up to 3,000 reqs. The
+  rates between 3,000 and 4,000 reqs were not measured, so it is not known where the base stops
+  holding the target.
+- The service time at saturation fell from about 29 ms (p50) to about 25 to 26 ms.
+- From 4,500 reqs on, the latency counted from the time a request was due measures the backlog,
+  which depends on the offered load minus the capacity. Compare the service time and the CPU per
+  request there.
+- No run had a request error or an entry that is not ok, in all 60 runs.
+- Two runs of the base against each other (base-1 and base-2) show no change at any rate. The CPU
+  per request at 3,000 reqs differs by 0.01 ms.
+- One run of the base (round 1, 6,000 reqs, run 2) reached 3,522 reqs with a service p50 of 38.6 ms.
+  By the rule of change 3 it counts as a machine slowdown. It does not change the highest rate
+  achieved.
+
+Limits
+
+- Client and service share one machine, and Redis runs in Docker Desktop.
+- The `git commit` field inside the base reports says `5793a15`, although the base ran the code
+  of `514f735`. The benchmark script reads the git state of the working directory, and the base ran
+  from a separate worktree through `PYTHONPATH`. Before the runs, a check showed that the base
+  imported `featureforge` from the worktree and the new run from the repository. The file names
+  carry the commit of the code. The raw files are unchanged.
+- The new code was measured at the commit of the branch, not at the merge commit.
+- The service process saturates at 0.93 cores and not at one core. The cause is not known. It
+  would fit one thread at its limit, which was not tested.
+- Cassandra was not measured. Its reader still runs in the thread pool.
+- One service process only. No claim for several processes or hosts.
+
+Compare the reports
+
+```bash
+python scripts/compare_benchmarks.py docs/benchmarks/change6-base-1-514f735.json docs/benchmarks/change6-new-1-5793a15.json --label-base base-1 --label-new new-1
+python scripts/compare_benchmarks.py docs/benchmarks/change6-base-2-514f735.json docs/benchmarks/change6-new-2-5793a15.json --label-base base-2 --label-new new-2
+```

@@ -10,6 +10,9 @@ from fastapi.responses import JSONResponse, Response
 from prometheus_client import CONTENT_TYPE_LATEST
 from pydantic import BaseModel, ConfigDict, Field
 from redis import Redis
+from redis.asyncio import BlockingConnectionPool as AsyncPool
+from redis.asyncio import Redis as AsyncRedis
+from starlette.concurrency import run_in_threadpool
 
 from featureforge.feature_service import (
     FailPolicyError,
@@ -61,13 +64,17 @@ def create_app(server: FeatureServer, metrics: ServiceMetrics | None = None) -> 
         return Response(service_metrics.render(), media_type=CONTENT_TYPE_LATEST)
 
     @app.post("/v1/features/lookup")
-    def lookup(body: LookupBody) -> JSONResponse:
+    async def lookup(body: LookupBody) -> JSONResponse:
+        refs = [FeatureRef(ref.name, ref.version) for ref in body.features]
         try:
-            result = server.lookup(
-                [FeatureRef(ref.name, ref.version) for ref in body.features],
-                body.entities,
-                reference_time=body.reference_time,
-            )
+            if server.supports_async:
+                result = await server.lookup_async(
+                    refs, body.entities, reference_time=body.reference_time
+                )
+            else:
+                result = await run_in_threadpool(
+                    server.lookup, refs, body.entities, reference_time=body.reference_time
+                )
         except RequestError as error:
             service_metrics.record_rejected("request_error")
             return JSONResponse({"detail": str(error)}, status_code=422)
@@ -84,10 +91,22 @@ def create_app(server: FeatureServer, metrics: ServiceMetrics | None = None) -> 
 
 
 def build_server(specs_dir: Path, redis_url: str, budget_ms: float) -> FeatureServer:
+    from featureforge.redis_serving_reader import RedisServingReader
+
     timeout = budget_ms / 1000
     client = Redis.from_url(redis_url, socket_timeout=timeout, socket_connect_timeout=timeout)
     specs = [load_spec(path) for path in sorted(specs_dir.glob("*.yaml"))]
-    return FeatureServer.for_redis(client, specs)
+    # Same limit as the 40 worker threads of the synchronous path. A request waits for a
+    # free connection like it waited for a thread, and the socket timeout is the budget.
+    pool = AsyncPool.from_url(
+        redis_url,
+        max_connections=40,
+        timeout=None,
+        socket_timeout=timeout,
+        socket_connect_timeout=timeout,
+    )
+    reader = RedisServingReader(client, specs, async_client=AsyncRedis(connection_pool=pool))
+    return FeatureServer(reader, specs)
 
 
 def build_cassandra_server(

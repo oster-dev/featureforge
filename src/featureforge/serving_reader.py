@@ -23,3 +23,11 @@ class ServingReader(Protocol):
     def fetch(self, plan: Sequence[tuple[FeatureSpec, str]]) -> list[RecordRead]: ...
 
     def ping(self) -> bool: ...
+
+
+class AsyncServingReader(ServingReader, Protocol):
+    """A reader that can also fetch without a worker thread (ADR-016)."""
+
+    has_async: bool
+
+    async def fetch_async(self, plan: Sequence[tuple[FeatureSpec, str]]) -> list[RecordRead]: ...
