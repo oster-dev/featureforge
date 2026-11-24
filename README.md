@@ -252,6 +252,8 @@ demo_user_old        backend_error  -                 -  ConnectionError
 demo_user_unknown    backend_error  -                 -  ConnectionError
 ```
 
+In a GitHub Codespace or a VS Code dev container ([.devcontainer](.devcontainer/devcontainer.json)) Python, Docker and `make` are set up for you, and `make quickstart` runs as above.
+
 ### Full development setup
 
 ```bash

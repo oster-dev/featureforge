@@ -1,0 +1,13 @@
+{
+  "name": "featureforge",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+  "features": {
+    "ghcr.io/devcontainers/features/python:1": { "version": "3.13" },
+    "ghcr.io/devcontainers/features/docker-in-docker:1": { "moby": true }
+  },
+  "hostRequirements": { "cpus": 4, "memory": "8gb", "storage": "32gb" },
+  "postCreateCommand": "sudo apt-get update -y && sudo apt-get install -y make && python -m pip install -e '.[serve]'",
+  "forwardPorts": [8080],
+  "portsAttributes": { "8080": { "label": "Feature service" } },
+  "customizations": { "vscode": { "extensions": ["ms-python.python", "charliermarsh.ruff"] } }
+}
