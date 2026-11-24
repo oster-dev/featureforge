@@ -6,7 +6,18 @@
 
 **A production-inspired ML feature platform that keeps features correct between offline training and online reads, from batch and streaming sources.**
 
-Proven today: point-in-time training datasets in two modes ([ADR-014](docs/adr/ADR-014-training-datasets.md)), event-time semantics ([ADR-010](docs/adr/ADR-010-time-and-availability-model.md)), idempotent writes into an Iceberg event fact store ([ADR-015](docs/adr/ADR-015-iceberg-event-fact-store.md)) and online/offline parity for one entity over two runs ([test](tests/integration/test_materialize_spec_kafka_to_history.py)). Measured on one laptop: the feature serving service answers 2,000 to 3,000 requests per second from one process with a p99 below 20 ms and saturates at about 4,000 requests per second ([benchmarks](docs/benchmarks.md)). [STATUS.md](STATUS.md) lists what is delivered and every known limit.
+Proven today: point-in-time training datasets in two modes ([ADR-014](docs/adr/ADR-014-training-datasets.md)), event-time semantics ([ADR-010](docs/adr/ADR-010-time-and-availability-model.md)), idempotent writes into an Iceberg event fact store ([ADR-015](docs/adr/ADR-015-iceberg-event-fact-store.md)) and online/offline parity for one entity over two runs ([test](tests/integration/test_materialize_spec_kafka_to_history.py)). Measured on one laptop, the feature serving service reads from Redis or Cassandra behind one contract ([ADR-016](docs/adr/ADR-016-feature-serving.md)). The numbers are in the table below. [STATUS.md](STATUS.md) lists what is delivered and every known limit.
+
+| Serving backend | Highest measured rate with p99 at most 25 ms | p99 at that rate | Saturation of one process | CPU per request |
+|---|---|---|---|---|
+| Redis 7.4 | 3,000 req/s | 6.8 to 7.7 ms | about 4,000 req/s | 0.28 to 0.33 ms |
+| Cassandra 5.0, one node | 1,500 req/s | 16 to 23 ms | about 2,100 req/s | 0.46 to 0.50 ms |
+
+One laptop (Apple M4 Pro, 14 CPUs, 24 GiB, macOS), client and service on the same machine, both
+databases in Docker Desktop, 1,000,000 users with 2 features each, 5 entities per request, one
+uvicorn process, 3 runs of 30 s per rate, commit `8989796`. These are local measurements and no
+production numbers, and p99 at most 25 ms is a target, not an SLO. Raw data and limits:
+[benchmarks](docs/benchmarks.md).
 
 FeatureForge focuses on the parts that make feature platforms trustworthy:
 point-in-time correctness, event-time semantics, idempotent writes, and
@@ -14,8 +25,7 @@ offline/online consistency. Every claimed guarantee below links to the test
 that proves it.
 
 The platform is the spec-driven path: one YAML spec drives the Flink job, the
-Spark backfill for count specs, the Redis store, the publication history and the
-training datasets. The Feast-based batch path is batch path v1. It serves the
+Spark backfill for count specs, the Redis or Cassandra store, the publication history and the training datasets. The Feast-based batch path is batch path v1. It serves the
 original batch features, which are not yet defined as specs
 ([STATUS.md](STATUS.md)).
 
