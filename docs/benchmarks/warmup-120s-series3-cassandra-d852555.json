@@ -1,0 +1,160 @@
+{
+  "generated_at": "2026-11-24T09:37:35.376240+00:00",
+  "setup": {
+    "backend": "cassandra",
+    "entities": 1000000,
+    "cassandra_keyspace": "ff_loadtest",
+    "cassandra_rows_expected": 2000000,
+    "read_consistency": "LOCAL_QUORUM",
+    "entities_per_request": 5,
+    "features": [
+      "user_play_count_1h",
+      "user_skip_rate_24h"
+    ],
+    "access_pattern": "Zipf-like, exponent about 1",
+    "budget_ms": 50.0,
+    "warmup_s": 120.0,
+    "repeats": 3,
+    "service": "one uvicorn process, access log off"
+  },
+  "environment": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "cpu": "Apple M4 Pro",
+    "logical_cpus": 14,
+    "memory_bytes": 25769803776,
+    "python": "3.13.9",
+    "packages": {
+      "fastapi": "0.141.1",
+      "uvicorn": "0.53.0",
+      "starlette": "1.6.0",
+      "redis": "5.3.1",
+      "pydantic": "2.13.5",
+      "numpy": "2.5.3",
+      "psutil": "7.2.2",
+      "cassandra-driver": "3.30.1"
+    },
+    "redis_server": null,
+    "redis_aof_enabled": false,
+    "git": {
+      "commit": "d8525553affb6589db9bc1f8197b8caf391ebf1f",
+      "dirty": false
+    },
+    "cassandra_server": "5.0.9"
+  },
+  "results": [
+    {
+      "target_rps": 500,
+      "scheduled": 15000,
+      "completed": 15000,
+      "achieved_rps": 499.977811401703,
+      "errors": 0,
+      "error_rate": 0.0,
+      "entries_total": 150000,
+      "entries_not_ok": 0,
+      "entry_statuses": {
+        "ok": 150000
+      },
+      "entry_error_types": {},
+      "latency_ms": {
+        "p50": 4.6571880229748785,
+        "p90": 6.340336916036904,
+        "p95": 6.825385423144326,
+        "p99": 12.944729183800522,
+        "p99.9": 24.84436271048631,
+        "max": 27.593792066909373
+      },
+      "service_ms": {
+        "p50": 4.04441705904901,
+        "p90": 5.557075561955571,
+        "p95": 6.148397893412039,
+        "p99": 11.967439049622044,
+        "p99.9": 24.097873146645888,
+        "max": 26.68875001836568
+      },
+      "max_in_flight": 4,
+      "reconnects": 0,
+      "duration_s": 30.0,
+      "server_cpu_cores": 0.4971638345702338,
+      "client_cpu_cores": 0.10105295382028613,
+      "workers": 4,
+      "connections_per_worker": 13,
+      "repeat": 1
+    },
+    {
+      "target_rps": 500,
+      "scheduled": 15000,
+      "completed": 15000,
+      "achieved_rps": 500.00331668869876,
+      "errors": 0,
+      "error_rate": 0.0,
+      "entries_total": 150000,
+      "entries_not_ok": 0,
+      "entry_statuses": {
+        "ok": 150000
+      },
+      "entry_error_types": {},
+      "latency_ms": {
+        "p50": 5.649145517963916,
+        "p90": 7.06604520091787,
+        "p95": 7.7497540798503906,
+        "p99": 13.698779240949099,
+        "p99.9": 27.138802674832434,
+        "max": 33.509125001728535
+      },
+      "service_ms": {
+        "p50": 5.112895567435771,
+        "p90": 6.463546177837999,
+        "p95": 7.060000271303578,
+        "p99": 11.846372588770512,
+        "p99.9": 26.72259419236817,
+        "max": 32.691208994947374
+      },
+      "max_in_flight": 5,
+      "reconnects": 0,
+      "duration_s": 30.0,
+      "server_cpu_cores": 0.5150380910849893,
+      "client_cpu_cores": 0.10334766416670785,
+      "workers": 4,
+      "connections_per_worker": 13,
+      "repeat": 2
+    },
+    {
+      "target_rps": 500,
+      "scheduled": 15000,
+      "completed": 15000,
+      "achieved_rps": 499.99776459328314,
+      "errors": 0,
+      "error_rate": 0.0,
+      "entries_total": 150000,
+      "entries_not_ok": 0,
+      "entry_statuses": {
+        "ok": 150000
+      },
+      "entry_error_types": {},
+      "latency_ms": {
+        "p50": 4.471979045774788,
+        "p90": 5.9959290898405015,
+        "p95": 6.641213217517361,
+        "p99": 11.916240359423718,
+        "p99.9": 22.995036681299172,
+        "max": 27.70979201886803
+      },
+      "service_ms": {
+        "p50": 3.7100209738127887,
+        "p90": 5.208912445232272,
+        "p95": 5.7156204828061155,
+        "p99": 10.713545801118018,
+        "p99.9": 22.016767908120563,
+        "max": 27.625750051811337
+      },
+      "max_in_flight": 4,
+      "reconnects": 0,
+      "duration_s": 30.0,
+      "server_cpu_cores": 0.48851578818883107,
+      "client_cpu_cores": 0.09863237584979904,
+      "workers": 4,
+      "connections_per_worker": 13,
+      "repeat": 3
+    }
+  ]
+}

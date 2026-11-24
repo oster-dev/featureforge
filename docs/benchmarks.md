@@ -513,9 +513,57 @@ Limits:
 - Client and service share one machine. Both databases run in Docker Desktop, and Cassandra is one
   node.
 - Cassandra had its episodes at the first rate in two of three runs. The same happened in the
-  other Cassandra series of this day (30 s or less of warm-up after the seed). Whether a longer
-  warm-up avoids it was not tested.
+  other Cassandra series of this day (30 s or less of warm-up after the seed). A later test with a warm-up of 120 s found no bursts, and none with 30 s either, see the section on the warm-up below.
 - The comparison script reports a failure for Cassandra against Redis at 500 req/s because of
   these episodes. The medians above are the better summary.
 - Cassandra was measured before Redis, 17 minutes apart.
 - One service process only.
+
+## Warm-up after the seed (ADR-016)
+
+Question: do the short bursts of `backend_error` at the first rate after the seed go away when the
+warm-up is longer than 30 s?
+
+Method: commit `d852555`, clean tree, only Cassandra running (Redis, Kafka, Flink, Prometheus and
+Grafana stopped). The `record` preset of the runner with `--rates 500` and `--warmup 30` or
+`--warmup 120` (#118). Six series in alternating order (30, 120, 30, 120, 30, 120). Each series
+seeded 1,000,000 users (141 to 147 s), flushed the table, waited until no compaction was pending,
+warmed up and then ran 3 times 30 s at 500 req/s. The rule was fixed before the first run: 120 s
+counts as better only if none of its three series has entries that are not ok while at least one
+series with 30 s has some. Raw data:
+`docs/benchmarks/warmup-<seconds>-series<n>-cassandra-d852555.json`.
+
+| Warm-up | Series | Not-ok entries per run | p99 ms per run |
+|---|---|---|---|
+| 30 s | 1 | 0, 0, 0 | 10.5, 12.1, 13.5 |
+| 30 s | 2 | 0, 0, 0 | 9.2, 13.2, 13.9 |
+| 30 s | 3 | 0, 0, 0 | 13.3, 11.9, 11.4 |
+| 120 s | 1 | 0, 0, 0 | 11.9, 10.4, 13.0 |
+| 120 s | 2 | 0, 0, 0 | 11.3, 10.9, 11.2 |
+| 120 s | 3 | 0, 0, 0 | 12.9, 13.7, 11.9 |
+
+Findings
+
+- No entry was not ok in any of the 18 measured runs, with either warm-up. By the rule the
+  warm-up has no effect here, and the warm-up of the `record` preset stays at 30 s.
+- The median p99 was 12.1 ms with 30 s and 11.9 ms with 120 s. The p50 stayed
+  between 3.7 and 5.5 ms with 30 s and between 3.9 and
+  5.6 ms with 120 s.
+- The bursts did not repeat. In the baselines before, 3 of 6 runs at 500 req/s had entries that
+  were not ok (520 and 430 in two of three runs of the baseline, 10 in one of three runs of the
+  series at `5ae169a`). At that frequency, nine clean runs with 30 s in a row would happen in about
+  0.2 percent of cases. Something in the state of the machine at that time was different. The
+  warm-up was not the cause.
+- One event: the seed step of series 1 had 30 entries that were not ok (3 requests) at 100 req/s
+  with a p99 of 45 ms. It was the first measurement after a fresh start of the Cassandra container.
+  The five later seed steps had none. The report of the seed step goes to a temporary file that the
+  next series overwrites, so its `error_type` was not kept. The cause is open, and a cold node is
+  an untested guess.
+
+Limits
+
+- One machine, one node in Docker Desktop, one service process, only 500 req/s.
+- Nine runs per condition cannot exclude a rare event. With no event in 18 runs, a rate of up to
+  about 15 percent per run is still possible.
+- `entry_error_types` is empty in every run, because nothing failed. The experiment does not say
+  what the bursts are.
