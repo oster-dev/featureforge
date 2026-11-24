@@ -6,7 +6,7 @@
 
 **A production-inspired ML feature platform that keeps features correct between offline training and online reads, from batch and streaming sources.**
 
-Proven today: point-in-time training datasets in two modes ([ADR-014](docs/adr/ADR-014-training-datasets.md)), event-time semantics ([ADR-010](docs/adr/ADR-010-time-and-availability-model.md)), idempotent writes into an Iceberg event fact store ([ADR-015](docs/adr/ADR-015-iceberg-event-fact-store.md)) and online/offline parity for one entity over two runs ([test](tests/integration/test_materialize_spec_kafka_to_history.py)). Measured on one laptop, the feature serving service reads from Redis or Cassandra behind one contract ([ADR-016](docs/adr/ADR-016-feature-serving.md)). The numbers are in the table below. [STATUS.md](STATUS.md) lists what is delivered and every known limit.
+Proven today: point-in-time training datasets in two modes ([ADR-014](docs/adr/ADR-014-training-datasets.md)), event-time semantics ([ADR-010](docs/adr/ADR-010-time-and-availability-model.md)), idempotent writes into an Iceberg event fact store ([ADR-015](docs/adr/ADR-015-iceberg-event-fact-store.md)) and online/offline parity for one entity over two runs ([test](tests/integration/test_materialize_spec_kafka_to_history.py)). Measured on one laptop, the feature serving service reads from Redis or Cassandra behind one contract ([ADR-016](docs/adr/ADR-016-feature-serving.md)). The numbers are in the table below. [STATUS.md](STATUS.md) lists what is delivered and every known limit. The design and its trade-offs are in [DESIGN.md](docs/DESIGN.md).
 
 | Serving backend | Highest measured rate with p99 at most 25 ms | p99 at that rate | Saturation of one process | CPU per request |
 |---|---|---|---|---|
