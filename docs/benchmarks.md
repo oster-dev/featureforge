@@ -316,8 +316,8 @@ Limits:
 - Client and service share one machine. Cassandra is one node in Docker Desktop, so there is no
   replication and no network.
 - Cassandra's own capacity was not measured. The container stayed below one core.
-- The cause of the `backend_error` requests is not known. The benchmark counts statuses and
-  does not record the `error_type` that the service returns.
+- The cause of the `backend_error` requests is not known. This report counts the statuses and not the `error_type` that the service returns.
+  Reports of the current script count it in `entry_error_types`.
 - The container CPU samples cannot be assigned to single rates, because each sample takes
   about 12 s.
 - Earlier trial runs, taken right after seeding or with the monitoring stack running, are not
@@ -357,6 +357,10 @@ How to read it:
 - The lines above the table say up to which rate each report stays within the latency target:
   p99 at most 25 ms in every repeat, at most 0.1 percent of the entries not ok, and at least
   99 percent of the rate achieved.
+- Under each of those lines, a second line per report gives the rate up to which the target
+  holds by the median of the repeats: p99, share of entries not ok and achieved rate are each
+  taken as the median. One burst in a single repeat does not decide it. Both lines are shown,
+  because they answer different questions. The exit code depends on neither of them.
 - The exit code is 1 only when the new report has entries that are not ok, beyond that budget, at
   a rate where the base had none, or request errors where the base had none. Speed never changes
   the exit code.

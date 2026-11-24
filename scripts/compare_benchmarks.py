@@ -151,16 +151,29 @@ def rate_is_ok(target: float, rows: list[Row], slo_p99_ms: float, max_not_ok_rat
     )
 
 
+def rate_is_ok_by_median(
+    target: float, rows: list[Row], slo_p99_ms: float, max_not_ok_ratio: float
+) -> bool:
+    return (
+        statistics.median(int(row.get("errors", 0)) for row in rows) == 0
+        and statistics.median(not_ok_ratio(row) for row in rows) <= max_not_ok_ratio
+        and statistics.median(achieved(row) for row in rows) >= HELD_FRACTION * target
+        and statistics.median(p99(row) for row in rows) <= slo_p99_ms
+    )
+
+
 def capacity(
     report: Report,
     *,
     slo_p99_ms: float = SLO_P99_MS,
     max_not_ok_ratio: float = MAX_NOT_OK_RATIO,
+    by_median: bool = False,
 ) -> Capacity:
+    rule = rate_is_ok_by_median if by_median else rate_is_ok
     within: float | None = None
     first_outside: float | None = None
     for target in sorted(report.rows):
-        if rate_is_ok(target, report.rows[target], slo_p99_ms, max_not_ok_ratio):
+        if rule(target, report.rows[target], slo_p99_ms, max_not_ok_ratio):
             within = target
         else:
             first_outside = target
@@ -256,6 +269,14 @@ def describe(report: Report, slo_p99_ms: float, max_not_ok_ratio: float) -> str:
     )
 
 
+def describe_by_median(report: Report, slo_p99_ms: float, max_not_ok_ratio: float) -> str:
+    result = capacity(
+        report, slo_p99_ms=slo_p99_ms, max_not_ok_ratio=max_not_ok_ratio, by_median=True
+    )
+    within = "no rate" if result.within_slo is None else f"up to {result.within_slo:g} req/s"
+    return f"- {report.label}: by the median of the repeats, within the target {within}."
+
+
 def render(
     base: Report,
     new: Report,
@@ -282,6 +303,8 @@ def render(
         ),
         describe(base, slo_p99_ms, max_not_ok_ratio),
         describe(new, slo_p99_ms, max_not_ok_ratio),
+        describe_by_median(base, slo_p99_ms, max_not_ok_ratio),
+        describe_by_median(new, slo_p99_ms, max_not_ok_ratio),
     ]
     lines += [f"- Warning: {line}" for line in warnings(base, new)]
     header = ["Target req/s", *(name for name, *_ in COLUMNS), "Entries not ok"]

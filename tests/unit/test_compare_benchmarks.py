@@ -246,3 +246,37 @@ def test_a_change_of_seven_percent_is_noise_by_default_and_counts_with_a_lower_t
 
     assert default.verdict == "same"
     assert strict.verdict == "worse"
+
+
+def test_by_median_one_bad_repeat_does_not_decide_the_capacity(tmp_path):
+    rows = [row(1000, p99=10.0), row(1000, p99=10.0, not_ok=400), row(1000, p99=10.0)]
+    report = report_of(tmp_path, "a", rows)
+
+    assert compare.capacity(report).within_slo is None
+    assert compare.capacity(report, by_median=True).within_slo == 1000
+
+
+def test_by_median_still_fails_when_most_repeats_miss_the_target(tmp_path):
+    rows = [row(1000, p99=30.0), row(1000, p99=30.0), row(1000, p99=10.0)]
+    report = report_of(tmp_path, "a", rows)
+
+    assert compare.capacity(report, by_median=True).within_slo is None
+
+
+def test_by_median_stops_at_the_first_rate_outside_the_target(tmp_path):
+    rows = [row(500) for _ in range(3)] + [row(1000, p99=40.0) for _ in range(3)]
+    result = compare.capacity(report_of(tmp_path, "a", rows), by_median=True)
+
+    assert result.within_slo == 500
+    assert result.first_outside == 1000
+
+
+def test_the_rendered_comparison_states_the_capacity_by_the_median(tmp_path):
+    rows = [row(1000), row(1000, not_ok=400), row(1000)]
+    base = report_of(tmp_path, "base", rows)
+    new = report_of(tmp_path, "new", rows)
+
+    text = compare.render(base, new)
+
+    assert "within the target no rate" in text
+    assert "by the median of the repeats, within the target up to 1000 req/s" in text
