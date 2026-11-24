@@ -328,10 +328,13 @@ the current state.
 |---|---|
 | [STATUS.md](STATUS.md) | Delivered vs. in progress vs. planned, known limitations |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Component design and data flow |
+| [docs/DESIGN.md](docs/DESIGN.md) | Design narrative: time model, store contract, serving, known limits, comparison with Feast and Chronon |
 | [docs/PLATFORM_BLUEPRINT.md](docs/PLATFORM_BLUEPRINT.md) | Target platform design |
 | [docs/adr/](docs/adr/) | Architecture decision records (ADR-001 to ADR-016) |
 | [docs/streaming-migration.md](docs/streaming-migration.md) | Streaming provenance and verification boundaries |
 | [docs/demo.md](docs/demo.md) | Reviewer walkthrough |
+| [docs/benchmarks.md](docs/benchmarks.md) | Serving benchmarks: method, numbers and limits |
+| [docs/observability.md](docs/observability.md) | Prometheus and Grafana for the feature service |
 | [docs/runbooks/](docs/runbooks/) | Stale features, failed backfill, failed materialization |
 | [docs/aws-production-profile.md](docs/aws-production-profile.md) | Documented AWS mapping (S3, DynamoDB) |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Local setup and test execution |

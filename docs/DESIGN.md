@@ -204,7 +204,7 @@ setup).
   and 3.12, a serving integration job (Redis, Feast, history and datasets), a Cassandra job, a smoke run
   of the benchmark against Redis, and a streaming integration job (Kafka, Flink, Redis). A nightly run,
   concurrency and timeouts. Each Flink test module starts from a fresh TaskManager.
-- **Runbooks** for stale partitions, invalid windows and a missing Feast repository are in
+- **Runbooks** for stale features, a failed backfill and a failed materialization are in
   [docs/runbooks](runbooks).
 
 There are no alert rules yet, no recovery drills beyond a TaskManager crash, no soak run and no table
