@@ -807,3 +807,45 @@ Compare it with the baseline before
 ```bash
 make bench-compare BASE=docs/benchmarks/baseline-cassandra-8989796.json NEW=docs/benchmarks/baseline-cassandra-3a31f56.json
 ```
+
+## Event loop lag at saturation (ADR-016)
+
+Question: is the event loop busy enough at saturation to delay the calls that carry a socket
+timeout of 50 ms?
+
+Method: commit `5b11811` (the branch of the lag metric, before the merge), clean tree, one uvicorn
+process, 1,000,000 users, Redis only. `scripts/benchmark_feature_serving.py` with `--repeats 1
+--duration 60` and a warm-up of 10 s measured one run at 3,000 req/s and one at 5,000 req/s. A
+`curl` read `/metrics` every 5 s, and the table shows the difference of the lag histogram between
+two reads. The watching task wakes every 20 ms, so an idle loop gives about 250 wakeups per 5 s.
+Raw data `docs/benchmarks/event-loop-lag-run-redis-5b11811.json` and
+`docs/benchmarks/event-loop-lag-scrape-5b11811.txt`.
+
+| Phase (seconds since the first read) | Wakeups per 5 s | Mean lag | Wakeups late by 25 ms or more |
+|---|---|---|---|
+| Start and warm-up (5 to 15) | 245 to 251 | 0.00 to 0.55 ms | 0 |
+| 3,000 req/s (20 to 75) | 250 to 251 | 0.00 to 0.06 ms | 0 |
+| 5,000 req/s (80 to 135) | 232 to 239 | 1.01 to 1.68 ms | 0 |
+
+The run itself: 2,999 req/s achieved at 3,000 req/s (p99 4.63 ms), and 4,921 req/s at 5,000 req/s
+(p99 1.00 s because of the queue, service p50 25.5 ms, 0.92 server cores). No entry was not ok in
+either rate.
+
+Findings
+
+- At saturation the event loop woke the watching task 1.0 to 1.7 ms late on average. In none of the
+  27 windows was a wakeup late by 25 ms or more. At 3,000 req/s the lag was close to zero.
+- The run had no entries that are not ok, so the lag during a timeout burst was not measured.
+- A loop that is late by 1 to 2 ms does not explain a call that takes more than 50 ms. The result
+  does not support the idea that the timeouts at saturation come from a stalled loop. It does not
+  exclude a rare stall that this run did not have.
+- The run reached 4,921 req/s at 5,000 req/s, a little above the 4,611 to 4,871 req/s of the record
+  runs. One run cannot show the cost of the metric, and it shows no sign of one.
+
+Limits
+
+- One run of 60 s per rate. Bursts happened in 3 of 42 record runs, so one run is unlikely to
+  contain one.
+- The windows are mapped to the rates by the time since the first read. The change from 3,000 to
+  5,000 req/s lies between 75 and 80 s.
+- One machine, one process, Redis in Docker Desktop.
