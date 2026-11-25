@@ -493,7 +493,16 @@ def start_server(
 
 def git_state() -> dict[str, Any]:
     def run(*command: str) -> str:
-        return subprocess.run(command, capture_output=True, text=True, check=False).stdout.strip()
+        # The tree of this script, not the working directory: a run from a git worktree
+        # must report the commit of the code that it measures.
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=Path(__file__).resolve().parents[1],
+        )
+        return result.stdout.strip()
 
     return {
         "commit": run("git", "rev-parse", "HEAD") or None,
