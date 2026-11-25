@@ -655,3 +655,54 @@ Compare the reports
 python scripts/compare_benchmarks.py docs/benchmarks/change6-base-1-514f735.json docs/benchmarks/change6-new-1-5793a15.json --label-base base-1 --label-new new-1
 python scripts/compare_benchmarks.py docs/benchmarks/change6-base-2-514f735.json docs/benchmarks/change6-new-2-5793a15.json --label-base base-2 --label-new new-2
 ```
+
+## Baselines after change 6 (ADR-016)
+
+Question: where does Redis stand today, measured with the runner `make bench-record` after the read
+moved to the event loop (change 6)?
+
+Method: commit `94625c4`, clean tree, one uvicorn process, 1,000,000 users with 2 features each,
+5 entities per request, a warm-up of 30 s, then 3 runs of 30 s per rate. Redis 7.4 in Docker Desktop,
+seeded in 8 s, and no other Compose service was running. Raw data
+`docs/benchmarks/baseline-redis-94625c4.json`. It replaces the Redis baseline of `8989796`. The
+Cassandra baseline was not recorded again, and its numbers still say `8989796`.
+
+| Target req/s | Achieved req/s | p50 | p99 | CPU ms per request | Not ok |
+|---|---|---|---|---|---|
+| 500 | 500 | 3.59 to 4.06 ms | 8.40 to 10.80 ms | 0.64 to 0.68 | 0, 0, 0 |
+| 1000 | 1000 | 1.96 to 2.19 ms | 7.80 to 10.19 ms | 0.44 to 0.50 | 0, 0, 0 |
+| 2000 | 2000 | 0.96 to 1.17 ms | 6.86 to 23.70 ms | 0.26 to 0.27 | 0, 0, 1200 |
+| 3000 | 2999 | 0.92 to 1.18 ms | 3.54 to 7.19 ms | 0.21 to 0.23 | 0, 0, 0 |
+| 4000 | 3997 to 3998 | 1.31 to 1.63 ms | 5.11 to 7.26 ms | 0.21 to 0.22 | 0, 0, 0 |
+| 5000 | 4824 to 4843 | 464 to 567 ms | 0.99 to 1.10 s | 0.19 | 0, 0, 0 |
+| 6000 | 4845 to 4871 | 3.40 to 3.63 s | 6.88 to 7.10 s | 0.19 | 400, 0, 0 |
+
+The CPU per request is the server CPU cores divided by the achieved rate.
+
+Findings
+
+- Redis kept 4,000 req/s with a p99 of 5.1 to 7.3 ms in every run. The baseline of `8989796` held
+  3,000 req/s and had a queue at 4,000 req/s.
+- One process saturated at about 4,850 req/s (4,824 to 4,871 in the six runs at 5,000 and 6,000
+  req/s) at 0.92 cores. At that point the service time was about 26 ms p50 and 45 ms p99.
+- CPU time per request from 2,000 req/s on was 0.19 to 0.27 ms, against 0.28 to 0.33 ms before
+  change 6.
+- Judged by the median of the runs, the p99 target of 25 ms held at every measured rate up to
+  4,000 req/s. Judged by the strict rule (every run, at most 0.1 percent of the entries not ok),
+  it held up to 1,000 req/s, because the third run at 2,000 req/s had 1,200 entries that were not ok
+  (0.2 percent).
+- Bursts: 1200 entries at 2,000 req/s (run 3, error type: {"TimeoutError": 1200}); 400 entries at 6,000 req/s (run 1, error type: {"TimeoutError": 400}). Whole requests failed. `TimeoutError` is the socket timeout of the 50 ms budget, so one Redis call took longer than the budget. Why it took longer is not known.
+
+Limits
+
+- Client and service share one machine, and Redis runs in Docker Desktop.
+- The measured rates stop at 4,000 req/s below the saturation point. The p99 at 4,500 req/s was
+  measured in change 6 and is not part of this baseline.
+- The two bursts are single runs. The error type is recorded, and a cause beyond it is not known.
+- One service process only. No claim for several processes or hosts.
+
+Compare it with the baseline before change 6
+
+```bash
+make bench-compare BASE=docs/benchmarks/baseline-redis-8989796.json NEW=docs/benchmarks/baseline-redis-94625c4.json
+```
