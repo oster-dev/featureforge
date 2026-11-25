@@ -1,121 +1,330 @@
-# FeatureForge
+<a id="top"></a>
+
+<div align="center">
+
+<img src="docs/images/hero.svg" alt="FeatureForge: one YAML feature spec drives a Flink job, a guarded materializer, an online store on Redis or Cassandra and a serving API with a status for every value. Events and accepted updates are also kept in Iceberg and feed point-in-time training datasets." width="100%">
 
 [![CI](https://github.com/oster-dev/featureforge/actions/workflows/ci.yml/badge.svg)](https://github.com/oster-dev/featureforge/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/oster-dev/featureforge)](https://github.com/oster-dev/featureforge/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Python 3.11 to 3.13](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-3776AB?logo=python&logoColor=white)](pyproject.toml)
+[![Ruff](https://img.shields.io/badge/lint-ruff-D7FF64?logo=ruff&logoColor=black)](pyproject.toml)
+[![mypy](https://img.shields.io/badge/types-mypy-2A6DB2)](pyproject.toml)
+
+![Apache Kafka 3.9](https://img.shields.io/badge/Apache%20Kafka-3.9-231F20?logo=apachekafka&logoColor=white)
+![Apache Flink 1.20](https://img.shields.io/badge/Apache%20Flink-1.20-E6526F?logo=apacheflink&logoColor=white)
+![Apache Spark](https://img.shields.io/badge/Apache%20Spark-PySpark-E25A1C?logo=apachespark&logoColor=white)
+![Apache Iceberg](https://img.shields.io/badge/Apache%20Iceberg-tables-4A9CD6)
+![Redis 7.4](https://img.shields.io/badge/Redis-7.4-FF4438?logo=redis&logoColor=white)
+![Apache Cassandra 5.0](https://img.shields.io/badge/Apache%20Cassandra-5.0-1287B1?logo=apachecassandra&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-service-009688?logo=fastapi&logoColor=white)
+![Prometheus and Grafana](https://img.shields.io/badge/Prometheus%20%2B%20Grafana-metrics-E6522C?logo=prometheus&logoColor=white)
+
+**[See it run](#see-it-run)** · **[Numbers](#measured-numbers)** · **[Architecture](#architecture)** · **[Guarantees](#guarantees-and-the-evidence-behind-them)** · **[Status](STATUS.md)** · **[Design](docs/DESIGN.md)** · **[Tour notebook](notebooks/featureforge-tour.ipynb)**
+
+</div>
+
+---
 
 **A production-inspired ML feature platform that keeps features correct between offline training and online reads, from batch and streaming sources.**
 
-Proven today: point-in-time training datasets in two modes ([ADR-014](docs/adr/ADR-014-training-datasets.md)), event-time semantics ([ADR-010](docs/adr/ADR-010-time-and-availability-model.md)), idempotent writes into an Iceberg event fact store ([ADR-015](docs/adr/ADR-015-iceberg-event-fact-store.md)) and online/offline parity for one entity over two runs ([test](tests/integration/test_materialize_spec_kafka_to_history.py)). Measured on one laptop, the feature serving service reads from Redis or Cassandra behind one contract ([ADR-016](docs/adr/ADR-016-feature-serving.md)). The numbers are in the table below. [STATUS.md](STATUS.md) lists what is delivered and every known limit. The design and its trade-offs are in [DESIGN.md](docs/DESIGN.md).
+FeatureForge focuses on the parts that make feature platforms trustworthy:
+point-in-time correctness, event-time semantics, idempotent writes, and
+offline/online consistency. Every claimed guarantee below links to the test
+that proves it, and [STATUS.md](STATUS.md) lists what is delivered and every known limit.
+
+> [!IMPORTANT]
+> **Scope, stated honestly.** FeatureForge is a local reference implementation.
+> It runs on Docker Compose, uses synthetic data, and does not claim production
+> scale. Its value is in the explicit contracts and the evidence behind them.
+
+<table>
+<tr>
+<td width="33%" valign="top">
+
+**One spec, every engine**
+
+A feature is one YAML file. It drives the Flink job, the Spark backfill for count specs, the Redis or Cassandra store, the publication history and the training datasets. An exact reference is the oracle that each of them is compared with.
+
+[ADR-008](docs/adr/ADR-008-feature-spec-design.md) · [ADR-009](docs/adr/ADR-009-spec-driven-online-stores.md)
+
+</td>
+<td width="33%" valign="top">
+
+**Two time modes, never mixed**
+
+`event_time` reconstructs a value from the events. `published_as_of` returns what serving held at that moment, from recorded publication evidence. A dataset names its mode, and one never stands in for the other.
+
+[ADR-010](docs/adr/ADR-010-time-and-availability-model.md) · [ADR-014](docs/adr/ADR-014-training-datasets.md)
+
+</td>
+<td width="33%" valign="top">
+
+**A status, never a silent zero**
+
+The serving service answers every entity and feature with `ok`, `missing`, `stale` or `backend_error`. It reads Redis or Cassandra behind one contract, and its latency is measured, not assumed.
+
+[ADR-013](docs/adr/ADR-013-online-store-protocol.md) · [ADR-016](docs/adr/ADR-016-feature-serving.md)
+
+</td>
+</tr>
+</table>
+
+### Proven today
+
+- **Point-in-time training datasets** in two modes ([ADR-014](docs/adr/ADR-014-training-datasets.md)).
+- **Event-time semantics** with late corrections, replay and deduplication ([ADR-010](docs/adr/ADR-010-time-and-availability-model.md)).
+- **Idempotent writes** into an Iceberg event fact store ([ADR-015](docs/adr/ADR-015-iceberg-event-fact-store.md)).
+- **Online/offline parity** for one entity over two runs ([test](tests/integration/test_materialize_spec_kafka_to_history.py)).
+- **Feature serving** from Redis or Cassandra behind one contract, measured on one laptop ([ADR-016](docs/adr/ADR-016-feature-serving.md), [benchmarks](docs/benchmarks.md)).
+
+The platform is the spec-driven path. The Feast-based batch path is batch path v1. It serves the
+original batch features, which are not yet defined as specs ([STATUS.md](STATUS.md)). The design and its
+trade-offs are in [DESIGN.md](docs/DESIGN.md).
+
+---
+
+## See it run
+
+<div align="center">
+<img src="docs/images/quickstart.svg" alt="Animated terminal: the quickstart writes two demo values, the feature service answers ok, stale and missing, and after Redis is stopped every entry is backend_error and never a zero." width="820">
+</div>
+
+Prerequisites: Python 3.11–3.13, Docker, GNU Make.
+
+```bash
+git clone https://github.com/oster-dev/featureforge.git
+cd featureforge
+python3 -m venv .venv && source .venv/bin/activate
+python -m pip install -e ".[serve]"
+make quickstart
+```
+
+`make quickstart` starts Redis and the feature serving service, writes two demo values for
+`user_play_count_1h` through the spec store and asks the service about three users: one with a
+fresh value (`ok`), one whose value is older than the freshness SLO of 5 minutes (`stale`) and one
+that was never written (`missing`). `make quickstart-failure` then stops Redis and asks again:
+every entry comes back as `backend_error` and never as a zero. The first run builds the service
+image, which took 24 s of the 46 s that the whole command took on an Apple M4 Pro with a warm pip
+cache.
+
+<details>
+<summary><b>Expected output</b></summary>
+
+```text
+wrote demo_user_fresh: written
+wrote demo_user_old: written
+
+entity               status         play_count    age_s  note
+demo_user_fresh      ok             7                60  fresh
+demo_user_old        stale          4              1200  stale
+demo_user_unknown    missing        -                 -  -
+
+Stopping Redis and asking again ...
+
+entity               status         play_count    age_s  note
+demo_user_fresh      backend_error  -                 -  ConnectionError
+demo_user_old        backend_error  -                 -  ConnectionError
+demo_user_unknown    backend_error  -                 -  ConnectionError
+```
+
+</details>
+
+<details>
+<summary><b>Ask the service yourself</b></summary>
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/v1/features/lookup \
+  -H 'Content-Type: application/json' \
+  -d '{"features": [{"name": "user_play_count_1h"}], "entities": [{"user_id": "demo_user_fresh"}]}'
+```
+
+The response holds one entry per entity and feature. Shortened, and the times depend on the run:
+
+```json
+{
+  "atomic": false,
+  "entries": [
+    {
+      "feature": "user_play_count_1h",
+      "version": 1,
+      "entity": {"user_id": "demo_user_fresh"},
+      "status": "ok",
+      "values": {"play_count": 7},
+      "age_seconds": 61.2,
+      "freshness": "fresh",
+      "defaulted": false,
+      "error_type": null
+    }
+  ]
+}
+```
+
+Other endpoints: `GET /healthz`, `GET /readyz` and `GET /metrics`.
+
+</details>
+
+**No local setup:**
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/oster-dev/featureforge)
+
+In a GitHub Codespace or a VS Code dev container ([.devcontainer](.devcontainer/devcontainer.json)) Python, Docker and `make` are set up for you, and `make quickstart` runs as above.
+On a fresh Codespace without a prebuild, the workspace was ready after about 4 minutes 20 seconds and `make quickstart` took about 1 minute 15 seconds including the image pulls (one measurement, 2026-11-24).
+
+> [!TIP]
+> Prefer reading to running? The [tour notebook](notebooks/featureforge-tour.ipynb) goes from a spec to a
+> measured service and renders on GitHub. It runs without Docker.
+
+---
+
+## Measured numbers
+
+<div align="center">
+<img src="docs/images/serving-numbers.svg" alt="Measured on one laptop with one uvicorn process: Redis 7.4 holds 4,000 requests per second with a p99 of 5.1 to 7.3 ms and saturates at 4,600 to 4,900. Cassandra 5.0 on one node holds 1,500 requests per second with a p99 of 14.2 to 14.8 ms and saturates at about 2,100." width="820">
+</div>
 
 | Serving backend | Highest measured rate with p99 at most 25 ms | p99 at that rate | Saturation of one process | CPU per request |
 |---|---|---|---|---|
 | Redis 7.4 | 4,000 req/s | 5.1 to 7.3 ms | 4,600 to 4,900 req/s | 0.19 to 0.29 ms |
 | Cassandra 5.0, one node | 1,500 req/s | 14.2 to 14.8 ms | about 2,100 req/s | 0.46 to 0.51 ms |
 
-One laptop (Apple M4 Pro, 14 CPUs, 24 GiB, macOS), client and service on the same machine, both
-databases in Docker Desktop, 1,000,000 users with 2 features each, 5 entities per request, one
-uvicorn process, 3 runs of 30 s per rate, commits `94625c4` and `dca0138` (two runs) for Redis and `3a31f56` for
-Cassandra. These are local measurements and no
-production numbers, and p99 at most 25 ms is a target, not an SLO. Raw data and limits:
-[benchmarks](docs/benchmarks.md).
+> [!NOTE]
+> **How this was measured.** One laptop (Apple M4 Pro, 14 CPUs, 24 GiB, macOS), client and service on the
+> same machine, both databases in Docker Desktop, 1,000,000 users with 2 features each, 5 entities per
+> request, one uvicorn process, 3 runs of 30 s per rate, commits `94625c4` and `dca0138` (two runs) for
+> Redis and `3a31f56` for Cassandra. These are local measurements and no production numbers, and p99 at
+> most 25 ms is a target, not an SLO. Raw data and limits: [benchmarks](docs/benchmarks.md).
 
-FeatureForge focuses on the parts that make feature platforms trustworthy:
-point-in-time correctness, event-time semantics, idempotent writes, and
-offline/online consistency. Every claimed guarantee below links to the test
-that proves it.
-
-The platform is the spec-driven path: one YAML spec drives the Flink job, the
-Spark backfill for count specs, the Redis or Cassandra store, the publication history and the training datasets. The Feast-based batch path is batch path v1. It serves the
-original batch features, which are not yet defined as specs
-([STATUS.md](STATUS.md)).
-
-> **Scope, stated honestly:** FeatureForge is a local reference implementation.
-> It runs on Docker Compose, uses synthetic data, and does not claim production
-> scale. Its value is in the explicit contracts and the evidence behind them.
+Reading Redis on the event loop instead of a worker thread raised the saturation of one process by
+21 percent in an A/B of two rounds ([Change 6](docs/benchmarks.md)). A compare script marks a change
+only when it is at least 10 percent and the ranges of the repeats do not overlap.
 
 ---
 
 ## Architecture
 
 ```mermaid
-flowchart LR
-    subgraph Sources
-        GEN[Deterministic<br/>synthetic generator]
-        EV[(Kafka<br/>interaction-events.v1)]
-        JSONL[(Events JSONL<br/>file)]
+flowchart TB
+    GEN[Deterministic<br/>synthetic generator]
+    EV[(Kafka<br/>interaction-events.v1)]
+
+    subgraph Stream["Streaming path · spec-driven"]
+        direction LR
+        VAL[Flink validation<br/>and routing] --> FJ[Flink feature job<br/>event time · dedupe · windows] --> MAT[Guarded<br/>materializer]
+        VAL -.-> REJ[(Rejected topic)]
+        FJ -.-> LATE[(Late topic)]
     end
 
     subgraph Batch["Batch path v1"]
-        PD[Pandas reference]
-        SP[PySpark engine]
-        OFF[(Canonical offline store<br/>Parquet, partitioned)]
-        GATE{Correctness &<br/>freshness gates}
+        direction LR
+        PD[Pandas reference<br/>PySpark engine] --> OFF[(Offline store<br/>partitioned Parquet)] --> GATE{Correctness and<br/>freshness gates} --> FEAST[Feast]
     end
 
-    subgraph Stream["Streaming path"]
-        VAL[Flink validation<br/>& routing]
-        REJ[(Rejected topic)]
-        FJ[Flink feature job<br/>spec-driven · event time · dedupe · windows]
-        LATE[(Late topic)]
-        MAT[Guarded<br/>materializers]
+    subgraph Online["Online stores and serving"]
+        direction LR
+        REDIS[(Redis)]
+        CASS[(Cassandra)]
+        SVC[Feature serving service<br/>status per entry · budget · metrics]
+        API[Unified online client<br/>batch path v1]
+        REDIS --> SVC
+        CASS --> SVC
+        REDIS --> API
     end
 
-    subgraph Serving
-        FEAST[Feast]
-        REDIS[(Redis<br/>online store)]
-        CASS[(Cassandra<br/>online store)]
-        SVC[Feature serving service<br/>ServingReader · status per entry · budget]
-        API[Unified online client<br/>availability · freshness]
+    subgraph Train["History and training data"]
+        direction LR
+        WRITER[Event writer<br/>append, then commit offset] --> FACT[(Event fact table<br/>Iceberg · once per event_id)]
+        HIST[(Publication history<br/>Iceberg · published_at)]
+        DS[Spark dataset builder<br/>event_time · published_as_of]
+        DSOUT[(Training dataset<br/>Parquet and manifest)]
+        FACT --> DS
+        HIST --> DS
+        DS --> DSOUT
     end
 
-    TRAIN[Training pipeline<br/>point-in-time retrieval]
-    HIST[(History table<br/>Iceberg, publication evidence)]
-    WRITER[Event writer<br/>validate · append · then commit offset]
-    FACT[(Event fact table<br/>Iceberg, idempotent by event_id)]
-    DS[Spark dataset builder<br/>event_time · published_as_of]
-    DSOUT[(Training dataset<br/>Parquet + manifest)]
-
-    GEN --> PD & SP --> OFF --> GATE --> FEAST
-    FEAST -->|historical retrieval| TRAIN
+    GEN --> PD
+    EV --> VAL
+    EV --> WRITER
+    MAT -->|online.store| REDIS
+    MAT -->|online.store| CASS
+    MAT -->|evidence append| HIST
     FEAST -->|materialization| REDIS
-    EV --> VAL --> FJ --> MAT
-    MAT -->|online.store redis| REDIS
-    MAT -->|online.store cassandra| CASS
-    VAL --> REJ
-    FJ --> LATE
-    REDIS --> API
-    REDIS -->|ServingReader| SVC
-    CASS -->|ServingReader| SVC
-    MAT --> HIST
-    EV --> WRITER --> FACT
-    FACT -->|event_time · pinned snapshot| DS
-    JSONL -->|event_time · JSONL input| DS
-    HIST -->|published_as_of · pinned snapshot| DS
-    DS --> DSOUT
+    FEAST -->|historical retrieval| TP[Training pipeline<br/>point-in-time retrieval]
 ```
 
 | Layer | Technology |
 |---|---|
 | Batch computation | Pandas (reference), PySpark (parity-tested) |
 | Stream processing | Apache Kafka 3.9, Apache Flink 1.20 (PyFlink) |
-| Offline store | Partitioned Parquet (local); S3 profile documented |
-| Publication history and training datasets | Apache Iceberg (PyIceberg writes, Spark reads) with a SQLite or PostgreSQL catalog; Spark training datasets with a manifest |
-| Batch path v1: feature definitions and retrieval | Feast |
 | Declarative feature specs | YAML, validated by a Pydantic model |
-| Online store | Redis 7.4 (local); DynamoDB profile documented |
+| Online store | Redis 7.4 and Cassandra 5.0 behind one `OnlineStore` protocol (local); DynamoDB profile documented |
+| Feature serving | FastAPI on uvicorn, a `ServingReader` per backend, `redis.asyncio` on the event loop |
+| Publication history and training datasets | Apache Iceberg (PyIceberg writes, Spark reads) with a SQLite or PostgreSQL catalog; Spark training datasets with a manifest |
+| Event fact store | Apache Iceberg table `facts.interaction_events`, idempotent by `event_id` |
+| Offline store | Partitioned Parquet (local); S3 profile documented |
+| Batch path v1: feature definitions and retrieval | Feast |
+| Observability | Prometheus v3.16.0 and Grafana 13.3.1, for the serving path |
 | Contracts | Pydantic |
-| Quality | pytest, Ruff, mypy, GitHub Actions (baseline, Python 3.11/3.12, serving integration, Flink integration) |
+| Quality | pytest, Ruff, mypy, GitHub Actions with six jobs |
 
 Full design: [ARCHITECTURE.md](ARCHITECTURE.md) ·
+[Design narrative](docs/DESIGN.md) ·
 [Platform Blueprint](docs/PLATFORM_BLUEPRINT.md) ·
 [ADRs](docs/adr/)
+
+### A feature is one file
+
+This is the complete definition of `user_play_count_1h`
+([`feature_repo/specs/user_play_count_1h.yaml`](feature_repo/specs/user_play_count_1h.yaml)).
+No job, store or materializer code belongs to it:
+
+```yaml
+name: user_play_count_1h
+version: 1
+owner: personalization-team
+description: Number of plays in the last hour
+entity: user_id
+source: interaction-events.validated.v1
+aggregations:
+  - {name: play_count, op: count, filter: "event_type == 'play'"}
+window: {size: 1h, slide: 1m, boundary: right_closed}
+lateness: {watermark_delay: 10m, allowed: 30m}
+dedupe: {key: event_id, ttl: 24h}
+online: {store: redis, ttl: 2h, update_policy: append_only}
+offline: {store: iceberg, table: features.user_play_count_1h}
+freshness_slo: 5m
+```
+
+Try it on an event file without Docker:
+
+```bash
+python -m featureforge.cli test-spec feature_repo/specs/user_play_count_1h.yaml \
+  --events fixtures/streaming/user_play_count_1h_v1.jsonl \
+  --entity user_id=user_000001 --at 2026-01-01T11:30:00+00:00 \
+  --expect play_count=3
+```
+
+`offline.store` is declarative only today: no Iceberg offline feature store exists yet
+([STATUS.md](STATUS.md)).
 
 ---
 
 ## Guarantees and the evidence behind them
 
+Every row links to the test that proves it. Open a group to see its rows.
+
+| Area | Guarantees | In short |
+|---|---|---|
+| [Offline and training data](#offline-and-training-data) | 6 | No label leakage, Spark and Pandas parity, idempotent backfills, gates before the online store |
+| [Streaming](#streaming) | 11 | Event-time windows, late corrections, replay, identity conflicts, savepoint and crash recovery |
+| [Declarative feature specs](#declarative-feature-specs) | 9 | Validation before execution, one exact reference, a YAML-only feature from events to Redis |
+| [Training datasets and history](#training-datasets-and-history) | 15 | Two explicit modes, the leakage rule, pinned snapshots, the event fact store |
+| [Online stores and feature serving](#online-stores-and-feature-serving) | 9 | One store contract for Redis and Cassandra, a status per entry, fault drills |
+| [Online access](#online-access) | 1 | Batch and streaming features through one client |
+
 ### Offline and training data
+
+<details>
+<summary>6 guarantees</summary>
 
 | Guarantee | Evidence |
 |---|---|
@@ -126,7 +335,12 @@ Full design: [ARCHITECTURE.md](ARCHITECTURE.md) ·
 | Stale features are detected against an explicit freshness SLO | [`test_stale_features.py`](tests/failure_simulations/test_stale_features.py) |
 | Online values match the latest offline snapshot | [`test_online_serving.py`](tests/integration/test_online_serving.py) |
 
+</details>
+
 ### Streaming
+
+<details>
+<summary>11 guarantees</summary>
 
 | Guarantee | Evidence |
 |---|---|
@@ -142,10 +356,15 @@ Full design: [ARCHITECTURE.md](ARCHITECTURE.md) ·
 | Concurrent writers are safe (Redis `WATCH`/`MULTI` with bounded retries) | [`test_streaming_redis_online_store_concurrency.py`](tests/integration/test_streaming_redis_online_store_concurrency.py) |
 | Full Kafka → Flink → Kafka → Redis path produces the reference result | [`test_user_play_count_kafka_to_redis.py`](tests/integration/test_user_play_count_kafka_to_redis.py), [`test_skip_rate_flink_to_redis.py`](tests/integration/test_skip_rate_flink_to_redis.py) |
 
+</details>
+
 ### Declarative feature specs
 
 A feature can be defined as a YAML spec instead of new platform code. The spec
 language is bounded on purpose, see [ADR-008](docs/adr/ADR-008-feature-spec-design.md).
+
+<details>
+<summary>9 guarantees</summary>
 
 | Guarantee | Evidence |
 |---|---|
@@ -159,6 +378,8 @@ language is bounded on purpose, see [ADR-008](docs/adr/ADR-008-feature-spec-desi
 | `validate-spec` and `test-spec` check and try a spec without Docker, with documented exit codes | [`test_cli_validate_spec.py`](tests/unit/test_cli_validate_spec.py), [`test_cli_test_spec.py`](tests/unit/test_cli_test_spec.py) |
 | `backfill-spec` computes a spec for many entities and times with Spark, matches the spec reference, writes UTC timestamps and never overwrites an output | [`test_cli_backfill_spec.py`](tests/unit/test_cli_backfill_spec.py), [`test_spec_spark_backfill.py`](tests/unit/test_spec_spark_backfill.py) |
 
+</details>
+
 The generic job is the only implementation of both streaming features. It is
 verified on the golden fixtures, late corrections, replay, the Redis path, a
 savepoint stop and resume, and recovery from a TaskManager crash. The Redis
@@ -167,6 +388,10 @@ stores and materializers of the two original features are thin wrappers over the
 
 ### Training datasets and history
 
+<div align="center">
+<img src="docs/images/time-model.svg" alt="The feature window covers events after t minus size up to and including t. The label window covers events strictly after t up to and including t plus horizon. An event at t is a feature and never the label." width="820">
+</div>
+
 A training dataset joins features and one label per observation, in one of two
 explicit modes that never replace each other. See
 [ADR-010](docs/adr/ADR-010-time-and-availability-model.md),
@@ -174,6 +399,8 @@ explicit modes that never replace each other. See
 [ADR-012](docs/adr/ADR-012-label-specs.md) and
 [ADR-014](docs/adr/ADR-014-training-datasets.md).
 
+<details>
+<summary>15 guarantees</summary>
 
 | Guarantee | Evidence |
 |---|---|
@@ -193,73 +420,68 @@ explicit modes that never replace each other. See
 | The event writer appends a validated event once per `event_id`, commits the offset only after the append, counts rejections without storing them and stops on an identity conflict | [`test_event_log_append.py`](tests/unit/test_event_log_append.py), [`test_event_writer_loop.py`](tests/unit/test_event_writer_loop.py), [`test_event_writer_kafka.py`](tests/integration/test_event_writer_kafka.py) |
 | `build-training-dataset --events-root` reads the event table at a pinned snapshot and records it, rebuilds a dataset at the recorded snapshot after the table grew, a dataset from the table equals the dataset from the same JSONL, and a missing or empty table fails and creates nothing | [`test_cli_training_dataset.py`](tests/integration/test_cli_training_dataset.py), [`test_events_spark_read.py`](tests/integration/test_events_spark_read.py) |
 
+</details>
 
 Not yet proven: the parity for several entities and at TTL expiry. Not yet built: a mode that uses only events received by `t`. See [STATUS.md](STATUS.md).
 
+### Online stores and feature serving
+
+Redis and Cassandra sit behind one `OnlineStore` protocol
+([ADR-013](docs/adr/ADR-013-online-store-protocol.md)), and the feature serving service reads either one
+through a `ServingReader` ([ADR-016](docs/adr/ADR-016-feature-serving.md)).
+
+<details>
+<summary>9 guarantees</summary>
+
+| Guarantee | Evidence |
+|---|---|
+| Redis and Cassandra pass one contract suite: round trip, window and correction policy, incomparable counts, replay, concurrent writers, and an expiry that only a written update restarts | [`test_online_store_contract.py`](tests/integration/test_online_store_contract.py) |
+| The materializer writes to the backend that the spec names, shown from Kafka to Cassandra without feature code | [`test_materialize_spec_kafka_to_cassandra.py`](tests/integration/test_materialize_spec_kafka_to_cassandra.py) |
+| A request gets one entry per entity and feature with a status: `ok`, `missing`, `stale` or `backend_error`. An unknown entity is missing and never a silent null, and a corrupt record fails only its own entry | [`test_feature_service.py`](tests/unit/test_feature_service.py), [`test_feature_service_redis.py`](tests/integration/test_feature_service_redis.py) |
+| A request makes one `MGET` against Redis for all of its keys | [`test_feature_service_redis.py`](tests/integration/test_feature_service_redis.py) |
+| A stopped and a slow Redis give `backend_error` within the budget, and the service recovers | [`test_feature_service_faults.py`](tests/integration/test_feature_service_faults.py) |
+| The fallback policy is explicit: `omit` is the default, `default_value` fills values but keeps the status, and `fail` answers 503 with the feature name | [`test_feature_service.py`](tests/unit/test_feature_service.py) |
+| The read on the event loop returns the same entries as the read in a worker thread, also when the backend fails | [`test_async_serving.py`](tests/unit/test_async_serving.py) |
+| The service reads Cassandra through its own reader, and a spec runs from events to the service on Cassandra with only `online.store` changed | [`test_serving_reader_cassandra.py`](tests/integration/test_serving_reader_cassandra.py), [`test_cassandra_end_to_end.py`](tests/integration/test_cassandra_end_to_end.py) |
+| The service counts entries by status and requests by outcome, and a blocked event loop shows up as lag | [`test_service_metrics.py`](tests/unit/test_service_metrics.py), [`test_event_loop_lag.py`](tests/unit/test_event_loop_lag.py) |
+
+</details>
+
+Not yet built: an asynchronous Cassandra reader, a deadline over the whole request and more than one
+service process. The cause of rare timeout bursts at saturation is open. See [STATUS.md](STATUS.md).
 
 ### Online access
+
+<details>
+<summary>1 guarantee</summary>
 
 | Guarantee | Evidence |
 |---|---|
 | Batch and streaming features are read through one client with explicit availability and freshness, and missing values are never silently turned into `0` | [`test_unified_online.py`](tests/integration/test_unified_online.py), [`test_online.py`](tests/unit/test_online.py) |
 
+</details>
+
+### Continuous integration
+
 All of the above run in CI on every pull request and push to `main`, plus a nightly run:
 
-| CI layer | What it proves |
+| CI job | What it proves |
 |---|---|
 | Baseline lint and test | Fresh install, Ruff, mypy, all infrastructure-free tests |
 | Python 3.11 and 3.12 compatibility | The infrastructure-free tests on the oldest and a middle supported version |
-| Redis and Feast serving integration | Generation → backfill → Feast apply → materialization → online parity; the history table, the published-as-of join and the training datasets |
-| Flink Kafka-to-Redis integration | Full Docker Compose streaming stack, joined end-to-end tests |
+| Redis and Feast serving integration | Generation → backfill → Feast apply → materialization → online parity; the history table, the published-as-of join and the training datasets; the feature service on a real Redis, with a stopped and a slow Redis behind Toxiproxy; the store contract suite |
+| Cassandra schema, store and contract suite | A real Cassandra 5.0 node: the table schema, conditional writes, the store contract suite and the serving reader |
+| Flink Kafka-to-Redis integration | Full Docker Compose streaming stack, 20 test modules, each on a fresh TaskManager, including the paths to Cassandra |
+| Benchmark smoke (Redis) | The serving benchmark runs end to end against Redis with a short preset |
+
+The serving and the Cassandra job fail on a skipped test, so skipped never looks like proven.
 
 ---
 
-## Quick start
-
-Prerequisites: Python 3.11–3.13, Docker, GNU Make.
-
-### See the serving path in a few minutes
+## Full development setup
 
 ```bash
 git clone https://github.com/oster-dev/featureforge.git
-cd featureforge
-python3 -m venv .venv && source .venv/bin/activate
-python -m pip install -e ".[serve]"
-make quickstart
-```
-
-`make quickstart` starts Redis and the feature serving service, writes two demo values for
-`user_play_count_1h` through the spec store and asks the service about three users: one with a
-fresh value (`ok`), one whose value is older than the freshness SLO of 5 minutes (`stale`) and one
-that was never written (`missing`). `make quickstart-failure` then stops Redis and asks again:
-every entry comes back as `backend_error` and never as a zero. The first run builds the service
-image, which took 24 s of the 46 s that the whole command took on an Apple M4 Pro with a warm pip
-cache. Expected output:
-
-```text
-wrote demo_user_fresh: written
-wrote demo_user_old: written
-
-entity               status         play_count    age_s  note
-demo_user_fresh      ok             7                60  fresh
-demo_user_old        stale          4              1200  stale
-demo_user_unknown    missing        -                 -  -
-
-Stopping Redis and asking again ...
-
-entity               status         play_count    age_s  note
-demo_user_fresh      backend_error  -                 -  ConnectionError
-demo_user_old        backend_error  -                 -  ConnectionError
-demo_user_unknown    backend_error  -                 -  ConnectionError
-```
-
-In a GitHub Codespace or a VS Code dev container ([.devcontainer](.devcontainer/devcontainer.json)) Python, Docker and `make` are set up for you, and `make quickstart` runs as above.
-On a fresh Codespace without a prebuild, the workspace was ready after about 4 minutes 20 seconds and `make quickstart` took about 1 minute 15 seconds including the image pulls (one measurement, 2026-11-24).
-
-### Full development setup
-
-```bash
-git clone [https://github.com/oster-dev/featureforge.git](https://github.com/oster-dev/featureforge.git)
 cd featureforge
 python3 -m venv .venv && source .venv/bin/activate
 python -m pip install -e ".[dev,feature-store,spark,streaming]"
@@ -275,12 +497,6 @@ pytest -v -m integration tests/integration/test_skip_rate_flink_to_redis.py
 
 # Feature specs: validate the shipped specs
 python -m featureforge.cli validate-spec
-
-# Try a spec on an event file, no Docker needed
-python -m featureforge.cli test-spec feature_repo/specs/user_play_count_1h.yaml \
-  --events fixtures/streaming/user_play_count_1h_v1.jsonl \
-  --entity user_id=user_000001 --at 2026-01-01T11:30:00+00:00 \
-  --expect play_count=3
 ```
 
 Read a feature through the unified online client:
@@ -293,7 +509,8 @@ python -m featureforge.online \
   --stream-max-age-seconds 7200
 ```
 
-Expected output, troubleshooting, and cleanup: [Demo Guide](docs/demo.md).
+Expected output, troubleshooting, and cleanup: [Demo Guide](docs/demo.md). Setup for contributors:
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
@@ -317,14 +534,24 @@ All three use the spec-driven store and materializer. The first two keep their t
 
 The feature store foundation is released as
 [v0.1.0](https://github.com/oster-dev/featureforge/releases/tag/v0.1.0).
-Spec-driven streaming features, label specs and training datasets in two modes
-(event time and published-as-of) are delivered. Work in progress, planned work
-and known limitations are in **[STATUS.md](STATUS.md)**, the single source for
-the current state.
+Delivered since then: spec-driven streaming features, label specs, training datasets in two modes
+(event time and published-as-of), an Iceberg event fact store, Redis and Cassandra behind one store
+contract, and a feature serving service with measured latency, metrics, a quickstart and a dev
+container. Work in progress, planned work and known limitations are in **[STATUS.md](STATUS.md)**,
+the single source for the current state.
 
 ---
 
 ## Documentation
+
+Pick a path by the time you have:
+
+| You have | Start with |
+|---|---|
+| One minute | `make quickstart`, see [See it run](#see-it-run) |
+| Five minutes | [notebooks/featureforge-tour.ipynb](notebooks/featureforge-tour.ipynb), a tour from a spec to a measured service that runs without Docker |
+| Fifteen minutes | [docs/DESIGN.md](docs/DESIGN.md), the design narrative with the time model, the store contract and a comparison with Feast and Chronon |
+| A critical eye | [STATUS.md](STATUS.md), delivered against in progress against planned, and every known limit |
 
 | Document | Content |
 |---|---|
@@ -347,3 +574,10 @@ the current state.
 ## License
 
 MIT, see [LICENSE](LICENSE).
+
+<div align="center">
+<br>
+<sub>Every guarantee links to a test. What is not proven is listed in <a href="STATUS.md">STATUS.md</a>.</sub>
+<br>
+<sub><a href="#top">Back to top</a></sub>
+</div>

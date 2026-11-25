@@ -1,8 +1,23 @@
+<a id="top"></a>
+
+<div align="center">
+  <img src="images/header-design.svg" alt="FeatureForge design: how the parts fit together and why" width="100%">
+</div>
+
 # FeatureForge design
 
-Last updated 2026-11-24. Implemented behavior is described in [ARCHITECTURE.md](../ARCHITECTURE.md),
-delivery status and every known limit in [STATUS.md](../STATUS.md), and single decisions in the
-ADRs. This document explains how the parts fit together and why they were built this way.
+<div align="center">
+
+[Problem](#1-problem-and-scope) · [Spec](#2-one-spec-drives-everything) · [Time model](#3-time-model) · [Write path](#4-online-correction-and-the-write-path) · [Stores and serving](#5-store-contract-and-serving) · [History and facts](#6-history-and-the-event-fact-store) · [Datasets](#7-training-datasets) · [Operations](#8-operations) · [Limits](#9-known-limits) · [Comparison](#10-comparison-with-feast-chronon-and-axion)
+
+</div>
+
+Last updated 2026-11-25.
+
+> [!NOTE]
+> This document explains how the parts fit together and why they were built this way.
+> Implemented behavior is described in [ARCHITECTURE.md](../ARCHITECTURE.md), delivery status and
+> every known limit in [STATUS.md](../STATUS.md), and single decisions in the [ADRs](adr).
 
 ## 1. Problem and scope
 
@@ -40,6 +55,20 @@ The spec model rejects inconsistent specs before anything runs:
 - monotone update policies with non-count aggregations,
 - expressions outside the safe subset and fields that are not in the event contract.
 
+```mermaid
+flowchart LR
+    SPEC["YAML spec"] --> MODEL["Spec model<br/>rejects inconsistent specs"]
+    MODEL --> REF["Exact reference<br/>the oracle"]
+    MODEL --> IMPL
+    subgraph IMPL["Implementations of the same semantics"]
+        direction TB
+        FLINK["Generic Flink job"]
+        SPARK["Spark backfill"]
+        STORE["Spec-driven store<br/>Redis or Cassandra"]
+    end
+    REF -. "compared on golden fixtures<br/>and randomized boundaries" .-> IMPL
+```
+
 The language is bounded on purpose. It is not a general SQL or streaming compiler. The Flink job and
 the Spark backfill support count aggregations and one entity key today, and other operators fail with
 an explicit error instead of being computed wrongly.
@@ -62,11 +91,25 @@ missing.
 
 **Availability.** Event time says what a value should be. It does not say when serving could first
 return it. For that, every accepted online update gets a `published_at`, read from the UTC clock by the
-materializer after the store reports `written`. The order is fixed: Redis write, evidence append, Kafka
+materializer after the store reports `written`. The order is fixed: store write, evidence append, Kafka
 offset commit. After a crash between the first two steps, the replay appends the evidence with a later
 `published_at`. So `published_at` is an upper bound of the real publication, never an earlier time.
 `computed_at` was rejected as a retrieval axis, because a replay under at-least-once delivery would
 produce a different value for the same update.
+
+```mermaid
+sequenceDiagram
+    participant K as Feature topic
+    participant M as Materializer
+    participant S as Online store
+    participant H as Publication history
+    K->>M: accepted update
+    M->>S: guarded write
+    S-->>M: written
+    M->>H: append evidence with published_at
+    M->>K: commit offset
+    Note over M,H: A crash between write and append gives a later<br/>published_at on replay, never an earlier one
+```
 
 **Two retrieval modes that never substitute each other.**
 
@@ -75,7 +118,14 @@ produce a different value for the same update.
 - `published_as_of` returns what serving held at `t`: the latest version with `published_at` at or
   before `t`, and missing once `t` reaches `published_at + online.ttl`. Never zero.
 
+| Mode | Answers | Sees a late event |
+|---|---|---|
+| `event_time` | What the value should have been at `t` | Yes |
+| `published_as_of` | What serving held at `t` | Only once it was published |
+
 A dataset names its mode in the call and in its manifest.
+
+<div align="right"><a href="#top">Back to top</a></div>
 
 ## 4. Online correction and the write path
 
@@ -90,12 +140,21 @@ stored one under the update policy of the spec:
   leaves the stored value unchanged.
 - `window_replace` (non-count operators) is declared but no store implements it yet.
 
-The outcome is `written`, `unchanged` or `stale`. Only `written` sets the Redis expiry `online.ttl`,
+```mermaid
+flowchart LR
+    IN["Arriving count vector"] --> CMP{"Compare with the<br/>stored vector under<br/>the update policy"}
+    CMP -->|"newer window, or same window<br/>and no count smaller"| W["written<br/>sets the expiry"]
+    CMP -->|"same window,<br/>same counts"| U["unchanged<br/>expiry untouched"]
+    CMP -->|"older window, or same window<br/>and no count larger"| S["stale<br/>expiry untouched"]
+    CMP -->|"incomparable"| X["raises<br/>stored value kept"]
+```
+
+The outcome is `written`, `unchanged` or `stale`. Only `written` sets the expiry `online.ttl`,
 so a replayed or stale write cannot extend the life of a key. The write is guarded and retried at most
 16 times. A concurrent newer write that lands during a retry is preserved.
 
 The sinks are at-least-once. Correctness comes from deduplication in the job and from guarded, idempotent
-writes, not from exactly-once delivery. Kafka, Redis and Iceberg do not share a transaction, and the
+writes, not from exactly-once delivery. Kafka, the online store and Iceberg do not share a transaction, and the
 design never claims an atomic publication across them.
 
 ## 5. Store contract and serving
@@ -123,28 +182,41 @@ measured yet.
 One request names several entities and features (at most 100 and 50) and gets one entry per pair. Each
 entry has a status:
 
-- `ok`: present and fresh.
-- `missing`: no key, unknown entity or expired key.
-- `stale`: present but older than the freshness SLO, or from the future.
-- `backend_error`: a timeout, a connection error or a record that fails validation.
+| Status | Meaning |
+|---|---|
+| `ok` | Present and fresh |
+| `missing` | No key, unknown entity or expired key |
+| `stale` | Present but older than the freshness SLO, or from the future. The value is kept |
+| `backend_error` | A timeout, a connection error or a record that fails validation |
 
 A value is never replaced by a silent zero. A reader raises when its backend fails and never returns a
 partial result, so the service marks every entry of that request. The per-feature fallback policy is
 `omit`, `default_value` or `fail`, and `fail` answers 503. There are no retries in the request path,
 because a retry hides tail latency inside the budget. The budget is 50 ms per request, enforced as a
-socket timeout. The response states that it is not an atomic snapshot.
+socket timeout per operation and not as a deadline over the whole request. The response states that it is not an atomic snapshot.
 
 **Measured numbers** (one laptop, one service process, details and limits in
 [docs/benchmarks.md](benchmarks.md)):
 
 | Serving backend | Highest measured rate with p99 at most 25 ms | p99 at that rate | Saturation of one process | CPU per request |
 |---|---|---|---|---|
-| Redis 7.4 | 3,000 req/s | 6.8 to 7.7 ms | about 4,000 req/s | 0.28 to 0.33 ms |
-| Cassandra 5.0, one node | 1,500 req/s | 16 to 23 ms | about 2,100 req/s | 0.46 to 0.50 ms |
+| Redis 7.4 | 4,000 req/s | 5.1 to 7.3 ms | 4,600 to 4,900 req/s | 0.19 to 0.29 ms |
+| Cassandra 5.0, one node | 1,500 req/s | 14.2 to 14.8 ms | about 2,100 req/s | 0.46 to 0.51 ms |
 
-At saturation the limit is the service process (0.98 cores with Cassandra), not the database. Why
-Cassandra needs about 1.5 times the CPU per request is not profiled: it could be the partition reads,
-the driver or the conversion of rows.
+Five entities and two features per request, 1,000,000 users, three runs of 30 s per rate. The 25 ms
+are a target for these runs and not an SLO.
+
+At saturation the limit is the service process (about 0.92 cores with Redis, 0.97 to 0.98 cores with
+Cassandra), not the database. Why Cassandra needs more than twice the CPU per request at saturation (0.46 against 0.19 ms) is not
+profiled: it could be the partition reads, the driver or the conversion of rows.
+
+**One measured design change.** The Redis reader first ran in the thread pool, like the Cassandra
+reader. Reading Redis with `redis.asyncio` on the event loop raised the saturation of one process by
+21 percent (about 4,030 to about 4,880 req/s) and lowered the CPU per request at saturation from 0.31 to 0.19 ms.
+A change counts only when it is at least 10 percent and the ranges of the repeats do not overlap.
+The Cassandra reader still runs in the thread pool.
+
+<div align="right"><a href="#top">Back to top</a></div>
 
 ## 6. History and the event fact store
 
@@ -178,13 +250,17 @@ A label is a spec of its own, because a feature window ends at the observation t
 starts after it. The label window is `(t, t + horizon]`. A window that is not complete by `data_end` is
 excluded and counted, and a label is never null.
 
+<div align="center">
+  <img src="images/time-model.svg" alt="The feature window (t - size, t] and the label window (t, t + horizon] meet at t and never overlap" width="100%">
+</div>
+
 The leakage rule holds in both modes: features use only information up to `t` and the label only events
 strictly after `t`. An event at `t` belongs to the features. In `published_as_of` mode, an observation
 before the latest history start has no evidence either way, so it is excluded and counted, not filled
 with null.
 
 The dataset is Parquet partitioned by the UTC day of the observation, written by Spark, never
-overwritten, with a `manifest.json` written last. The manifest holds the mode, the spec versions,
+overwritten, with a `_manifest.json` written last. The manifest holds the mode, the spec versions,
 `data_end`, the counts, every partition with its rows and, where it applies, the snapshot ids and the
 history start. A directory without a manifest is not a dataset. The Arrow loader reads datasets about
 twice as fast as `pandas.read_parquet` and adds six to nine times less peak memory (see ADR-014 for the
@@ -192,23 +268,26 @@ setup).
 
 ## 8. Operations
 
-- **Metrics.** The service exports a lookup duration histogram, the entries by status and the requests
-  by outcome, and Prometheus and a provisioned Grafana dashboard run in the Compose stack
+- **Metrics.** The service exports a lookup duration histogram, the entries by status, the requests
+  by outcome and the event loop lag, and Prometheus and a provisioned Grafana dashboard run in the Compose stack
   ([docs/observability.md](observability.md)). The histogram measures the time inside the lookup, not the
   HTTP layer.
 - **Benchmarks.** One command runs the benchmark against a backend (`make bench-record`) with safety
   checks: a clean tree and only the services of that backend. A compare script reduces repeats to medians
   and marks a change only when it is at least 10 percent and the ranges of the repeats do not overlap.
   The threshold comes from the difference between two runs of the same code.
+- **Clean-clone start.** `make quickstart` builds the service, writes demo values through the spec
+  store and reads them back through the service. It runs locally and in a dev container. A tour
+  notebook walks from a spec to the serving contract and the measurements.
 - **CI.** A baseline job (Ruff, mypy, tests without infrastructure), a compatibility job for Python 3.11
   and 3.12, a serving integration job (Redis, Feast, history and datasets), a Cassandra job, a smoke run
-  of the benchmark against Redis, and a streaming integration job (Kafka, Flink, Redis). A nightly run,
+  of the benchmark against Redis, and a streaming integration job (Kafka, Flink, Redis, Cassandra). A nightly run,
   concurrency and timeouts. Each Flink test module starts from a fresh TaskManager.
 - **Runbooks** for stale features, a failed backfill and a failed materialization are in
   [docs/runbooks](runbooks).
 
-There are no alert rules yet, no recovery drills beyond a TaskManager crash, no soak run and no table
-maintenance for the Iceberg tables.
+There are no alert rules yet, no recovery drills beyond a TaskManager crash and a stopped or slow
+Redis, no soak run and no table maintenance for the Iceberg tables.
 
 ## 9. Known limits
 
@@ -222,14 +301,20 @@ The full list is in [STATUS.md](../STATUS.md). The ones that shape the design:
 - The event table has one writer and no compaction or retention. Its append slows down with the number of
   data files (about 4 ms per file).
 - Serving is measured on one machine and one process. Single runs show short bursts of `backend_error`
-  with both backends; the cause is open. A longer warm-up does not explain them
+  with both backends (3 of 42 Redis runs, 3 of 15 Cassandra runs). The cause is open. A longer warm-up
+  does not explain them, and the event loop was late by 1 to 2 ms at saturation in a run without a burst
   ([docs/benchmarks.md](benchmarks.md)).
+- Only the Redis reader runs on the event loop. The Cassandra reader runs in the thread pool, and the
+  local Cassandra is one node, so replication is not shown.
 - The Feast-based batch path still exists next to the spec path and is not yet defined as specs.
+
+<div align="right"><a href="#top">Back to top</a></div>
 
 ## 10. Comparison with Feast, Chronon and Axion
 
-This comparison uses the public documentation of the other systems (links below). FeatureForge has not
-been benchmarked against any of them, and it is a much smaller system.
+> [!NOTE]
+> This comparison uses the public documentation of the other systems (links below). FeatureForge has not
+> been benchmarked against any of them, and it is a much smaller system.
 
 | | Feast | Chronon | FeatureForge |
 |---|---|---|---|
@@ -257,3 +342,13 @@ on synthetic data.
 - [Chronon: GroupBy](https://chronon.ai/authoring_features/GroupBy.html) and
   [Airbnb Engineering: Chronon](https://airbnb.tech/opensource/chronon/)
 - [Netflix: Evolution of ML Fact Store](https://netflixtechblog.com/evolution-of-ml-fact-store-5941d3231762)
+
+---
+
+<div align="center">
+
+[README](../README.md) · [Architecture](../ARCHITECTURE.md) · [Status](../STATUS.md) · [Platform blueprint](PLATFORM_BLUEPRINT.md) · [Benchmarks](benchmarks.md)
+
+<a href="#top">Back to top</a>
+
+</div>

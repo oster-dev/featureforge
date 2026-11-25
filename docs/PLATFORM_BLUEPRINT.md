@@ -1,18 +1,31 @@
+<a id="top"></a>
+
+<div align="center">
+  <img src="images/header-blueprint.svg" alt="FeatureForge platform blueprint: the target system and what is still planned" width="100%">
+</div>
+
 # FeatureForge Platform Blueprint
 
-**Status:** target design, updated 2026-11-18.
-**Baseline:** v0.1.0 released. Streaming core delivered. Feature spec model,
-exact reference and a generic Flink job are delivered. The generic job runs both
-original streaming features and a third feature defined by a YAML spec alone. A
-spec-driven store and materializer serve count and ratio features (ADR-009),
-proven from events to Redis for that third feature. The stores and
-materializers of the two original features are thin wrappers over them.
-Streaming publication evidence, label specs and training datasets in two
-explicit modes are delivered.
+<div align="center">
 
-This document describes the **target** system. Implemented behavior is in
-[ARCHITECTURE.md](../ARCHITECTURE.md). Delivery status is in [STATUS.md](../STATUS.md).
-Nothing marked *planned* here is claimed as complete.
+[Target architecture](#3-target-architecture) · [Component ownership](#5-component-ownership) · [Time contract](#6-time-and-availability-contract) · [Corrections](#7-online-correction-contract) · [Consumer experience](#9-consumer-experience) · [Delivery by topic](#12-delivery-by-topic) · [Acceptance demonstration](#13-acceptance-demonstration)
+
+</div>
+
+**Status:** target design, updated 2026-11-25.
+
+> [!IMPORTANT]
+> This document describes the **target** system. Implemented behavior is in
+> [ARCHITECTURE.md](../ARCHITECTURE.md). Delivery status is in [STATUS.md](../STATUS.md).
+> Nothing marked *planned* here is claimed as complete.
+
+**Baseline.** v0.1.0 is released and the streaming core is delivered. One generic Flink job
+runs the two original streaming features and a third feature that is defined by a YAML spec
+alone. A spec-driven store and materializer serve count and ratio features on Redis or
+Cassandra behind one protocol (ADR-009, ADR-013). Publication evidence, label specs, training
+datasets in two explicit modes and an event fact table are delivered (ADR-010 to ADR-012,
+ADR-014, ADR-015). A feature serving service returns a status for every value, with metrics, a
+dashboard and latency measurements on one laptop (ADR-016).
 
 ---
 
@@ -45,48 +58,61 @@ deployment lifecycle.
 ## 3. Target architecture
 
 ```mermaid
-flowchart LR
-    SPEC["Feature specs<br/>model, reference, generic job,<br/>store and materializer done"]:::wip
+flowchart TB
+    SPEC["Feature specs<br/>count and ratio delivered,<br/>more operators and a catalog planned"]:::wip
 
     subgraph Compute
-        BATCH[Pandas reference<br/>PySpark backfill]:::done
-        STREAM[Flink feature job<br/>one generic spec-driven<br/>job]:::done
+        BATCH["Pandas reference<br/>PySpark backfill"]:::done
+        STREAM["One generic<br/>spec-driven Flink job"]:::done
     end
 
     subgraph Storage
-        OFF[(Offline store<br/>Parquet)]:::done
-        HIST[(Versioned history<br/>Iceberg)]:::wip
-        ON[(Online store<br/>Redis)]:::done
-        ON2[(Online store<br/>Cassandra)]:::plan
+        OFF[("Offline store<br/>Parquet")]:::done
+        ON[("Online store<br/>Redis")]:::done
+        ON2[("Online store<br/>Cassandra, one local node")]:::done
+        HIST[("Publication history<br/>Iceberg")]:::wip
+        FACTS[("Event fact table<br/>Iceberg")]:::done
     end
 
     subgraph Access
-        CLIENT[Unified online client]:::done
-        DATASET[Training dataset API<br/>point-in-time]:::wip
-        SERVICE[Serving service]:::plan
+        SERVICE["Feature serving service<br/>status per value"]:::done
+        CLIENT["Unified online client<br/>batch path v1"]:::done
+        DATASET["Training datasets<br/>two explicit modes"]:::wip
     end
 
-    ML[Metaflow, MLflow,<br/>registry, rollback]:::plan
-    OBS[Metrics, alerts,<br/>recovery drills]:::plan
+    OBS1["Service metrics, dashboard,<br/>benchmarks"]:::done
+    OBS2["Alert rules, soak run,<br/>further recovery drills"]:::plan
+    ML["Metaflow, MLflow,<br/>registry, rollback"]:::plan
 
-    SPEC -.-> BATCH & STREAM
+    SPEC --> STREAM
+    SPEC -.-> BATCH
     BATCH --> OFF --> ON
-    STREAM --> ON
+    STREAM --> ON & ON2
     STREAM --> HIST
+    STREAM -.-> FACTS
     OFF -.-> HIST
+    ON & ON2 --> SERVICE
     ON --> CLIENT
-    ON -.-> ON2
-    HIST --> DATASET -.-> ML
-    CLIENT -.-> SERVICE --> ML
-    OBS -.-> STREAM & SERVICE
+    HIST & FACTS --> DATASET
+    DATASET -.-> ML
+    SERVICE -.-> ML
+    SERVICE --> OBS1
+    OBS2 -.-> STREAM & SERVICE
 
     classDef done fill:#d4edda,stroke:#28a745,color:#000
     classDef wip fill:#fff3cd,stroke:#e0a800,color:#000
     classDef plan fill:#e2e3e5,stroke:#6c757d,color:#000,stroke-dasharray: 4 3
 ```
 
-Green is implemented and tested. Yellow is partly delivered. Gray dashed is
-planned.
+| Color | Meaning |
+|---|---|
+| Green | Implemented and tested |
+| Yellow | Partly delivered, the open part is named in [STATUS.md](../STATUS.md#known-gaps) |
+| Gray, dashed | Planned |
+
+A dashed arrow is a connection that does not exist yet, or one that is not the same code path.
+The event fact table is filled by its own writer from the raw topic and not by the Flink job, and
+batch features are not recorded in the publication history.
 
 ---
 
@@ -110,6 +136,11 @@ records publication evidence (ADR-010, ADR-011), `published_as_of` answers what
 serving held, label specs fix the label window (ADR-012), and training datasets
 run in two explicit modes (ADR-014).
 
+Delivered after that: validated events as immutable Iceberg facts with an idempotent writer
+(ADR-015), the `OnlineStore` protocol with a Cassandra implementation that passes the same
+contract suite as Redis (ADR-013), and a feature serving service with a status per value, fault
+drills, Prometheus metrics and measured latency on one laptop (ADR-016).
+
 **First integrated feature set:** seven-day user engagement, seven-day content
 popularity, `user_play_count_1h`, `user_skip_rate_24h`. Prove this slice before
 adding more features.
@@ -119,6 +150,7 @@ the prediction made, prediction timestamp, outcome horizon, when the label
 becomes observable, how incomplete outcomes are excluded, and which event types
 the source actually generates.
 
+> [!WARNING]
 > Never fabricate `skip` or `complete` events from unsupported source fields.
 > The current replay adapter supports `play` and `impression`. Meaningful
 > skip-rate training needs a versioned source extension or a compatible
@@ -130,15 +162,17 @@ the source actually generates.
 
 | Component | Owns | Rule |
 |---|---|---|
-| Contracts and catalog | Feature identity, entity, schema, version, window semantics, quality and freshness rules | Small typed spec with a **bounded operator set**. No universal SQL-to-Flink compiler. Today: spec model, validation, an exact reference and a generic Flink job for count and ratio features, running all streaming features, plus a spec-driven store and materializer for count and ratio features. No catalog. The stores and materializers of the two original features are thin wrappers over the spec-driven ones |
+| Contracts and catalog | Feature identity, entity, schema, version, window semantics, quality and freshness rules | Small typed spec with a **bounded operator set**. No universal SQL-to-Flink compiler. Today: spec model, validation, an exact reference and a generic Flink job for count and ratio features, running all streaming features, plus a spec-driven store and materializer for count and ratio features on Redis or Cassandra. No catalog. The stores and materializers of the two original features are thin wrappers over the spec-driven ones |
 | Batch computation | Pandas references, PySpark, backfills, offline publication | A later backfill must not rewrite the recorded availability of an earlier online value |
 | Streaming computation | Validation, Flink jobs, late routing, finite-horizon dedupe, output contracts | Correction policies are declared per feature in the spec. Append-only and componentwise ordering are not general revision support |
-| Storage | Offline tables, versioned streaming history | Online stores hold current accepted values. History retains the versions needed for declared retrieval. Neither is assumed to update atomically with the other |
-| Access | Discovery, training retrieval, online retrieval, freshness status | Python API and CLI first, serving service later. Use Feast for supported batch operations. Never write into Feast's internal Redis encoding |
+| Storage | Offline tables, online stores, publication history, event facts | Online stores hold current accepted values behind one protocol, and a second backend must pass the same contract suite. History retains the versions needed for declared retrieval. Event facts are immutable and idempotent by `event_id`. None of them is assumed to update atomically with another |
+| Access | Discovery, training retrieval, online retrieval, freshness status | Features defined by specs are read through the feature serving service, which returns a status for every value and never a silent zero. The batch features of v1 are read through the unified client and Feast. Never write into Feast's internal Redis encoding. Discovery is planned |
 | ML workflow | Dataset identity, feature versions, label, splits, code revision, model, metrics | Inference loads the trained model with the same declared input schema. The deterministic ranking stays a separate baseline |
 
 A shared definition does not mean Spark and Flink run one implementation.
 Matching semantics require independent tests.
+
+<div align="right"><a href="#top">Back to top</a></div>
 
 ---
 
@@ -195,8 +229,8 @@ Preserved and tested:
   version opens a new key namespace.
 - The spec-driven store applies the same ordering to any count vector. It is
   checked against the hand-written skip-rate policy on 768 combinations.
-- `online.ttl` is enforced by the spec-driven store as a Redis expiry from the
-  last accepted write, for all three streaming features (the wrappers of the two
+- `online.ttl` is enforced by the spec-driven store as an expiry from the
+  last accepted write, on Redis and on Cassandra, for all three streaming features (the wrappers of the two
   original features delegate to it). Unchanged and stale updates do not extend
   it, and an expired key reads as missing, never as zero.
 
@@ -204,7 +238,8 @@ Feast 0.66.0's default Redis path was observed to skip equal-timestamp writes,
 so an unchanged Feast push is not assumed to support provisional same-window
 corrections. Do not disable deduplication globally and do not alter observation
 timestamps to force updates through. Any replacement store must pass the
-existing correction, concurrency and replay tests first.
+existing correction, concurrency and replay tests first. The Cassandra store did that through the
+contract suite of ADR-013 before the materializer was allowed to write to it.
 
 ---
 
@@ -215,7 +250,7 @@ ordering scope, durable source retention, snapshot or commit boundaries,
 publication failure behavior, replay and dedupe behavior, and which timestamp
 publication evidence supports.
 
-- Do not claim atomic Kafka, Redis and history publication.
+- Do not claim atomic publication to Kafka, the online store and the history.
 - If a sink succeeds but recording its publication fails, the discrepancy must
   be observable and reconciled. Earlier availability is never invented
   retroactively.
@@ -224,7 +259,8 @@ publication evidence supports.
 Status: ADR-010 and ADR-011 settle these points for the first integration. The
 history table, the evidence append and published-as-of retrieval exist. A
 dataset is written once, never overwritten, and its manifest is written last,
-so a directory without `_manifest.json` is not a dataset. Open: gap detection inside the history and several appender processes. The parity between a Redis value and the published-as-of value is tested over two bounded runs of one entity.
+so a directory without `_manifest.json` is not a dataset. The event fact table (ADR-015) keeps the validated events themselves, so an event-time dataset can
+read a pinned snapshot instead of a file. Open: gap detection inside the history and several appender processes. The parity between a Redis value and the published-as-of value is tested over two bounded runs of one entity.
 
 ---
 
@@ -240,6 +276,14 @@ so a directory without `_manifest.json` is not a dataset. Open: gap detection in
 - Training output is partitioned and batch-readable, never one giant Pandas frame.
 - One notebook demonstrates discovery, dataset construction, evaluation and
   online lookup.
+
+Status: the feature serving service returns `ok`, `missing`, `stale` or `backend_error` for every
+value with its observation time, and `atomic: false` for a combined read. Training datasets are
+partitioned by UTC day and readable in Arrow batches. The tour notebook
+(`notebooks/featureforge-tour.ipynb`) covers a spec, its reference evaluation, the serving contract
+and the measurements. Discovery and dataset construction in a notebook are planned.
+
+<div align="right"><a href="#top">Back to top</a></div>
 
 ---
 
@@ -272,29 +316,38 @@ serving policy. Benchmarks record hardware, versions, workload, concurrency,
 errors and resource usage. Initial measurements set targets. They do not
 retroactively prove an SLO.
 
+Status: measured today are the online lookup of the feature serving service (p50 to p99.9,
+saturation and CPU per request for Redis and Cassandra, [benchmarks.md](benchmarks.md)), the read
+throughput of the dataset loaders (ADR-014) and the append of the event writer (ADR-015). The
+service exports the lookup duration, entries by status, requests by outcome and the event loop lag
+([observability.md](observability.md)). Not measured: input rate and consumer lag, update latency,
+store write outcomes as metrics, and any behavior under sustained load.
+
 ---
 
-## 12. Delivery stages
+## 12. Delivery by topic
 
 ```mermaid
 flowchart LR
-    A[A: Baseline and<br/>compatibility]:::done --> B[B: First streaming<br/>vertical slice]:::done
-    B --> C[C: Corrections and<br/>historical publication]:::wip
-    C --> D[D: Mixed-feature<br/>ML workflow]:::wip
-    D --> E[E: Operations and<br/>application release]:::plan
+    A["Baseline and<br/>compatibility"]:::done --> B["First streaming<br/>vertical slice"]:::done
+    B --> C["Corrections and<br/>historical publication"]:::wip
+    C --> D["Online stores and<br/>feature serving"]:::wip
+    D --> E["Mixed-feature<br/>ML workflow"]:::wip
+    E --> F["Operations and<br/>application release"]:::wip
 
     classDef done fill:#d4edda,stroke:#28a745,color:#000
     classDef wip fill:#fff3cd,stroke:#e0a800,color:#000
     classDef plan fill:#e2e3e5,stroke:#6c757d,color:#000
 ```
 
-| Stage | Content | Status |
-|---|---|---|
-| A | Preserve released batch behavior, inventory dependencies, record import provenance | Done |
-| B | Integrate play-count slice, validation-to-online behavior, common read interface | Done |
-| C | Skip-rate and late corrections done. Feature spec model, exact reference and one generic Flink job running both features done, the hand-written jobs are removed. A spec-driven store and materializer are done and proven end to end for a YAML-only feature. The stores and materializers of the two original features are thin wrappers over them. The history, the evidence append, published-as-of retrieval, its parity with Redis over a bounded replay and the availability model (ADR-010, ADR-011) are done. Open: JobManager-failure recovery evidence and gap detection inside the history | In progress |
-| D | Label specs (ADR-012), training datasets in two modes (ADR-014), the `build-training-dataset` command, the dataset loader and the Arrow batch loader are done. Open: label audit of the source, batch-only vs batch-plus-stream comparison, model-backed inference | In progress |
-| E | Metrics, recovery drills, benchmarks, clean-clone demo, notebook, reproducible release | Planned |
+| Topic | Delivered | Open | Status |
+|---|---|---|---|
+| Baseline and compatibility | Released batch behavior preserved, dependencies inventoried, import provenance recorded | Nothing | Done |
+| First streaming vertical slice | Play-count slice, validation-to-online behavior, common read interface | Nothing | Done |
+| Corrections and historical publication | Skip rate and late corrections. Spec model, exact reference and one generic Flink job for all features, hand-written jobs removed. Spec-driven store and materializer, proven end to end for a YAML-only feature. History, evidence append, published-as-of retrieval and its parity with Redis over a bounded replay (ADR-010, ADR-011). Event fact table (ADR-015) | JobManager-failure recovery evidence, gap detection inside the history | In progress |
+| Online stores and feature serving | `OnlineStore` protocol with one contract suite for Redis and Cassandra (ADR-013). Feature serving service with a status per value, a reader per backend, and drills for a stopped and a slow Redis (ADR-016) | Several Cassandra nodes, a deadline over the whole request, an asynchronous Cassandra reader | In progress |
+| Mixed-feature ML workflow | Label specs (ADR-012), training datasets in two modes (ADR-014), the `build-training-dataset` command, the dataset loader and the Arrow batch loader | Label audit of the source, batch-only against batch-plus-stream comparison, model-backed inference | In progress |
+| Operations and application release | Service metrics and dashboard, benchmarks with a runner and a compare script, clean-clone quickstart, dev container, tour notebook | Alert rules, further recovery drills, a soak run, a reproducible release | In progress |
 
 Bounded later extensions: cloud staging deployment, Metaflow orchestration,
 MLflow tracking, embedding retrieval. Metaflow and MLflow are later additions to the
@@ -321,3 +374,13 @@ flowchart LR
 Start from a documented clean environment. A separate failure demonstration
 verifies a declared recovery boundary and reconciles the resulting state. The
 happy-path demo is not an end-to-end exactly-once proof.
+
+---
+
+<div align="center">
+
+[README](../README.md) · [Architecture](../ARCHITECTURE.md) · [Status](../STATUS.md) · [Design](DESIGN.md) · [Streaming provenance](streaming-migration.md)
+
+<a href="#top">Back to top</a>
+
+</div>

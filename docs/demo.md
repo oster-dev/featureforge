@@ -1,34 +1,60 @@
+<a id="top"></a>
+
+<div align="center">
+  <img src="images/header-demo.svg" alt="FeatureForge demo guide: five walkthroughs that run from a clean checkout" width="100%">
+</div>
+
 # FeatureForge Demo Guide
 
-Four reviewer walkthroughs, each runnable from a clean checkout:
+<div align="center">
 
-1. **Batch path:** synthetic data to Feast-materialized online features.
-2. **Streaming path:** Kafka to Flink to Redis, verified end to end.
-3. **Feature spec:** a declarative spec validated, evaluated against golden fixtures, run as a generic Flink job and served from Redis without feature-specific code.
-4. **Training dataset:** features and a label joined in two explicit modes,
-   event time and published-as-of, written as Parquet with a manifest.
+[Prerequisites](#prerequisites) · [A: batch](#demo-a-batch-path) · [B: streaming](#demo-b-streaming-path) · [C: feature spec](#demo-c-feature-spec) · [D: training dataset](#demo-d-training-dataset) · [E: feature serving](#demo-e-feature-serving) · [CI evidence](#ci-evidence) · [Troubleshooting](#troubleshooting) · [Cleanup](#cleanup)
 
-Expected local runtime: batch about 2 minutes, the spec evaluation a few seconds,
-the generic job about a minute, the YAML-only end-to-end test about ten seconds on a warm stack,
-streaming several minutes, the training dataset tests about 20 seconds once the
-Spark packages are cached. In CI each Flink test module starts from a fresh TaskManager, and the skip-rate suites recreate it per test.
+</div>
+
+Five reviewer walkthroughs, each runnable from a clean checkout.
+
+> [!TIP]
+> Short on time? [Demo E](#demo-e-feature-serving) starts with one command and takes under a
+> minute after the first image build. The
+> [tour notebook](../notebooks/featureforge-tour.ipynb) needs no Docker and renders on GitHub.
+
+| Demo | Shows | Needs | Local runtime |
+|---|---|---|---|
+| [A: batch path](#demo-a-batch-path) | Synthetic data to Feast-materialized online features | Redis | About 2 minutes |
+| [B: streaming path](#demo-b-streaming-path) | Kafka to Flink to Redis, verified end to end | Full Compose stack | Several minutes |
+| [C: feature spec](#demo-c-feature-spec) | A declarative spec validated, evaluated against golden fixtures, run as a generic Flink job and served from Redis without feature-specific code | Nothing for parts 1 to 3, the stack for parts 4 to 7 | Seconds for the evaluation, about a minute for the generic job, about ten seconds for the YAML-only end-to-end test on a warm stack |
+| [D: training dataset](#demo-d-training-dataset) | Features and a label joined in two explicit modes, event time and published-as-of, written as Parquet with a manifest | No Docker | About 20 seconds once the Spark packages are cached |
+| [E: feature serving](#demo-e-feature-serving) | The feature serving service: a status for every value, a stopped Redis, metrics and a benchmark smoke run | Redis and the service container | Under a minute after the first image build |
+
+In CI each Flink test module starts from a fresh TaskManager, and the skip-rate suites recreate it per test.
 
 ```mermaid
-flowchart LR
+flowchart TB
     subgraph A["Demo A: batch"]
+        direction LR
         A1[Generate] --> A2[Backfill] --> A3{Correctness<br/>gate} --> A4[Feast<br/>materialize] --> A5[Freshness<br/>check] --> A6[Online lookup<br/>and ranking]
     end
     subgraph B["Demo B: streaming"]
-        B1[Kafka events] --> B2[Flink validate<br/>and route] --> B3[Flink feature job<br/>spec-driven] --> B4[Materializer] --> B5[Redis] --> B6[Unified online<br/>client]
+        direction LR
+        B1[Kafka events] --> B2[Flink validate<br/>and route] --> B3[Flink feature job<br/>spec-driven] --> B4[Materializer] --> B5[(Redis)] --> B6[Unified online<br/>client]
     end
     subgraph C["Demo C: feature spec"]
+        direction LR
         C1[YAML spec] --> C2[Validate<br/>and field check] --> C3[Exact reference<br/>evaluation] --> C4[Golden fixtures<br/>and Python<br/>references]
         C2 --> C5[Generic Flink job<br/>for all features] --> C4
         C5 --> C6[Spec-driven<br/>materializer<br/>and store] --> C7[(Redis)]
     end
     subgraph D["Demo D: training dataset"]
+        direction LR
         D1[Events and<br/>pinned history] --> D2[Spark join and<br/>backfills] --> D3[Parquet by UTC day<br/>and manifest]
     end
+    subgraph E["Demo E: feature serving"]
+        direction LR
+        E1[Spec store<br/>writes demo values] --> E2[(Redis)] --> E3[Feature serving<br/>service] --> E4[Status per value:<br/>ok, stale, missing,<br/>backend_error]
+        E3 --> E5[Prometheus<br/>and Grafana]
+    end
+    A ~~~ B ~~~ C ~~~ D ~~~ E
 ```
 
 ## Prerequisites
@@ -38,12 +64,15 @@ flowchart LR
 - GNU Make
 
 ```bash
-git clone [https://github.com/oster-dev/featureforge.git](https://github.com/oster-dev/featureforge.git)
+git clone https://github.com/oster-dev/featureforge.git
 cd featureforge
 python3 -m venv .venv && source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[dev,feature-store,spark,streaming]"
+python -m pip install -e ".[dev,feature-store,spark,streaming,serve]"
 ```
+
+Demo E alone needs only `python -m pip install -e ".[serve]"`. In a GitHub Codespace or a VS Code
+dev container Python, Docker and `make` are set up already.
 
 ---
 
@@ -101,6 +130,8 @@ pytest -v tests/integration/test_online_serving.py     # 5 passed
 
 The serving suite checks user and content parity against the latest offline
 partition, unknown entities, batch candidates and deterministic ranking.
+
+<div align="right"><a href="#top">Back to top</a></div>
 
 ---
 
@@ -167,6 +198,8 @@ request.
   the history table, see Demo D.
 
 See [Known limits](../ARCHITECTURE.md#known-limits).
+
+<div align="right"><a href="#top">Back to top</a></div>
 
 ---
 
@@ -459,6 +492,8 @@ python -m featureforge.streaming.materialize_spec \
 - The `WATCH` retry of the spec-driven store has unit tests with a mocked
   pipeline and runs against a real concurrent writer through the two wrappers.
 
+<div align="right"><a href="#top">Back to top</a></div>
+
 ---
 
 ## Demo D: training dataset
@@ -629,21 +664,153 @@ numbers of both loaders.
 - There are no throughput numbers for the Spark join.
 
 
+<div align="right"><a href="#top">Back to top</a></div>
+
+---
+
+## Demo E: feature serving
+
+The feature serving service answers for features that are defined by specs
+([ADR-016](adr/ADR-016-feature-serving.md)). Every value comes back with a status, and a missing
+or failed read is never a zero.
+
+<div align="center">
+  <img src="images/quickstart.svg" alt="Animated terminal: the quickstart writes two demo values, the feature service answers ok, stale and missing, and after Redis is stopped every entry is backend_error and never a zero." width="820">
+</div>
+
+### 1. Start the service and read three users
+
+```bash
+make quickstart
+```
+
+The command builds the service image, starts Redis and the service, writes two demo values for
+`user_play_count_1h` through the spec store and asks the service about three users:
+
+```text
+wrote demo_user_fresh: written
+wrote demo_user_old: written
+
+entity               status         play_count    age_s  note
+demo_user_fresh      ok             7                60  fresh
+demo_user_old        stale          4              1200  stale
+demo_user_unknown    missing        -                 -  -
+```
+
+| User | Status | Why |
+|---|---|---|
+| `demo_user_fresh` | `ok` | The value is younger than the freshness SLO of 5 minutes |
+| `demo_user_old` | `stale` | The value is older than the SLO. It is still returned, marked as stale |
+| `demo_user_unknown` | `missing` | Nothing was written. The entry has no value, not a zero |
+
+### 2. Stop Redis and ask again
+
+```bash
+make quickstart-failure
+```
+
+The command repeats step 1, stops Redis and asks again. Every entry is `backend_error` with the
+error type, and the command starts Redis again when it is done:
+
+```text
+Stopping Redis and asking again ...
+
+entity               status         play_count    age_s  note
+demo_user_fresh      backend_error  -                 -  ConnectionError
+demo_user_old        backend_error  -                 -  ConnectionError
+demo_user_unknown    backend_error  -                 -  ConnectionError
+```
+
+### 3. Ask the service yourself
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/v1/features/lookup \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "features": [{"name": "user_play_count_1h"}],
+    "entities": [{"user_id": "demo_user_fresh"}, {"user_id": "demo_user_unknown"}]
+  }'
+curl -s http://127.0.0.1:8080/readyz
+curl -s http://127.0.0.1:8080/metrics | grep featureforge_lookup_entries_total
+```
+
+The response holds one entry per entity and feature with `status`, `values`, `age_seconds` and
+`freshness`, and `"atomic": false` for the whole response. A request with more than 100 entities
+or 50 features is rejected with 422.
+
+### 4. Watch the metrics
+
+```bash
+docker compose up -d --build feature-service prometheus grafana
+```
+
+Grafana runs at http://127.0.0.1:3000 with the dashboard "FeatureForge feature serving", and
+Prometheus at http://127.0.0.1:9090. What each panel measures is in
+[observability.md](observability.md). The screenshot shows the dashboard during a benchmark run.
+
+![Dashboard during a benchmark run](images/feature-serving-dashboard.png)
+
+### 5. Run the benchmark smoke test
+
+```bash
+docker compose stop prometheus grafana
+make bench-smoke
+```
+
+The smoke run takes about a minute and shows that the benchmark tool and the backend work. It
+only warns about other running services, and its numbers are never quoted. The recorded numbers, their setup and their limits are in
+[benchmarks.md](benchmarks.md).
+
+### 6. Run the tests behind the contract
+
+```bash
+docker compose --profile fault up -d redis toxiproxy
+pytest -v -m integration \
+  tests/integration/test_feature_service_redis.py \
+  tests/integration/test_feature_service_faults.py
+```
+
+The first file checks the statuses, the expiry and one `MGET` per request against a real Redis.
+The second puts Toxiproxy between the service and Redis: a stopped and a slow Redis give
+`backend_error` within the budget, and the service recovers afterwards.
+
+The same spec runs on Cassandra with only `online.store` changed. On the full stack with the
+Cassandra profile, one test goes from events through the validation job, the generic Flink job
+and the materializer to the service:
+
+```bash
+COMPOSE_PROFILES=cassandra docker compose up -d --build
+pytest -v -m integration tests/integration/test_cassandra_end_to_end.py
+```
+
+### What this demo does not prove
+
+- The quickstart writes its values through the spec store directly. It does not run Kafka or
+  Flink. Demo C part 7 shows the path from events.
+- The service is one process on one machine, and the local Cassandra is one node. Nothing here
+  shows replication, several processes or a production load.
+- The budget of 50 ms is a socket timeout per operation, not a deadline over the whole request.
+- There are no alert rules, and the smoke run is not a measurement.
+
+<div align="right"><a href="#top">Back to top</a></div>
+
 ---
 
 
 ## CI evidence
 
 
-Four GitHub Actions jobs run on every push and pull request to `main`. A
+Six GitHub Actions jobs run on every push and pull request to `main`. A
 scheduled nightly run on `main` repeats them.
 
 | Job | Proves |
 |---|---|
-| Baseline lint and test | Clean install, Ruff, all infrastructure-free tests |
-| Python compatibility | The infrastructure-free suite on Python 3.11 and 3.12 |
-| Serving integration | Redis, Feast, materialization, online parity and ranking, the history, the published-as-of join and the training datasets |
-| Streaming integration | Full Compose stack, joined Kafka, Flink and Redis tests including the generic spec-driven job, each Flink test module on a fresh TaskManager |
+| Baseline lint and test | Clean install, Ruff, mypy, all infrastructure-free tests |
+| Python 3.11/3.12 compatibility | The infrastructure-free suite on Python 3.11 and 3.12 |
+| Redis and Feast serving integration | Redis, Feast, materialization, online parity and ranking, the history, the published-as-of join, the training datasets, and the feature service against a real, a stopped and a slow Redis. Fails on a skipped test |
+| Cassandra schema, store and contract suite | The schema check, the Cassandra store and the same contract suite as Redis on a real node. Fails on a skipped test |
+| Flink Kafka-to-Redis integration | Full Compose stack with Cassandra, joined Kafka, Flink and store tests including the generic spec-driven job, each Flink test module on a fresh TaskManager |
+| Benchmark smoke (Redis) | The benchmark tool runs end to end against a real Redis. Its numbers are not used |
 
 Current status: see the badge in the [README](../README.md) and the
 [Actions page](https://github.com/oster-dev/featureforge/actions).
@@ -662,6 +829,8 @@ runs them with zero skips.
 
 | Symptom | Fix |
 |---|---|
+| `make quickstart` stops with `the service ... did not become ready` | `docker compose ps` and `docker compose logs feature-service --tail 50`. Port 8080 must be free |
+| Every entry is `backend_error` outside the failure demo | Redis is stopped: `docker compose start redis` |
 | Redis unavailable | `docker compose down && docker compose up -d`, then `docker compose exec -T redis redis-cli ping` |
 | Serving tests skipped | Redis reachable, `feast apply` run, canonical partitions present, features materialized (see below) |
 | Materialization blocked | Inspect `find output -path "*materialization_manifests*" -name "*.json"`, then the [runbook](runbooks/failed-materialization.md) |
@@ -706,3 +875,13 @@ rm -rf output_e2e output/source_data output/offline_store \
 Do not remove `feature_repo/data/registry.db` while Redis or Feast commands
 are running. For a complete reset, stop Redis first, then use a fresh checkout
 or re-apply the Feast repository.
+
+---
+
+<div align="center">
+
+[README](../README.md) · [Architecture](../ARCHITECTURE.md) · [Status](../STATUS.md) · [Contributing](../CONTRIBUTING.md) · [Benchmarks](benchmarks.md)
+
+<a href="#top">Back to top</a>
+
+</div>

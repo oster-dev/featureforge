@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 560" width="1000" height="560" role="img" aria-labelledby="t d">
+<title id="t">make quickstart in a terminal</title>
+<desc id="d">Animated terminal. The quickstart writes two demo values, then the feature service answers ok, stale and missing for three users. After Redis is stopped every entry comes back as backend_error and never as a zero.</desc>
+<defs>
+  <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#0d1117"/><stop offset="1" stop-color="#161b22"/>
+  </linearGradient>
+  <linearGradient id="forge" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#ffd08a"/><stop offset="0.5" stop-color="#ff9a4a"/><stop offset="1" stop-color="#f0603c"/>
+  </linearGradient>
+  <linearGradient id="cool" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#9ecbff"/><stop offset="1" stop-color="#58a6ff"/>
+  </linearGradient>
+  <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+    <stop offset="0" stop-color="#ff9a4a" stop-opacity="0.35"/><stop offset="1" stop-color="#ff9a4a" stop-opacity="0"/>
+  </radialGradient>
+  <radialGradient id="glowBlue" cx="0.5" cy="0.5" r="0.5">
+    <stop offset="0" stop-color="#58a6ff" stop-opacity="0.28"/><stop offset="1" stop-color="#58a6ff" stop-opacity="0"/>
+  </radialGradient>
+  <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+    <path d="M32 0H0V32" fill="none" stroke="#ffffff" stroke-opacity="0.035" stroke-width="1"/>
+  </pattern>
+  <filter id="soft" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="3"/></filter>
+<clipPath id="typed"><rect x="54" y="60" height="30" width="0"><animate attributeName="width" values="0;0;222;222;0" keyTimes="0;0.02;0.0938;0.9500;1" dur="16.0s" repeatCount="indefinite"/></rect></clipPath></defs>
+<rect x="1" y="1" width="998" height="558" rx="14" fill="#0d1117" stroke="#30363d" stroke-width="2"/>
+<path d="M2,44 V15 Q2,2 15,2 H985 Q998,2 998,15 V44 Z" fill="#161b22"/>
+<path d="M2,44 H998" stroke="#30363d" stroke-width="1"/>
+<circle cx="26" cy="23" r="6.5" fill="#ff5f57"/><circle cx="48" cy="23" r="6.5" fill="#febc2e"/><circle cx="70" cy="23" r="6.5" fill="#28c840"/>
+<text x="500.0" y="28" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif" font-size="13" fill="#9da7b3">featureforge — make quickstart-failure</text>
+<g font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace" font-size="16">
+  <text x="34" y="82" fill="#3fb950" font-weight="700">$</text>
+  <text x="54" y="82" fill="#e6edf3" clip-path="url(#typed)">make quickstart-failure</text>
+  <rect x="54" y="66" width="9" height="20" fill="#e6edf3">
+    <animate attributeName="x" values="54;54;276;276;54" keyTimes="0;0.02;0.0938;0.9500;1" dur="16.0s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="1;0;1" dur="1s" repeatCount="indefinite"/>
+  </rect>
+  <text x="34" y="108" xml:space="preserve"><tspan fill="#9da7b3">wrote demo_user_fresh: written</tspan><animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.1187;0.1268;0.9500;1" dur="16.0s" repeatCount="indefinite"/></text>
+<text x="34" y="134" xml:space="preserve"><tspan fill="#9da7b3">wrote demo_user_old: written</tspan><animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.1375;0.1455;0.9500;1" dur="16.0s" repeatCount="indefinite"/></text>
+<text x="34" y="174.3" xml:space="preserve"><tspan fill="#58a6ff">entity               status         play_count    age_s  note</tspan><animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.1812;0.1893;0.9500;1" dur="16.0s" repeatCount="indefinite"/></text>
+<text x="34" y="200.3" xml:space="preserve"><tspan fill="#e6edf3">demo_user_fresh      </tspan><tspan fill="#3fb950" font-weight="700">ok</tspan><tspan fill="#e6edf3">             7                60  fresh</tspan><animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.2062;0.2142;0.9500;1" dur="16.0s" repeatCount="indefinite"/></text>
+<text x="34" y="226.3" xml:space="preserve"><tspan fill="#e6edf3">demo_user_old        </tspan><tspan fill="#e3b341" font-weight="700">stale</tspan><tspan fill="#e6edf3">          4              1200  stale</tspan><animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.2313;0.2393;0.9500;1" dur="16.0s" repeatCount="indefinite"/></text>
+<text x="34" y="252.3" xml:space="preserve"><tspan fill="#e6edf3">demo_user_unknown    </tspan><tspan fill="#9da7b3" font-weight="700">missing</tspan><tspan fill="#e6edf3">        -                 -  -</tspan><animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.2562;0.2642;0.9500;1" dur="16.0s" repeatCount="indefinite"/></text>
+<text x="34" y="292.6" xml:space="preserve"><tspan fill="#e3b341">Stopping Redis and asking again ...</tspan><animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.3500;0.3580;0.9500;1" dur="16.0s" repeatCount="indefinite"/></text>
+<text x="34" y="332.90000000000003" xml:space="preserve"><tspan fill="#58a6ff">entity               status         play_count    age_s  note</tspan><animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.4500;0.4580;0.9500;1" dur="16.0s" repeatCount="indefinite"/></text>
+<text x="34" y="358.90000000000003" xml:space="preserve"><tspan fill="#e6edf3">demo_user_fresh      </tspan><tspan fill="#ff7b72" font-weight="700">backend_error</tspan><tspan fill="#e6edf3">  -                 -  ConnectionError</tspan><animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.4750;0.4830;0.9500;1" dur="16.0s" repeatCount="indefinite"/></text>
+<text x="34" y="384.90000000000003" xml:space="preserve"><tspan fill="#e6edf3">demo_user_old        </tspan><tspan fill="#ff7b72" font-weight="700">backend_error</tspan><tspan fill="#e6edf3">  -                 -  ConnectionError</tspan><animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.5000;0.5080;0.9500;1" dur="16.0s" repeatCount="indefinite"/></text>
+<text x="34" y="410.90000000000003" xml:space="preserve"><tspan fill="#e6edf3">demo_user_unknown    </tspan><tspan fill="#ff7b72" font-weight="700">backend_error</tspan><tspan fill="#e6edf3">  -                 -  ConnectionError</tspan><animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.5250;0.5330;0.9500;1" dur="16.0s" repeatCount="indefinite"/></text>
+</g>
+<g>
+  <rect x="628" y="498" width="340" height="34" rx="17" fill="#ff7b72" fill-opacity="0.12" stroke="#ff7b72" stroke-opacity="0.6"/>
+  <text x="798" y="520" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif" font-size="14" font-weight="600" fill="#ff7b72">a status for every entry, never a silent zero</text>
+  <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.5750;0.5830;0.9500;1" dur="16.0s" repeatCount="indefinite"/>
+</g>
+</svg>
