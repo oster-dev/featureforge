@@ -54,6 +54,14 @@ The buckets are 0.5, 1, 2.5, 5, 10, 25, 50, 100 and 250 ms. Prometheus
 interpolates a quantile inside a bucket, so a p99 between 2.5 and 5 ms is an
 estimate.
 
+## Event loop lag
+
+`featureforge_event_loop_lag_seconds` is a histogram of how late the event loop wakes a task that
+sleeps for 20 ms. The service reads Redis on the event loop, so work that keeps the loop busy delays
+every request behind it, and the socket timeout of the asynchronous client counts that delay too.
+The lag measures the loop and not Redis. The task wakes about 50 times per second, which costs very
+little. A lag that stays near zero while requests fail with a timeout points away from the loop.
+
 ## Limits
 
 - No alert rules and no runbooks yet.

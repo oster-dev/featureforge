@@ -1,7 +1,9 @@
 """HTTP layer of the feature serving service (ADR-016)."""
 
 import argparse
-from collections.abc import Sequence
+import asyncio
+from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime
 from pathlib import Path
 
@@ -20,7 +22,7 @@ from featureforge.feature_service import (
     FeatureServer,
     RequestError,
 )
-from featureforge.service_metrics import ServiceMetrics
+from featureforge.service_metrics import ServiceMetrics, watch_event_loop_lag
 from featureforge.spec.loader import load_spec
 from featureforge.spec.model import FeatureSpec
 
@@ -42,7 +44,18 @@ class LookupBody(_Body):
 
 def create_app(server: FeatureServer, metrics: ServiceMetrics | None = None) -> FastAPI:
     service_metrics = metrics if metrics is not None else ServiceMetrics()
-    app = FastAPI(title="FeatureForge feature serving", version="1")
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        watcher = asyncio.create_task(watch_event_loop_lag(service_metrics))
+        try:
+            yield
+        finally:
+            watcher.cancel()
+            with suppress(asyncio.CancelledError):
+                await watcher
+
+    app = FastAPI(title="FeatureForge feature serving", version="1", lifespan=lifespan)
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
