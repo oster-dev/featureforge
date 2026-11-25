@@ -706,3 +706,52 @@ Compare it with the baseline before change 6
 ```bash
 make bench-compare BASE=docs/benchmarks/baseline-redis-8989796.json NEW=docs/benchmarks/baseline-redis-94625c4.json
 ```
+
+## Second record run after change 6 (ADR-016)
+
+Question: does a second record run on the same code give the same baseline, and does Redis itself
+stall during a run?
+
+Method: commit `dca0138` (the code of `94625c4`, the commit only added the documents of the first
+baseline), clean tree, the same preset as the first run. Before the run the latency monitor of
+Redis was switched on with `CONFIG SET latency-monitor-threshold 20` and reset, so it records every
+event of at least 20 ms. Raw data `docs/benchmarks/latency-monitor-redis-dca0138.json`.
+
+| Target req/s | Achieved req/s | p99 | CPU ms per request | Not ok |
+|---|---|---|---|---|
+| 500 | 500 | 5.86 to 7.56 ms | 0.66 to 0.68 | 0, 0, 0 |
+| 1000 | 1000 | 5.46 to 7.36 ms | 0.43 to 0.50 | 0, 0, 0 |
+| 2000 | 1999 to 2000 | 6.81 to 10.18 ms | 0.24 to 0.29 | 0, 0, 0 |
+| 3000 | 2999 | 3.34 to 4.28 ms | 0.22 to 0.23 | 0, 0, 0 |
+| 4000 | 3998 | 6.39 to 6.85 ms | 0.21 | 0, 0, 0 |
+| 5000 | 4611 to 4744 | 1.61 to 2.51 s | 0.19 to 0.20 | 0, 0, 340 |
+| 6000 | 4657 to 4663 | 8.53 to 8.58 s | 0.19 to 0.20 | 0, 0, 0 |
+
+Findings
+
+- Below saturation the second run matches the first. At 4,000 req/s the p99 was 6.4 to 6.9 ms
+  against 5.1 to 7.3 ms, and at 3,000 req/s 3.3 to 4.3 ms against 3.5 to 7.2 ms.
+- The saturation was lower. The runs at 5,000 and 6,000 req/s reached 4,611 to 4,744 req/s, about
+  4 percent below the 4,824 to 4,871 req/s of the first run. The service time at saturation was
+  26.5 to 27.3 ms p50 against 26.0 ms. Taken together the runs say 4,600 to 4,900 req/s. The noise
+  at saturation between two runs was larger than the 1 to 2 percent that earlier series showed.
+  Whether the monitor played a part was not separated.
+- Compared across days, the saturation rose from about 4,030 req/s (`8989796`) to 4,610 to 4,870
+  req/s, 14 to 21 percent. The A/B of change 6 in one session (21 percent in both rounds) is the
+  better number for the gain.
+- One burst: 340 entries that are not ok (34 requests) at 5,000 req/s in run 3, all `TimeoutError`.
+  Over the two record runs 3 of 42 runs had a burst, 1,200 entries at 2,000 req/s, 400 at 6,000
+  req/s and 340 at 5,000 req/s, all with that error type.
+- The Redis latency monitor recorded two events of at least 20 ms in the whole run. One was
+  `command-unblocking` with 944 ms about 1 s after the start, while the run replaces the data and
+  before any measurement. The other was `fast-command` with 26 ms about 9.7 minutes after the
+  start, around the change from the 5,000 to the 6,000 req/s block, below the budget of 50 ms. Redis
+  did not stall for 50 ms or more during the measurement, so the timeouts are not a stall in Redis.
+
+Limits
+
+- The cause of the `TimeoutError` entries is open. At 5,000 and 6,000 req/s the service is
+  saturated, and the socket timeout of the asynchronous client also counts the time that the event
+  loop needs to come back to the call. That was not measured. The burst of the first run at 2,000
+  req/s was not at saturation, and no monitor was on.
+- Two runs on one day. One machine, one process, Redis in Docker Desktop.
