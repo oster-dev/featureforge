@@ -10,12 +10,13 @@ Proven today: point-in-time training datasets in two modes ([ADR-014](docs/adr/A
 
 | Serving backend | Highest measured rate with p99 at most 25 ms | p99 at that rate | Saturation of one process | CPU per request |
 |---|---|---|---|---|
-| Redis 7.4 | 3,000 req/s | 6.8 to 7.7 ms | about 4,000 req/s | 0.28 to 0.33 ms |
+| Redis 7.4 | 4,000 req/s | 5.1 to 7.3 ms | about 4,850 req/s | 0.19 to 0.27 ms |
 | Cassandra 5.0, one node | 1,500 req/s | 16 to 23 ms | about 2,100 req/s | 0.46 to 0.50 ms |
 
 One laptop (Apple M4 Pro, 14 CPUs, 24 GiB, macOS), client and service on the same machine, both
 databases in Docker Desktop, 1,000,000 users with 2 features each, 5 entities per request, one
-uvicorn process, 3 runs of 30 s per rate, commit `8989796`. These are local measurements and no
+uvicorn process, 3 runs of 30 s per rate, commit `94625c4` for Redis and `8989796` for
+Cassandra. These are local measurements and no
 production numbers, and p99 at most 25 ms is a target, not an SLO. Raw data and limits:
 [benchmarks](docs/benchmarks.md).
 
