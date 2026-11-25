@@ -335,6 +335,7 @@ the current state.
 | [docs/adr/](docs/adr/) | Architecture decision records (ADR-001 to ADR-016) |
 | [docs/streaming-migration.md](docs/streaming-migration.md) | Streaming provenance and verification boundaries |
 | [docs/demo.md](docs/demo.md) | Reviewer walkthrough |
+| [notebooks/featureforge-tour.ipynb](notebooks/featureforge-tour.ipynb) | A tour from a spec to a measured service, runs without Docker |
 | [docs/benchmarks.md](docs/benchmarks.md) | Serving benchmarks: method, numbers and limits |
 | [docs/observability.md](docs/observability.md) | Prometheus and Grafana for the feature service |
 | [docs/runbooks/](docs/runbooks/) | Stale features, failed backfill, failed materialization |
