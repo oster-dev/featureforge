@@ -1,4 +1,16 @@
+<a id="top"></a>
+
+<div align="center">
+  <img src="images/header-streaming.svg" alt="FeatureForge streaming provenance and boundaries" width="100%">
+</div>
+
 # Streaming integration provenance
+
+<div align="center">
+
+[Timeline](#timeline) · [Imported components](#imported-components) · [Development](#development-inside-featureforge) · [Current implementation](#current-implementation) · [Verification boundaries](#verification-boundaries) · [Current state](#current-state)
+
+</div>
 
 FeatureForge incorporates streaming functionality into the same platform as its
 offline feature engineering and online serving paths. The source repository
@@ -13,46 +25,32 @@ records the origin of imported components. It is not a separate platform.
 Exclusions listed for an early import stage apply to that stage only, not to the
 current repository.
 
+> [!NOTE]
+> This document is the change log of the streaming path: where each part came from, which pull
+> request added it and what its tests do and do not show. For the current design read
+> [ARCHITECTURE.md](../ARCHITECTURE.md), and for status read [STATUS.md](../STATUS.md).
+
 ---
 
 ## Timeline
 
 ```mermaid
-flowchart LR
-    I1[Import 1<br/>contracts, time,<br/>reference]:::imp --> I2[Import 2<br/>routing, store,<br/>materializer]:::imp
-    I2 --> I3[Import 3<br/>Redis integration,<br/>WATCH retry]:::imp
-    I3 --> I4[Import 4<br/>Flink runtime,<br/>joined test]:::imp
-    I4 --> D1[PR 6<br/>replay and<br/>identity conflict]:::dev
-    D1 --> D2[PR 7<br/>unified online<br/>access]:::dev
-    D2 --> D3[PR 8<br/>routing and<br/>late events]:::dev
-    D3 --> D4[PR 9<br/>skip-rate<br/>feature]:::dev
-    D4 --> D5[CI stabilization<br/>fresh TaskManager<br/>per skip-rate test]:::dev
-    D5 --> D6[PR 11<br/>feature spec<br/>model]:::dev
-    D6 --> D7[PR 12<br/>CI hardening,<br/>TaskManager per module]:::dev
-    D7 --> D8[All integration tests<br/>on the generic job]:::dev
-    D8 --> D9[Hand-written jobs<br/>removed]:::dev
-    D9 --> D10[Savepoint stop<br/>and resume]:::dev
-    D10 --> D11[TaskManager crash<br/>recovery]:::dev
-    D11 --> D12[Dedupe expiry<br/>after TTL]:::dev
-    D12 --> D13[YAML-only content<br/>feature on the job]:::dev
-    D13 --> D14[PR 33 and 34<br/>validate-spec and<br/>test-spec]:::dev
-    D14 --> D15[ADR-009<br/>spec-driven<br/>online stores]:::dev
-    D15 --> D16[Spec-driven store<br/>and materializer]:::dev
-    D16 --> D17[YAML-only feature<br/>from events to Redis]:::dev
-    D17 --> D18[ADR-010<br/>time and availability<br/>model]:::dev
-    D18 --> D19[Thin wrappers for the<br/>original features]:::dev
-    D19 --> D20[PR 46 to 49<br/>ADR-011, history,<br/>published-as-of]:::dev
-    D20 --> D21[PR 50 to 52<br/>Spark backfill,<br/>PostgreSQL catalog]:::dev
-    D21 --> D22[PR 53 to 58<br/>ADR-012,<br/>label specs]:::dev
-    D22 --> D23[PR 59 and 60<br/>ADR-013, ADR-014]:::dev
-    D23 --> D24[PR 61 and 62<br/>training datasets]:::dev
-
-    classDef imp fill:#cfe2ff,stroke:#0d6efd,color:#000
-    classDef dev fill:#d4edda,stroke:#28a745,color:#000
+timeline
+    title From imported streaming code to a spec-driven platform
+    Imported code : Event contracts and reference : Guarded Redis store : Flink runtime : Kafka to Redis test
+    Streaming correctness : Replay idempotency : Late corrections : Second feature skip rate : Savepoint and crash recovery
+    Spec engine : Spec model ADR-008 : One generic Flink job : Spec-driven store ADR-009 : YAML-only feature
+    History and training data : Publication history ADR-011 : Published-as-of retrieval : Datasets ADR-014 : Event fact store ADR-015
+    Stores and serving : OnlineStore protocol ADR-013 : Cassandra store : Feature service ADR-016 : Benchmarks and metrics
 ```
 
-Blue stages were imported from the source commit. Green stages are development
-inside FeatureForge.
+The first column was imported from the source commit. Everything after it is development
+inside FeatureForge. The tables list every change with its merge commit.
+
+<details>
+<summary><b>Changes up to PR #62</b> · imports, streaming correctness, the spec engine, history and datasets</summary>
+
+<br>
 
 | Change | Merge commit | Content |
 |---|---|---|
@@ -108,6 +106,90 @@ inside FeatureForge.
 | PR #60 | `fa0dade` | ADR-014: training datasets from features and labels |
 | PR #61 | `cd8ff57` | The event-time training dataset |
 | PR #62 | `a05be67` | The published-as-of mode: a Spark join of a pinned history snapshot, status columns, the history start cut, a manifest with snapshot ids |
+
+</details>
+
+<details>
+<summary><b>Changes from PR #63 to PR #134</b> · event fact store, online stores, feature serving and measurements</summary>
+
+<br>
+
+| Change | Merge commit | Content |
+|---|---|---|
+| PR #63 | `98c10c4` | Run the published-as-of and dataset integration tests |
+| PR #64 | `55d490d` | Bring all documents up to date with history, labels and training datasets |
+| PR #65 | `2e6e1c2` | Prove online-offline parity of published_as_of against Redis (ADR-014) |
+| PR #66 | `03b1cc0` | Mark the Redis and published-as-of parity test as done |
+| PR #67 | `dfa7d1f` | Add the build-training-dataset command (ADR-014) |
+| PR #68 | `b59be75` | Add the training dataset loader (ADR-014) |
+| PR #69 | `bda7aab` | Add the Arrow batch loader and its benchmark (ADR-014) |
+| PR #70 | `f297f12` | Propose ADR-015 for the Iceberg event fact store |
+| PR #71 | `9303f5d` | Add the event fact table contract (ADR-015) |
+| PR #72 | `e5971a4` | Add the idempotent event append with identity conflicts (ADR-015) |
+| PR #73 | `c0a079b` | Add the event writer that appends validated Kafka events (ADR-015) |
+| PR #74 | `24d0340` | Read event_time datasets from the event table at a pinned snapshot (ADR-015) |
+| PR #75 | `2476fd3` | Rebuild a dataset at a chosen event snapshot (ADR-015) |
+| PR #76 | `bb5d4ef` | Add a benchmark for the event append (ADR-015) |
+| PR #77 | `2535382` | Let the event writer hold a partial batch (ADR-015) |
+| PR #78 | `7f36b8d` | State only what is proven in the README head and show the event fact store |
+| PR #79 | `3b3707e` | Describe work by topic instead of plan numbers |
+| PR #80 | `8d33741` | Label the streaming migration log by topic and PR |
+| PR #81 | `59980a3` | Compare the Flink windows with the event table evaluation (ADR-015) |
+| PR #82 | `cddbf7d` | Compare the Redis value with the event table evaluation for duplicate and invalid input (ADR-015) |
+| PR #83 | `cdcddc7` | Record the writer and Flink parity test in ADR-015 |
+| PR #84 | `0176e66` | Name the spec-driven path as the platform and Feast as batch path v1 |
+| PR #85 | `51f0058` | Describe the status by topic and drop plan-stage wording |
+| PR #86 | `4bdc49b` | Add ADR-016 for the feature serving service |
+| PR #87 | `b45ad00` | Add the feature serving service with status per value and one round trip (ADR-016) |
+| PR #88 | `6294466` | Serve features from a real Redis and check status, expiry and one MGET (ADR-016) |
+| PR #89 | `5f763a7` | Drill a stopped and a slow Redis behind Toxiproxy for the feature service (ADR-016) |
+| PR #90 | `26c9a8f` | Add an open-load benchmark for the feature serving service (ADR-016) |
+| PR #91 | `20b3da0` | Record the first feature serving baseline (ADR-016) |
+| PR #92 | `b4f0306` | Update STATUS.md with the feature serving baseline and its limits |
+| PR #93 | `ab6b3e5` | Parse each spec expression once and check text with one regex (ADR-016) |
+| PR #94 | `c400c3c` | Compile spec expressions once and decode records with a per-spec decoder (ADR-016) |
+| PR #95 | `a9dc5bc` | Run the feature service as a container in the Compose stack (ADR-016) |
+| PR #96 | `1178526` | Export lookup latency and entry status metrics from the feature service (ADR-016) |
+| PR #97 | `d3ee450` | Add Prometheus and a Grafana dashboard for the feature service (ADR-016) |
+| PR #98 | `f6edc82` | Add the OnlineStore protocol, a store factory and a backend contract suite (ADR-013) |
+| PR #99 | `8e61bc0` | Run the online store contract suite in the serving integration job |
+| PR #100 | `9ceccc2` | Run a local Cassandra node and check the table schema and conditional writes (ADR-013) |
+| PR #101 | `af9aabb` | Add CassandraSpecStore and run the store contract suite for both backends (ADR-013) |
+| PR #102 | `3746261` | Let the materializer write to the online store that the spec names (ADR-013) |
+| PR #103 | `25bd4b2` | Decide how the feature serving service reads from more than one backend (ADR-016) |
+| PR #104 | `127378e` | Read through a ServingReader and move the Redis read behind it (ADR-016) |
+| PR #105 | `436a9c0` | Bring STATUS.md up to date and sort the open items of ADR-015 |
+| PR #106 | `16f8a01` | Read from Cassandra in the feature serving service (ADR-016) |
+| PR #107 | `c668ebe` | Run a spec from events to the service on Cassandra (ADR-013, ADR-016) |
+| PR #108 | `5ae169a` | Run the feature serving benchmark against Cassandra (ADR-016) |
+| PR #109 | `d465dd5` | Benchmark the Cassandra serving reader against Redis (ADR-016) |
+| PR #110 | `f4076ce` | Compare two benchmark reports with a noise rule (ADR-016) |
+| PR #111 | `209da76` | Read serving rows as plain tuples from Cassandra (ADR-016) |
+| PR #112 | `f6c102a` | Measure plain tuple rows for the Cassandra reader (ADR-016) |
+| PR #113 | `5af38e1` | Set the comparison threshold to 10 percent and add make bench-compare (ADR-016) |
+| PR #114 | `8989796` | Add a runner with presets and safety checks and a CI smoke job (ADR-016) |
+| PR #115 | `19eb273` | Record the serving baselines of Redis and Cassandra after change 5 (ADR-016) |
+| PR #116 | `1aa83e9` | Remove statements that the Cassandra reader and the benchmarks made stale |
+| PR #117 | `575d958` | Count the error type of failed entries and judge the capacity by the median too (ADR-016) |
+| PR #118 | `d852555` | Let the runner replace the warm-up of a preset (ADR-016) |
+| PR #119 | `2205a4b` | Test whether a longer warm-up avoids the bursts after the seed (ADR-016) |
+| PR #120 | `8b6cfc8` | Show Redis and Cassandra serving numbers and the serving path in the README (ADR-016) |
+| PR #121 | `8a431e3` | Add the design document with the time model, store contract and comparison (ADR-016) |
+| PR #122 | `6908063` | Add make quickstart that writes three demo values and reads them through the feature service (ADR-016) |
+| PR #123 | `fc7ce15` | Add a dev container with Python, Docker and the quickstart (ADR-016) |
+| PR #124 | `4ff9a2c` | Link the design, benchmarks and observability documents in the README |
+| PR #125 | `fa74891` | Pin the dev container base image to a distribution release |
+| PR #126 | `514f735` | Add the measured Codespace setup and quickstart times |
+| PR #127 | `5386727` | Read Redis on the event loop instead of a worker thread (ADR-016) |
+| PR #128 | `c40d4b6` | Record the git state of the benchmark script's own tree |
+| PR #129 | `94625c4` | Extend the Redis rates of the record preset to 6,000 req/s (ADR-016) |
+| PR #130 | `dca0138` | Record the Redis serving baseline after change 6 (ADR-016) |
+| PR #131 | `3a31f56` | Add the second Redis record run and the latency monitor result (ADR-016) |
+| PR #132 | `734f747` | Record the Cassandra serving baseline after change 6 (ADR-016) |
+| PR #133 | `5420fb4` | Export the event loop lag of the feature service (ADR-016) |
+| PR #134 | `6f259c0` | Add a tour notebook from a spec to a measured service |
+
+</details>
 
 ---
 
@@ -266,19 +348,18 @@ the two original features delegate to it, so all three features expire.
 ### Generic job consolidation
 
 The generic job builds the windowed computation from a plan derived from a spec.
-It supports count aggregations and one entity key. Both features moved to it in
-stages, each verified before the next, with the hand-written job kept as a
+It supports count aggregations and one entity key. Both features moved to it one
+test group at a time, each verified before the next, with the hand-written job kept as a
 parity check until all tests passed on the generic job:
 
-- 4a: the eight skip-rate job scenarios (late corrections in both directions
-  with duplicates, too-late routing, both window edges, zero denominator).
-- 4b: the play-count golden fixture, with exact field set and hand-calculated
-  windows.
-- 4c: the play-count late correction and too-late routing.
-- 4d: play-count replay idempotency including the Redis materializer, and the
-  event-identity conflict failure.
-- 4e: the skip-rate Flink-to-Redis flow with corrections and replay.
-- 4f: the joined play-count flow from validation to Redis.
+| Test group | What ran on both jobs |
+|---|---|
+| Skip-rate job scenarios | Eight scenarios: late corrections in both directions with duplicates, too-late routing, both window edges, zero denominator |
+| Play-count golden fixture | Exact field set and hand-calculated windows |
+| Play-count late events | The late correction and the too-late routing |
+| Play-count replay and identity | Replay idempotency including the Redis materializer, and the event-identity conflict failure |
+| Skip-rate Flink to Redis | The flow with corrections and replay |
+| Joined play-count flow | From validation to Redis |
 
 When the generic job became the only job, the hand-written jobs `jobs/user_play_count_1h.py` and
 `jobs/user_skip_rate_24h.py` were removed, together with the `hand_written` test
@@ -421,6 +502,90 @@ second run with the same consumer group does nothing. A replay with a new group
 reads all 130 records again and yields 128 `stale` and 2 `unchanged`, so a
 replay cannot undo the stored state.
 
+### Parity of Redis and published-as-of (PR #65)
+
+`tests/integration/test_materialize_spec_kafka_to_history.py` runs the play-count spec through two
+bounded runs of one entity and requires that the value in Redis equals the value that
+`published_as_of` returns from the history. It covers one entity. Several entities and the TTL
+expiry are not compared.
+
+### Dataset command and loaders (PRs #67 to #69)
+
+`build-training-dataset` writes a dataset in either mode. `load_training_dataset` reads one back
+with pandas and checks it against the manifest. `open_training_batches` makes the same checks from
+the Parquet metadata and yields Arrow batches in partition order
+([ADR-014](adr/ADR-014-training-datasets.md)).
+
+### Event fact store (ADR-015, PRs #70 to #77, #81 and #82)
+
+Validated events are kept as immutable Iceberg facts in `facts.interaction_events`, partitioned by
+`day(event_time)` and with `ingested_at`
+([ADR-015](adr/ADR-015-iceberg-event-fact-store.md)).
+
+- **Idempotent append.** `EventLog.append` is idempotent by `event_id`: the first row wins and
+  keeps its `ingested_at`, and the same id with another payload fails and writes nothing.
+- **Event writer.** It reads the raw topic in its own consumer group, validates with
+  `route_event_json`, appends before it commits the offset and counts rejections without storing
+  them. It does not run in Flink. `--max-batch-seconds` lets a partial batch wait, so a low rate
+  writes fewer, larger files.
+- **Pinned reads.** `build-training-dataset --mode event_time --events-root` reads the table at
+  the snapshot that is current at the start, or at `--events-snapshot-id`, and records it in the
+  manifest.
+- **Comparison with the online path.** The windows of the Flink job and the value in Redis are
+  compared with an evaluation of the event table, for one input with a duplicate and two invalid
+  payloads.
+
+The writer and the Flink job read the topic independently, so an event can be online before it
+is in the table or the other way round. The table has one writer, no compaction and no retention.
+
+### Online store protocol and Cassandra (ADR-013, PRs #98 to #102 and #107)
+
+The spec-driven store became one of two backends behind the `OnlineStore` protocol
+([ADR-013](adr/ADR-013-online-store-protocol.md)).
+
+- **Protocol and factory (PR #98).** `read` returns a validated record or `None`, `write`
+  returns `written`, `unchanged` or `stale`. A store factory follows `online.store` in the spec.
+  One contract suite, `tests/integration/test_online_store_contract.py`, defines the behavior.
+- **Cassandra node and schema (PR #100).** One local node behind the Compose profile
+  `cassandra`, one table `online_features` with the partition `(entity_key, entity_value)` and
+  the clustering column `feature`. `ensure_schema` never alters a table and fails on a mismatch.
+- **`CassandraSpecStore` (PR #101).** Lightweight transactions guard the write, `USING TTL`
+  sets the expiry, and the payload is the JSON of the Redis value, unchanged. The contract suite
+  runs for both backends.
+- **Materializer (PR #102).** `materialize_spec` writes to the backend that the spec names,
+  shown from Kafka to Cassandra in `tests/integration/test_materialize_spec_kafka_to_cassandra.py`.
+- **End to end (PR #107).** `tests/integration/test_cassandra_end_to_end.py` runs
+  `content_play_count_1h` from events through the validation job, the generic Flink job, the
+  materializer and the feature service on Cassandra, with only `online.store` changed.
+
+The local Cassandra is one node. It proves the protocol logic and nothing about replication.
+
+### Feature serving (ADR-016, PRs #86 to #97 and #103 to #133)
+
+The unified client of PR #7 is a library with fixed feature groups, Feast on the path and one
+entity per call. The feature serving service is the network contract for features that are
+defined by specs ([ADR-016](adr/ADR-016-feature-serving.md)).
+
+- **Service (PR #87).** A request names several entities and features and gets one entry per
+  pair with a status: `ok`, `missing`, `stale` or `backend_error`. A value is never replaced by a
+  silent zero. There are no retries in the request path.
+- **Real Redis and fault drills (PRs #88 and #89).** The status, the expiry and one `MGET` per
+  request are checked against a real Redis. A stopped and a slow Redis behind Toxiproxy give
+  `backend_error` within the budget, and the service recovers.
+- **Readers (PRs #104 and #106).** The service reads through a `ServingReader`, chosen by
+  `online.store`. The Cassandra reader makes one partition read per entity and runs them
+  concurrently.
+- **Metrics and dashboard (PRs #96, #97 and #133).** Lookup duration, entries by status, requests
+  by outcome and the event loop lag, with Prometheus and a Grafana dashboard in the Compose
+  stack ([observability.md](observability.md)).
+- **Measurements (PRs #90 to #94, #108 to #119 and #127 to #132).** An open-load benchmark, a
+  compare script with a noise rule and a runner with safety checks. The numbers, the setup and
+  the limits are in [benchmarks.md](benchmarks.md) and nowhere else in this document.
+- **Quickstart (PRs #122 and #123).** `make quickstart` writes demo values through the spec
+  store and reads them through the service, locally or in a dev container.
+
+<div align="right"><a href="#top">Back to top</a></div>
+
 ---
 
 ## Current implementation
@@ -431,14 +596,18 @@ replay cannot undo the stored state.
 | Play count 1h | `jobs/feature_from_spec.py` with `feature_repo/specs/user_play_count_1h.yaml` | 1 h windows, 1 min slide, 24 h dedupe TTL |
 | Skip rate 24h | `jobs/feature_from_spec.py` with `feature_repo/specs/user_skip_rate_24h.yaml` | 24 h windows, 1 min slide, 48 h dedupe TTL |
 | Content play count 1h | `jobs/feature_from_spec.py` with `feature_repo/specs/content_play_count_1h.yaml` | 1 h windows, 1 min slide, 24 h dedupe TTL, entity `content_id` |
-| Materializers | `src/featureforge/streaming/materialize.py`, `materialize_skip_rate.py` | The two original features. Thin entry points over `materialize_spec` that keep the original command lines. Single-partition topics, empty ranges and tombstones rejected, offsets committed only after Redis succeeds, all from the generic code |
+| Materializers | `src/featureforge/streaming/materialize.py`, `materialize_skip_rate.py` | The two original features. Thin entry points over `materialize_spec` that keep the original command lines. Single-partition topics, empty ranges and tombstones rejected, offsets committed only after the store write succeeds, all from the generic code |
 | Online stores | `online_store.py`, `skip_rate_store.py` | The two original features. Thin wrappers over `RedisSpecStore` that keep the typed models and constructors. Guarded Redis writes with `online.ttl` expiry |
-| Spec-driven materializer | `src/featureforge/streaming/materialize_spec.py` | Any count or ratio spec. Topic derived from the spec, records validated against the spec, same guarantees as the original materializers |
+| Spec-driven materializer | `src/featureforge/streaming/materialize_spec.py` | Any count or ratio spec. Topic derived from the spec, records validated against the spec, written to the store that the spec names, same guarantees as the original materializers |
 | Spec-driven store | `src/featureforge/streaming/spec_store.py`, `contracts/feature_record.py`, `contracts/count_vector.py` | Any count or ratio spec with one entity key. Guarded writes with `WATCH`/`MULTI`, `append_only` and `componentwise_monotonic`, `online.ttl` as Redis expiry |
 | Unified access | `src/featureforge/online.py` | Batch features, streaming play count and skip rate. The skip-rate reader is optional in the constructor and always set by `from_local` |
 | Feature specs | `src/featureforge/spec/`, `feature_repo/specs/` | Drive the generic Flink job for all three features |
 | History and published-as-of | `src/featureforge/streaming/history.py`, `published_as_of.py`, `published_spark.py` | One Iceberg table per spec, an idempotent append by update identity, the evidence append of `materialize_spec` with `--history-root`, and the rule of ADR-010 in Python and as one Spark join |
 | Labels and training datasets | `src/featureforge/spec/label_model.py`, `label_reference.py`, `label_spark.py`, `training_dataset.py` | Label windows `(t, t + horizon]`, and datasets in `event_time` and `published_as_of` mode with a manifest |
+| Event fact store | `src/featureforge/streaming/event_log.py`, `event_writer.py`, `events_spark.py` | One Iceberg table of validated events, idempotent by `event_id`. The writer reads the raw topic in its own consumer group and commits the offset after the append. Spark reads a pinned snapshot |
+| Online store protocol | `src/featureforge/streaming/store_protocol.py` | `OnlineStore` with `read` and `write`, and the store factory `create_online_store` that follows `online.store` |
+| Cassandra store | `src/featureforge/streaming/cassandra_store.py`, `cassandra_schema.py`, `cassandra_connection.py` | Any count or ratio spec with one entity key. Lightweight transactions, `USING TTL`, the same payload as Redis |
+| Feature serving service | `src/featureforge/feature_service.py`, `service_api.py`, `serving_reader.py`, `redis_serving_reader.py`, `cassandra_serving_reader.py`, `service_metrics.py` | One entry with a status per entity and feature, a budget per request, no retries, Prometheus metrics |
 
 All three features run on the generic job and share watermark delay (10 min),
 allowed lateness (30 min), checkpointing (10 s), too-late side outputs,
@@ -459,6 +628,10 @@ The unified interface reads the skip rate next to the play count. A missing key,
 
 ## Verification boundaries
 
+> [!WARNING]
+> A row marked **Not verified** is not a guarantee. Fresh bounded reprocessing is not recovery,
+> and passing replay tests are not exactly-once delivery.
+
 | Claim | Status |
 |---|---|
 | Rejected-event routing, late correction, too-late routing, skip-rate corrections, duplicates, replay of retained output | Verified locally and in CI |
@@ -467,16 +640,20 @@ The unified interface reads the skip rate next to the play count. A missing key,
 | JobManager failure and checkpoints on a shared volume | **Not verified.** Checkpoints are held in JobManager memory |
 | Dedupe expiry after the TTL | Verified for the play-count spec with a shortened TTL (30 s): a redelivery after expiry is counted again. The production values of 24 h and 48 h are not exercised |
 | Multiple Kafka partitions | **Not verified.** Topics are single-partition |
-| Sustained operation and performance targets | **Not verified** |
+| Sustained operation and performance targets of the streaming path | **Not verified.** There is no soak run and no throughput number for the Flink job or the materializer |
+| Latency of the feature serving service | Measured on one laptop with one service process, for Redis and Cassandra ([benchmarks.md](benchmarks.md)). Local measurements, not production numbers |
 | Exactly-once delivery | **Not claimed.** Flink Kafka sinks use `AT_LEAST_ONCE` |
 | Zero emission for inactive users | **Not established.** A newer window can replace a value with zero, but no window job emits zero merely because time advances |
 | Streaming publication evidence and published-as-of retrieval | Verified: the history append, the Python `published_as_of`, and the Spark join of a pinned snapshot, which equals the Python rule at the publication and TTL boundaries on randomized histories. The parity between a Redis value and the published-as-of value over two bounded runs of one entity is tested (PR #65). **Not verified:** gaps inside the history, several appender processes, and the parity for several entities and at TTL expiry. Backfills and datasets never write a `published_at` |
 | Training datasets | Verified in both modes: the leakage rule at `t` and at `t + horizon`, exclusion of incomplete label windows, the cut at the latest history start including its edge, status columns with null values, and the manifest counts and snapshot ids. Composite keys fail by design in `published_as_of` mode |
 | Atomic mixed batch and stream reads | **Not provided** (`atomic: false`) |
 | Spec-driven execution in Flink | Verified for count and ratio features: the generic job is the only implementation of all three streaming features |
-| Spec-driven store and materializer for count and ratio specs | Verified end to end for `content_play_count_1h` (events to Redis: hand-calculated windows, redelivered event, TTL, rerun, replay). Verified for the skip-rate spec by unit tests and Redis integration tests. The two original features run on the same code through thin wrappers |
-| `online.ttl` as a Redis expiry | Verified for the spec-driven store: set by written updates, not extended by unchanged or stale updates, measured in wall-clock time. The two original features get the same expiry through their wrappers |
+| Spec-driven store and materializer for count and ratio specs | Verified end to end for `content_play_count_1h` (events to Redis: hand-calculated windows, redelivered event, TTL, rerun, replay, and events to Cassandra through the service). Verified for the skip-rate spec by unit tests and Redis integration tests. The two original features run on the same code through thin wrappers |
+| `online.ttl` as an expiry | Verified for the spec-driven store: set by written updates, not extended by unchanged or stale updates, measured in wall-clock time. The two original features get the same expiry through their wrappers |
 | `WATCH` retry of the spec-driven store | Verified with a mocked pipeline and, through the two wrappers, with a real concurrent writer on Redis |
+| Online store contract on two backends | Verified: one contract suite runs for Redis and for Cassandra, and the materializer writes to the backend that the spec names. Cassandra runs as one local node, so replication and the failure of a node are **not verified** |
+| Status per served value | Verified: `ok`, `missing`, `stale` and `backend_error` against a real Redis, a stopped and a slow Redis, and a real Cassandra. The budget is a socket timeout and not a deadline over the whole request |
+| Event fact store | Verified: the idempotent append, the identity conflict, the offset commit after the append, and a dataset from a pinned snapshot. **Not verified:** several writers, compaction, retention and several partitions |
 | `window_replace` store policy | **Not implemented** |
 | Spark features from a spec | Count aggregations only (`backfill-spec`). Other operators fail loudly, and the two original Spark features are hand-written |
 
@@ -493,8 +670,8 @@ The online-serving tests are not marked `integration`. They can run under
 `-m "not integration"` when their availability check passes, which verifies
 offline files and Redis connectivity but not that expected online values are
 materialized. The unified, routing, late-event, savepoint, crash-recovery,
-dedupe-expiry, skip-rate, spec-driven store, spec-driven materializer and
-end-to-end tests are marked `integration`. So are the Spark tests that read the history and the dataset tests with a history.
+dedupe-expiry, skip-rate, spec-driven store, spec-driven materializer,
+end-to-end, Cassandra, contract-suite and feature-service tests are marked `integration`. So are the Spark tests that read the history and the dataset tests with a history.
 
 ### Open test-maintenance items
 
@@ -513,16 +690,32 @@ These are maintenance items and not failures of passing tests.
 
 FeatureForge has an integrated, tested streaming path with event validation,
 event-time windows, bounded replay idempotency, identity-conflict detection,
-guarded Redis materialization, rejected-event routing, continuous late
+guarded materialization, rejected-event routing, continuous late
 correction, savepoint stop and resume, recovery from a TaskManager crash, dedupe expiry after a shortened TTL, and
-three streaming features. Unified batch and stream online access covers the play
-count and the skip rate. All three features run on one generic spec-driven Flink job. A
-spec-driven store and materializer serve count and ratio features, and a
+three streaming features. All three features run on one generic spec-driven Flink job. A
+spec-driven store and materializer serve count and ratio features on Redis or Cassandra, and a
 feature defined by a YAML spec alone (`content_play_count_1h`) is proven from
-events to Redis. The stores and materializers of the two original features are thin wrappers
-over the spec-driven ones. A Spark backfill from a spec covers count aggregations, and the two original Spark features are hand-written.
+events to Redis and from events to the feature service on Cassandra. The stores and materializers
+of the two original features are thin wrappers over the spec-driven ones. Accepted updates are
+recorded in a publication history, validated events in an event fact table, and training datasets
+read both at pinned snapshots. The feature serving service returns a status for every value, and
+its latency is measured on one laptop. Unified batch and stream online access through
+`OnlineFeatureClient` covers the play count and the skip rate. A Spark backfill from a spec covers
+count aggregations, and the two original Spark features are hand-written.
 
 Remaining before the streaming path can be called complete: JobManager-failure
-recovery verification, verification at the production TTL values, gap detection inside the streaming history, and a reproducible completion demonstration. These must be
+recovery verification, verification at the production TTL values, gap detection inside the
+streaming history, several Kafka partitions, a soak run, and a reproducible completion
+demonstration. These must be
 completed or explicitly scoped. For current test and CI results see the README
 badge and the Actions page, not this document.
+
+---
+
+<div align="center">
+
+[README](../README.md) · [Architecture](../ARCHITECTURE.md) · [Status](../STATUS.md) · [Design](DESIGN.md) · [Benchmarks](benchmarks.md)
+
+<a href="#top">Back to top</a>
+
+</div>

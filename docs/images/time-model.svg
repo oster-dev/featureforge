@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 380" width="1000" height="380" role="img" aria-labelledby="t d">
+<title id="t">Feature window and label window</title>
+<desc id="d">The feature window is right-closed and covers the events after t minus size up to and including the observation time t. The label window covers events strictly after t up to and including t plus horizon. An event exactly at t is a feature and never the label. An event exactly at t minus size is outside the feature window.</desc>
+<defs>
+  <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#0d1117"/><stop offset="1" stop-color="#161b22"/>
+  </linearGradient>
+  <linearGradient id="forge" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#ffd08a"/><stop offset="0.5" stop-color="#ff9a4a"/><stop offset="1" stop-color="#f0603c"/>
+  </linearGradient>
+  <linearGradient id="cool" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#9ecbff"/><stop offset="1" stop-color="#58a6ff"/>
+  </linearGradient>
+  <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+    <stop offset="0" stop-color="#ff9a4a" stop-opacity="0.35"/><stop offset="1" stop-color="#ff9a4a" stop-opacity="0"/>
+  </radialGradient>
+  <radialGradient id="glowBlue" cx="0.5" cy="0.5" r="0.5">
+    <stop offset="0" stop-color="#58a6ff" stop-opacity="0.28"/><stop offset="1" stop-color="#58a6ff" stop-opacity="0"/>
+  </radialGradient>
+  <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+    <path d="M32 0H0V32" fill="none" stroke="#ffffff" stroke-opacity="0.035" stroke-width="1"/>
+  </pattern>
+  <filter id="soft" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="3"/></filter>
+</defs>
+<clipPath id="cardclip"><rect x="2" y="2" width="996" height="376" rx="17"/></clipPath><rect x="1" y="1" width="998" height="378" rx="18" fill="url(#bg)" stroke="#30363d" stroke-width="2"/><rect x="1" y="1" width="998" height="378" rx="18" fill="url(#grid)"/>
+<text x="56" y="56" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif" font-size="24" font-weight="700" fill="#e6edf3">Two windows that meet at t and never overlap</text>
+<text x="56" y="82" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif" font-size="14" fill="#9da7b3">Features use only information up to t. The label uses only events strictly after t.</text>
+
+<rect x="170" y="156" width="350" height="116" rx="10" fill="#ff9a4a" fill-opacity="0.10" stroke="#ff9a4a" stroke-opacity="0.5"/>
+<rect x="520" y="156" width="350" height="116" rx="10" fill="#58a6ff" fill-opacity="0.10" stroke="#58a6ff" stroke-opacity="0.5"/>
+<text x="345.0" y="182" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif" font-size="15" font-weight="700" fill="#ff9a4a">feature window</text>
+<text x="345.0" y="258" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace" font-size="14" fill="#ff9a4a">(t − size, t]</text>
+<text x="695.0" y="182" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif" font-size="15" font-weight="700" fill="#58a6ff">label window</text>
+<text x="695.0" y="258" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace" font-size="14" fill="#58a6ff">(t, t + horizon]</text>
+
+<path d="M70,214 H950" stroke="#9da7b3" stroke-width="2"/>
+<path d="M950,214 l-10,-6 v12 z" fill="#9da7b3"/>
+<text x="950" y="238" text-anchor="end" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif" font-size="12" fill="#6e7681">event time</text>
+<path d="M520,138 V290" stroke="#e6edf3" stroke-width="2" stroke-dasharray="5 5"/>
+<circle cx="170" cy="214" r="7" fill="none" stroke="#6e7681" stroke-width="2.5"><animate attributeName="r" values="7;10;7" dur="3.2s" begin="0.00s" repeatCount="indefinite"/></circle><circle cx="300" cy="214" r="7" fill="#ff9a4a" stroke="#ff9a4a" stroke-width="2.5"><animate attributeName="r" values="7;10;7" dur="3.2s" begin="0.25s" repeatCount="indefinite"/></circle><circle cx="410" cy="214" r="7" fill="#ff9a4a" stroke="#ff9a4a" stroke-width="2.5"><animate attributeName="r" values="7;10;7" dur="3.2s" begin="0.50s" repeatCount="indefinite"/></circle><circle cx="520" cy="214" r="7" fill="#ff9a4a" stroke="#ff9a4a" stroke-width="2.5"><animate attributeName="r" values="7;10;7" dur="3.2s" begin="0.75s" repeatCount="indefinite"/></circle><circle cx="560" cy="214" r="7" fill="#58a6ff" stroke="#58a6ff" stroke-width="2.5"><animate attributeName="r" values="7;10;7" dur="3.2s" begin="1.00s" repeatCount="indefinite"/></circle><circle cx="700" cy="214" r="7" fill="#58a6ff" stroke="#58a6ff" stroke-width="2.5"><animate attributeName="r" values="7;10;7" dur="3.2s" begin="1.25s" repeatCount="indefinite"/></circle><circle cx="870" cy="214" r="7" fill="#58a6ff" stroke="#58a6ff" stroke-width="2.5"><animate attributeName="r" values="7;10;7" dur="3.2s" begin="1.50s" repeatCount="indefinite"/></circle><circle cx="930" cy="214" r="7" fill="none" stroke="#6e7681" stroke-width="2.5"><animate attributeName="r" values="7;10;7" dur="3.2s" begin="1.75s" repeatCount="indefinite"/></circle>
+
+<g font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace" font-size="13" fill="#9da7b3" text-anchor="middle">
+  <text x="170" y="298">t − size</text>
+  <text x="520" y="310" fill="#e6edf3" font-weight="700">t</text>
+  <text x="870" y="298">t + horizon</text>
+</g>
+<g font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif" font-size="12.5">
+  <text x="170" y="318" text-anchor="middle" fill="#6e7681">excluded</text>
+  <text x="520" y="330" text-anchor="middle" fill="#ff9a4a">a feature, never the label</text>
+  <text x="870" y="318" text-anchor="middle" fill="#58a6ff">still the label</text>
+</g>
+<g font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif" font-size="12.5" fill="#9da7b3">
+  <circle cx="64" cy="350" r="6" fill="#ff9a4a"/><text x="78" y="354">counted as a feature</text>
+  <circle cx="232" cy="350" r="6" fill="#58a6ff"/><text x="246" y="354">counted as the label</text>
+  <circle cx="394" cy="350" r="6" fill="none" stroke="#6e7681" stroke-width="2.5"/><text x="408" y="354">outside both windows</text>
+  <text x="944" y="354" text-anchor="end">Incomplete label windows are excluded and counted.</text>
+</g>
+</svg>

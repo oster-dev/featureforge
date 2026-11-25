@@ -1,14 +1,29 @@
+<a id="top"></a>
+
+<div align="center">
+  <img src="docs/images/header-architecture.svg" alt="FeatureForge architecture: what is implemented and tested today" width="100%">
+</div>
+
 # FeatureForge Architecture
+
+<div align="center">
+
+[Overview](#1-system-overview) · [Batch path v1](#2-batch-path-v1) · [Streaming](#3-streaming-path) · [Specs](#4-declarative-feature-specs) · [History and datasets](#5-history-event-facts-and-training-datasets) · [Online stores](#6-online-stores) · [Serving](#7-feature-serving) · [Metrics and benchmarks](#8-observability-and-benchmarks) · [CI](#9-testing-and-ci) · [Known limits](#known-limits)
+
+</div>
 
 FeatureForge computes features once and serves them consistently for offline
 training and online reads, from batch and streaming sources.
 
-This document describes what is **implemented and tested today**.
+> [!NOTE]
+> This document describes what is **implemented and tested today**. What is delivered, in
+> progress and out of scope is in [STATUS.md](STATUS.md), and the reasons behind the design are
+> in [docs/DESIGN.md](docs/DESIGN.md).
 
 The platform is the spec-driven path: one YAML spec drives the Flink job, the
-Spark backfill for count specs, the Redis store, the publication history and the training
-datasets. The Feast-based batch path (section 2) is batch path v1. It serves
-the original batch features and was built first. Those features are not yet
+Spark backfill for count specs, the Redis or Cassandra store, the feature serving service, the
+publication history and the training datasets. The Feast-based batch path (section 2) is batch
+path v1. It serves the original batch features and was built first. Those features are not yet
 defined as specs.
 
 ---
@@ -16,30 +31,52 @@ defined as specs.
 ## 1. System overview
 
 ```mermaid
-flowchart LR
+flowchart TB
+    GEN[Deterministic<br/>synthetic generator]
+    EV[(Kafka<br/>interaction-events.v1)]
+
+    subgraph Stream["Streaming path · spec-driven"]
+        direction LR
+        VAL[Flink validation<br/>and routing] --> FJ[Flink feature job<br/>event time · dedupe · windows] --> MAT[Guarded<br/>materializer]
+        VAL -.-> REJ[(Rejected topic)]
+        FJ -.-> LATE[(Late topic)]
+    end
+
     subgraph Batch["Batch path v1"]
-        GEN[Synthetic<br/>generator] --> REF[Pandas reference<br/>PySpark engine]
-        REF --> OFF[(Canonical offline store<br/>partitioned Parquet)]
-        OFF --> GATE{Correctness<br/>and freshness gates}
+        direction LR
+        PD[Pandas reference<br/>PySpark engine] --> OFF[(Offline store<br/>partitioned Parquet)] --> GATE{Correctness and<br/>freshness gates} --> FEAST[Feast]
     end
 
-    subgraph Stream["Streaming path"]
-        K0[(Kafka<br/>raw events)] --> VAL[Flink validation<br/>and routing]
-        VAL --> K1[(Kafka<br/>validated events)]
-        K1 --> FJ[Flink feature job<br/>spec-driven, event time,<br/>dedupe, windows]
-        FJ --> K2[(Kafka<br/>feature topics)]
-        K2 --> MAT[Guarded<br/>materializers]
+    subgraph Online["Online stores and serving"]
+        direction LR
+        REDIS[(Redis)]
+        CASS[(Cassandra)]
+        SVC[Feature serving service<br/>status per entry · budget · metrics]
+        API[Unified online client<br/>batch path v1]
+        REDIS --> SVC
+        CASS --> SVC
+        REDIS --> API
     end
 
-    GATE --> FEAST[Feast]
-    FEAST -->|historical retrieval| TRAIN[Training pipeline]
-    FEAST -->|materialization| REDIS[(Redis<br/>online store)]
-    MAT --> REDIS
-    MAT --> HIST[(History table<br/>Iceberg, publication evidence)]
-    EV[(Interaction events)] --> DS[Spark dataset builder<br/>event_time and published_as_of]
-    HIST --> DS
-    DS --> DSOUT[(Training dataset<br/>Parquet and manifest)]
-    REDIS --> CLIENT[Unified online client<br/>availability and freshness]
+    subgraph Train["History and training data"]
+        direction LR
+        WRITER[Event writer<br/>append, then commit offset] --> FACT[(Event fact table<br/>Iceberg · once per event_id)]
+        HIST[(Publication history<br/>Iceberg · published_at)]
+        DS[Spark dataset builder<br/>event_time · published_as_of]
+        DSOUT[(Training dataset<br/>Parquet and manifest)]
+        FACT --> DS
+        HIST --> DS
+        DS --> DSOUT
+    end
+
+    GEN --> PD
+    EV --> VAL
+    EV --> WRITER
+    MAT -->|online.store| REDIS
+    MAT -->|online.store| CASS
+    MAT -->|evidence append| HIST
+    FEAST -->|materialization| REDIS
+    FEAST -->|historical retrieval| TP[Training pipeline<br/>point-in-time retrieval]
 ```
 
 | Concern | Implementation |
@@ -47,13 +84,16 @@ flowchart LR
 | Batch features | Pandas (reference), PySpark (parity-tested) |
 | Spec-driven backfill | PySpark, count specs: values at explicit observation times, equal to the spec reference, no availability time |
 | Offline store | One canonical Parquet root, Hive-style `observation_date` partitions |
-| Publication history | One Iceberg table per spec (PyIceberg writes, Spark reads, SQLite or PostgreSQL catalog), appended idempotently by `materialize_spec` with `--history-root` |
-| Training datasets | Spark: features from events (`event_time`) or from a pinned history snapshot (`published_as_of`), a label from events, Parquet by UTC day and a manifest |
-| Batch path v1: retrieval and materialization | Feast, point-in-time joins |
 | Streaming | Kafka, Flink (PyFlink), Pydantic contracts |
 | Feature definitions as data | YAML specs, Pydantic validation, exact reference, one generic Flink job for all spec-defined streaming features |
-| Online store | Redis. One spec-driven store and materializer for count and ratio specs. The two original features keep their typed models and command lines as thin wrappers over it |
-| Quality | pytest, Ruff, mypy, four CI layers |
+| Online store | Redis and Cassandra behind the `OnlineStore` protocol, chosen by `online.store` in the spec. One spec-driven store and materializer for count and ratio specs. The two original features keep their typed models and command lines as thin wrappers over it |
+| Feature serving | A FastAPI service (`featureforge-serve`) with a `ServingReader` per backend: one entry with a status for every entity and feature, a budget per request, no retries |
+| Publication history | One Iceberg table per spec (PyIceberg writes, Spark reads, SQLite or PostgreSQL catalog), appended idempotently by `materialize_spec` with `--history-root` |
+| Event fact store | One Iceberg table of validated events, idempotent by `event_id`, read at a pinned snapshot |
+| Training datasets | Spark: features from events (`event_time`) or from a pinned history snapshot (`published_as_of`), a label from events, Parquet by UTC day and a manifest |
+| Batch path v1: retrieval and materialization | Feast, point-in-time joins |
+| Observability | Prometheus metrics of the service, a provisioned Grafana dashboard, an open-load benchmark with a compare script |
+| Quality | pytest, Ruff, mypy, six CI jobs |
 
 ---
 
@@ -90,6 +130,8 @@ flowchart LR
 
 ### Topics and jobs
 
+The diagram shows the three shipped specs. Every spec gets its own feature topic and its own late topic.
+
 ```mermaid
 flowchart LR
     RAW[(interaction-events.v1)] --> V[Validation job]
@@ -108,7 +150,7 @@ flowchart LR
     PF --> M1[Play-count<br/>materializer]
     SF --> M2[Skip-rate<br/>materializer]
     CF --> M3[Spec-driven<br/>materializer]
-    M1 --> R[(Redis)]
+    M1 --> R[(Online store<br/>Redis or Cassandra,<br/>named by the spec)]
     M2 --> R
     M3 --> R
 ```
@@ -197,15 +239,17 @@ flowchart TD
   the componentwise rule. It is checked against the hand-written skip-rate
   policy on 768 combinations. `window_replace` is not implemented and the store
   refuses it at construction.
-- **TTL.** The spec-driven store sets `online.ttl` as a Redis expiry with every
-  written update. The expiry runs in wall-clock time from the last accepted
+- **TTL.** The spec-driven store sets `online.ttl` as an expiry with every
+  written update (`SET ... EX` in Redis, `USING TTL` in Cassandra). The expiry runs in wall-clock time from the last accepted
   write, and unchanged or stale updates do not extend it. An expired key reads
   as missing, never as zero. The wrappers of the two original features use the
   same store, so their keys expire too.
-- **Keys.** `featureforge-stream:online:v{spec.version}:{spec.name}:{entity}`,
+- **Keys.** In Redis `featureforge-stream:online:v{spec.version}:{spec.name}:{entity}`,
   identical to the keys of the two original features. A new spec version opens a
-  new namespace.
-- **Concurrency.** Writers use Redis `WATCH`/`MULTI` with bounded retries.
+  new namespace. Cassandra keeps the same namespace per spec in one table
+  (see [Online stores](#6-online-stores)).
+- **Concurrency.** The write is guarded and retried at most 16 times: Redis
+  `WATCH`/`MULTI`, Cassandra lightweight transactions.
 
 ### Materializers
 
@@ -213,18 +257,25 @@ flowchart TD
 sequenceDiagram
     participant K as Kafka feature topic
     participant M as Materializer
-    participant R as Redis
+    participant S as Online store
+    participant H as History table
     K->>M: poll record
-    M->>M: validate contract
-    M->>R: guarded write
-    alt write succeeded or stale
+    M->>M: validate the record against the spec
+    M->>S: guarded write
+    S-->>M: written, unchanged or stale
+    opt a history root is set and the update was accepted
+        M->>H: append evidence with published_at
+    end
+    alt every step succeeded
         M->>K: commit offset
-    else write failed
-        M--xK: no commit, record retried later
+    else a step failed
+        M--xK: no commit, the record is read again
     end
 ```
 
-Offsets are committed only after the Redis write. A materializer refuses an
+The order is fixed: store write, evidence append, offset commit. Offsets are committed only after
+the store write and the evidence append, so a crash repeats work and never skips it. A replay
+decides again and sees `unchanged` for a write that was already applied. A materializer refuses an
 empty Kafka range instead of silently completing without work.
 
 The spec-driven materializer (`materialize_spec`) takes a spec instead of a
@@ -232,8 +283,11 @@ feature-specific module. It derives the feature topic from the spec
 (`features.{name with hyphens}.v{version}`, which equals the topics of the two
 original features), validates every record against the spec with
 `parse_feature_record`, including the derived values, and writes it through the
-spec-driven store. It reads single-partition topics only and rejects
+spec-driven store. The store comes from the store factory, which follows `online.store` in the spec, so the same
+materializer writes to Redis or to Cassandra. It reads single-partition topics only and rejects
 tombstones. An invalid record stops the run without committing its offset.
+
+<div align="right"><a href="#top">Back to top</a></div>
 
 ---
 
@@ -252,7 +306,7 @@ flowchart LR
     G --> T[(Feature topic)]
     T --> MS[Spec-driven<br/>materializer]
     L --> MS
-    MS --> RS[(Redis<br/>spec-driven store)]
+    MS --> RS[(Online store<br/>Redis or Cassandra)]
     FX[(Golden fixture<br/>hand-calculated)] --> R
     FX --> G
     R -.->|compared with| G
@@ -287,8 +341,8 @@ flowchart LR
   entity `content_id`, runs on it without code changes.
 - **Spec-driven online path.** `parse_feature_record` validates the record the
   job emits against the spec: field set, entity id, window length, counts and
-  recomputed derived values. `RedisSpecStore` writes it with the policy of the
-  spec, and `materialize_spec` moves a feature topic into Redis. For
+  recomputed derived values. `RedisSpecStore` or `CassandraSpecStore` writes it with the policy of the
+  spec, and `materialize_spec` moves a feature topic into the store that the spec names. For
   `content_play_count_1h` the whole path from events to Redis is covered by an
   end-to-end test with hand-calculated windows, a redelivered event, the TTL, an
   idempotent rerun and a replay that cannot undo the stored state (ADR-009).
@@ -301,22 +355,24 @@ flowchart LR
 
 ---
 
-## 5. History and training datasets
-
+## 5. History, event facts and training datasets
 
 ```mermaid
 flowchart LR
-    MS[Spec-driven<br/>materializer] --> R[(Redis)]
+    MS[Spec-driven<br/>materializer] --> R[(Online store)]
     MS -->|after a written result| H[(History table<br/>one per spec)]
     H -->|pinned snapshot| J[Spark join<br/>latest version at or before t<br/>TTL cutoff]
-    EV[(Events)] --> BF[Spark backfills<br/>features up to t<br/>label after t]
+    RAW[(Kafka<br/>raw events)] --> W[Event writer<br/>validate, append,<br/>then commit offset]
+    W --> EV[(Event fact table<br/>pinned snapshot)]
+    JS[(Events JSONL)] --> BF
+    EV --> BF[Spark backfills<br/>features up to t<br/>label after t]
     J --> DS[Dataset builder<br/>mode required]
     BF --> DS
     DS --> OUT[(Parquet by UTC day<br/>and manifest)]
 ```
 
 
-- **Publication evidence.** After Redis returns `written`, the materializer
+- **Publication evidence.** After the store returns `written`, the materializer
   appends the update to the history table of the spec with `published_at`, one
   UTC clock reading. The table is partitioned by the day of `published_at`, the
   first row of an update identity wins, and one appender per table is the rule
@@ -353,11 +409,134 @@ flowchart LR
   `not_published`. The `build-training-dataset` command writes a dataset in either mode and `load_training_dataset` reads it back through the manifest, and `open_training_batches` yields it as Arrow batches. See
   [Known limits](#known-limits) and [STATUS.md](STATUS.md).
 
+### Event fact store
+
+Validated events are kept as immutable facts, so a training dataset can be rebuilt from a pinned
+snapshot instead of from a file ([ADR-015](docs/adr/ADR-015-iceberg-event-fact-store.md)).
+
+- **Table.** `facts.interaction_events` is an Iceberg table partitioned by `day(event_time)`. It
+  keeps `ingested_at`, which the Flink job drops.
+- **Writer.** The event writer reads the raw topic in its own consumer group, validates with
+  `route_event_json`, appends and only then commits the offset. Rejections are counted and not
+  stored.
+- **Idempotent by `event_id`.** The first row wins and keeps its `ingested_at`. The same id with
+  another payload fails and writes nothing.
+- **Pinned reads.** `build-training-dataset --mode event_time --events-root` reads the table at
+  the snapshot that is current at the start, or at `--events-snapshot-id`, and records it in the
+  manifest under `events`.
+- **Limits.** One writer per table, no compaction and no retention. The writer and the Flink job
+  read the topic independently, so an event can be online before it is in the table or the other
+  way round.
+
+<div align="right"><a href="#top">Back to top</a></div>
 
 ---
 
+## 6. Online stores
 
-## 6. Serving
+One contract, two backends ([ADR-013](docs/adr/ADR-013-online-store-protocol.md)). `OnlineStore`
+is a protocol with two methods: `read(entity_value)` returns a validated record or `None`, and
+`write(record)` returns `written`, `unchanged` or `stale`. Record validation, the decision
+function and the outcomes are shared. A backend supplies only the read, the guarded write and the
+expiry.
+
+```mermaid
+flowchart LR
+    SPEC[Feature spec<br/>online.store] --> F[Store factory]
+    F -->|redis| RS[RedisSpecStore]
+    F -->|cassandra| CS[CassandraSpecStore]
+    SH[Shared logic<br/>record validation<br/>decision function<br/>outcomes] --> RS
+    SH --> CS
+    CT[Contract suite<br/>one test module] -.->|runs against| RS
+    CT -.->|runs against| CS
+```
+
+| | Redis | Cassandra |
+|---|---|---|
+| Guarded write | `WATCH`/`MULTI`, at most 16 attempts | `INSERT ... IF NOT EXISTS`, `UPDATE ... IF payload = <value read>` (lightweight transaction), at most 16 attempts |
+| Expiry | `SET ... EX online.ttl` | `USING TTL` |
+| Consistency | single node | `LOCAL_SERIAL` for the Paxos phase, `LOCAL_QUORUM` for commit and reads |
+| Layout | one key per spec, version and entity | one table `online_features`, partition `(entity_key, entity_value)`, clustering column `feature` |
+| Payload | JSON | the same JSON, unchanged |
+| Read in the service | one `MGET` per request | one partition read per entity, run concurrently |
+
+- **Backend choice.** `online.store` in the spec accepts `redis` and `cassandra`. The store
+  factory returns the store, and nothing else selects a backend.
+- **Same rules.** An unknown entity reads as `None`, never zero. An incomparable count vector
+  raises and leaves the stored value unchanged. The expiry is set only on `written`.
+- **Schema.** `ensure_schema` creates the keyspace and the table if they are absent and never
+  alters them. A table that does not match fails loudly.
+- **Proof.** `tests/integration/test_online_store_contract.py` runs for both backends. One
+  end-to-end test runs `content_play_count_1h` from events through the validation job, the
+  generic Flink job, the materializer and the service on Cassandra, with only `online.store`
+  changed.
+- **Limits.** The local Cassandra is one node. It proves the protocol logic and nothing about
+  replication or the failure of a node. The Cassandra write path is not measured.
+
+---
+
+## 7. Feature serving
+
+The feature serving service answers a lookup for several entities and features in one request
+([ADR-016](docs/adr/ADR-016-feature-serving.md)). It serves features that are defined by specs.
+
+```mermaid
+sequenceDiagram
+    participant C as Caller
+    participant S as Feature service
+    participant R as ServingReader
+    participant B as Redis or Cassandra
+    C->>S: POST /v1/features/lookup
+    S->>S: resolve versions and check limits
+    S->>R: fetch the plan, one pair per entity and feature
+    R->>B: Redis one MGET, Cassandra one partition read per entity
+    alt the backend answers within the budget
+        B-->>R: payloads
+        R-->>S: one result per pair, in the order of the request
+        S->>S: validate each record and compare its age with freshness_slo
+        S-->>C: 200 with ok, missing or stale per entry
+    else timeout or connection error
+        B--xR: error
+        R--xS: raises and never returns a partial result
+        S->>S: apply online.fallback per feature
+        S-->>C: 200 with backend_error per entry, or 503 for the policy fail
+    end
+```
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /v1/features/lookup` | At most 100 entities and 50 features. One entry for every pair, never dropped |
+| `GET /healthz` | The process is alive |
+| `GET /readyz` | The specs are loaded and the store answers a ping |
+| `GET /metrics` | Prometheus metrics |
+
+| Status | Meaning | Value in the entry |
+|---|---|---|
+| `ok` | Present and fresh | The stored values |
+| `missing` | No key, an unknown entity or an expired key | Null, or the declared default with `defaulted: true` |
+| `stale` | Older than `freshness_slo`, or an observation time in the future | Kept, with its age, so the caller decides |
+| `backend_error` | A timeout, a connection error or a record that fails validation | Null, or the declared default with `defaulted: true` |
+
+- **Never a silent zero.** A default exists only where the spec declares `online.fallback` with
+  the policy `default_value`, and the entry says so.
+- **Fallback per feature.** `omit` (default) keeps the status and a null value, `default_value`
+  returns the configured values, and `fail` answers the whole request with 503 when that feature
+  is a `backend_error`. `missing` is a data state and never fails a request.
+- **Budget.** 50 ms per request by default, enforced as the socket timeout of the store client. It
+  is not a deadline over the whole request: validation and serialization come on top.
+- **No retries** in the request path. A retry hides tail latency inside the budget.
+- **Readers.** The Redis reader makes one `MGET` over the keys of all pairs and reads on the
+  event loop with `redis.asyncio`. The Cassandra reader makes one partition read per entity,
+  runs them concurrently at `LOCAL_QUORUM` and runs in the thread pool. One process serves one
+  backend.
+- **Isolation.** A corrupt record is `backend_error` for its own entry. The other entries of the
+  request stay valid.
+- **Versions.** Without a version in the request, the highest loaded version of a name is used and
+  the response states it. An unknown name or version answers 422.
+- **Not atomic.** The response states `atomic: false`.
+- **Out of scope.** Authentication, TLS and rate limiting.
+
+### Unified client for batch path v1
 
 `OnlineFeatureClient` reads batch features (via Feast) and streaming features
 (play count and skip rate, via the Redis streaming store) through one
@@ -374,16 +553,50 @@ backend, availability, observation time, age and freshness class.
 Serving parity tests compare Redis values with the latest canonical offline
 partition.
 
+<div align="right"><a href="#top">Back to top</a></div>
+
 ---
 
-## 7. Testing and CI
+## 8. Observability and benchmarks
 
 ```mermaid
 flowchart LR
-    PUSH[Pull request, push to main<br/>or nightly run] --> B[Baseline<br/>lint, format, tests<br/>without infrastructure]
+    SVC[Feature service<br/>/metrics] -->|scrape every 5 s| PROM[Prometheus]
+    BENCH[Benchmark service<br/>port 18080] -->|job feature-service-benchmark| PROM
+    PROM --> GRAF[Grafana dashboard<br/>five panels]
+    LOAD[Open-load benchmark] --> BENCH
+    LOAD --> REP[(Report per run<br/>commit, machine, raw data)]
+    REP --> CMP[Compare script<br/>a change must exceed the noise]
+```
+
+The service exports four metrics: the lookup duration, the entries by status, the requests by
+outcome and the event loop lag ([docs/observability.md](docs/observability.md)). The benchmark
+sends requests at a fixed rate whether or not earlier ones have returned, so a slow service
+cannot hide its own queue.
+
+| Serving backend | Highest measured rate with p99 at most 25 ms | p99 at that rate | Saturation of one process | CPU per request |
+|---|---|---|---|---|
+| Redis 7.4 | 4,000 req/s | 5.1 to 7.3 ms | 4,600 to 4,900 req/s | 0.19 to 0.29 ms |
+| Cassandra 5.0, one node | 1,500 req/s | 14.2 to 14.8 ms | about 2,100 req/s | 0.46 to 0.51 ms |
+
+> [!NOTE]
+> One laptop (Apple M4 Pro), client and service on the same machine, both databases in Docker
+> Desktop, 1,000,000 users with 2 features each, 5 entities per request, one uvicorn process, 3
+> runs of 30 s per rate. These are local measurements and no production numbers, and p99 at most
+> 25 ms is a target, not an SLO. Setup, raw data and every limit: [docs/benchmarks.md](docs/benchmarks.md).
+
+---
+
+## 9. Testing and CI
+
+```mermaid
+flowchart LR
+    PUSH[Pull request, push to main<br/>or nightly run] --> B[Baseline<br/>Ruff, mypy, tests<br/>without infrastructure]
     PUSH --> C[Python 3.11 and 3.12<br/>compatibility]
-    PUSH --> S[Serving integration<br/>Redis + Feast + parity]
-    PUSH --> F[Streaming integration<br/>Kafka + Flink + Redis]
+    PUSH --> S[Serving integration<br/>Redis, Feast, Toxiproxy,<br/>history and datasets]
+    PUSH --> K[Cassandra<br/>schema, store,<br/>contract suite]
+    PUSH --> F[Streaming integration<br/>Kafka, Flink, Redis,<br/>Cassandra]
+    PUSH --> M[Benchmark smoke<br/>Redis]
     F -.->|on failure| ART[Diagnostics artifact]
 ```
 
@@ -391,8 +604,10 @@ flowchart LR
 |---|---|
 | Baseline | Clean install, Ruff, mypy, all tests marked not `integration` |
 | Python 3.11 and 3.12 | The tests marked not `integration` on two more supported versions |
-| Serving integration | Generate, backfill, apply, materialize, online parity, Redis store tests, history, published-as-of join and training dataset tests |
-| Streaming integration | Full Compose stack, joined Kafka, Flink and Redis tests, including the generic spec-driven job |
+| Serving integration | Generate, backfill, apply, materialize, online parity, Redis store tests, the contract suite on Redis, the feature service on a real, a stopped and a slow Redis, history, published-as-of join and training dataset tests. Fails on a skipped test |
+| Cassandra | The node, the table schema, the contract suite on Cassandra and the Cassandra serving reader. Fails on a skipped test |
+| Streaming integration | Full Compose stack with the Cassandra profile, 20 modules of joined Kafka, Flink, Redis and Cassandra tests, including the generic spec-driven job |
+| Benchmark smoke | The benchmark tool runs against Redis. It is not a performance gate |
 
 Streaming integration tests that start Flink jobs each recreate the TaskManager
 first. Reusing one long-lived worker across many PyFlink jobs became unstable
@@ -409,14 +624,31 @@ repository) live in `tests/failure_simulations/`, with runbooks in
 
 ---
 
-## 8. Roadmap
+## 10. Where the work stands
 
 ```mermaid
 flowchart LR
-    P1[Feature store<br/>Released v0.1.0]:::done
-    P2[Streaming platform<br/>Core delivered, specs in progress]:::wip
-    P3[End-to-end ML<br/>Started]:::wip
-    P1 --> P2 --> P3
+    subgraph Done["Delivered"]
+        direction TB
+        A1[Batch path v1<br/>released as v0.1.0]:::done
+        A2[Streaming correctness<br/>late data, replay, recovery]:::done
+        A3[Online stores<br/>Redis and Cassandra]:::done
+        A4[Feature serving<br/>measured on one laptop]:::done
+        A5[Event fact store]:::done
+    end
+    subgraph Wip["In progress"]
+        direction TB
+        B1[Spec engine<br/>operators beyond count,<br/>composite keys]:::wip
+        B2[History and datasets<br/>Iceberg offline store]:::wip
+        B3[Operations<br/>alerts, drills, soak run]:::wip
+    end
+    subgraph Plan["Planned"]
+        direction TB
+        C1[Catalog and discovery]:::plan
+        C2[Embeddings]:::plan
+        C3[ML workflow<br/>registry and rollback]:::plan
+    end
+    Done --> Wip --> Plan
 
     classDef done fill:#d4edda,stroke:#28a745,color:#000
     classDef wip fill:#fff3cd,stroke:#e0a800,color:#000
@@ -424,13 +656,17 @@ flowchart LR
 ```
 
 Planned and **not implemented**: a `window_replace` store policy, further
-operators in Flink, alerts, recovery drills and a soak run, ML workflow with registry and
-rollback. Scope and order: [STATUS.md](STATUS.md) and
+operators in Flink, alerts, recovery drills and a soak run, a catalog, embeddings and an ML
+workflow with registry and rollback. Scope and order: [STATUS.md](STATUS.md) and
 [docs/PLATFORM_BLUEPRINT.md](docs/PLATFORM_BLUEPRINT.md).
 
 ---
 
 ## Known limits
+
+> [!WARNING]
+> The full list with the impact of every gap is in [STATUS.md](STATUS.md#known-gaps). These are
+> the limits that shape the architecture.
 
 - Local reference implementation: Docker Compose, synthetic data, no production
   scale claim. AWS (S3, DynamoDB, managed Kafka and Flink) is documented in
@@ -442,39 +678,48 @@ rollback. Scope and order: [STATUS.md](STATUS.md) and
   **Not** verified: JobManager failure, the production TTL values of 24 h and
   48 h, multi-partition Kafka.
 - Flink Kafka sinks use `AT_LEAST_ONCE`. Idempotency comes from dedupe and
-  guarded Redis writes, not from end-to-end exactly-once.
-- Streaming history and point-in-time retrieval of streaming features are only
-  partly implemented. The time model is decided in ADR-010 and the table layout in
-  ADR-011. The history table and an idempotent append exist in
-  `src/featureforge/streaming/history.py`, and `materialize_spec` appends
-  evidence when `--history-root` is set. `published_as_of` reads the history by
-  the rule of ADR-010. Training datasets read it in two modes (section 5). The `build-training-dataset` command writes a dataset in either mode. The parity between Redis and `published_as_of` is tested in `tests/integration/test_materialize_spec_kafka_to_history.py`.
-- The spec-driven store is proven end to end from events to Redis by its own
-  test for `content_play_count_1h`. The two original features run on the same
+  guarded store writes, not from end-to-end exactly-once. Kafka, the online store and Iceberg
+  do not share a transaction.
+- The engines support count aggregations and one entity key. `window_replace` has no store, so
+  non-count features cannot be served online. The `published_as_of` dataset mode needs one
+  entity key.
+- The parity between Redis and `published_as_of` is tested over two bounded runs of one entity
+  (`tests/integration/test_materialize_spec_kafka_to_history.py`). `history_start` marks only the
+  beginning of the evidence, so a later gap reads as `not_published`.
+- The spec-driven store is proven end to end from events to Redis and from events to Cassandra
+  by its own tests for `content_play_count_1h`. The two original features run on the same
   code through their wrappers and are covered by their joined tests and Redis
   integration tests, including a real concurrent writer. Wrappers locate their
   spec relative to the source tree and need a repository checkout.
+- The event fact table has one writer, no compaction and no retention, and its append slows
+  down with the number of data files.
+- Cassandra runs as one local node. Replication and the failure of a node are not shown.
+- Serving is measured on one laptop with one service process. The budget is a socket timeout
+  and not a deadline over the whole request. Rare bursts of `backend_error` from timeouts
+  appeared with both backends, and the cause is open ([docs/benchmarks.md](docs/benchmarks.md)).
+- There are no alert rules, no recovery drill beyond a TaskManager crash and no soak run.
 - The TaskManager instability seen in CI is isolated, not explained.
 
 ## Decisions
 
 | ADR | Topic |
 |---|---|
-| 001 | Offline/online feature store split |
-| 002 | Canonical offline store contract |
-| 003 | Freshness SLOs and fail-safe serving |
-| 004 | GitHub Actions CI |
-| 005 | AWS S3 production profile |
-| 006 | Streaming platform integration |
-| 007 | User skip rate 24h integration |
-| 008 | Declarative feature specification |
-| 009 | Spec-driven online stores and materializer |
-| 010 | Time and availability model for streaming history |
-| 011 | History table layout and evidence append |
-| 012 | Label specs |
-| 013 | Online store protocol |
-| 014 | Training datasets |
-| 015 | Iceberg event fact store |
+| [001](docs/adr/ADR-001-offline-online-feature-store-split.md) | Offline/online feature store split |
+| [002](docs/adr/ADR-002-canonical-offline-store-contract.md) | Canonical offline store contract |
+| [003](docs/adr/ADR-003-freshness-slos-and-fail-safe-serving.md) | Freshness SLOs and fail-safe serving |
+| [004](docs/adr/ADR-004-github-actions-ci.md) | GitHub Actions CI |
+| [005](docs/adr/ADR-005-aws-s3-offline-store-profile.md) | AWS S3 production profile |
+| [006](docs/adr/ADR-006-streaming-feature-platform-integration.md) | Streaming platform integration |
+| [007](docs/adr/ADR-007-skip-rate-streaming-integration.md) | User skip rate 24h integration |
+| [008](docs/adr/ADR-008-feature-spec-design.md) | Declarative feature specification |
+| [009](docs/adr/ADR-009-spec-driven-online-stores.md) | Spec-driven online stores and materializer |
+| [010](docs/adr/ADR-010-time-and-availability-model.md) | Time and availability model for streaming history |
+| [011](docs/adr/ADR-011-history-table-layout.md) | History table layout and evidence append |
+| [012](docs/adr/ADR-012-label-specs.md) | Label specs |
+| [013](docs/adr/ADR-013-online-store-protocol.md) | Online store protocol |
+| [014](docs/adr/ADR-014-training-datasets.md) | Training datasets |
+| [015](docs/adr/ADR-015-iceberg-event-fact-store.md) | Iceberg event fact store |
+| [016](docs/adr/ADR-016-feature-serving.md) | Feature serving service |
 
 ## Principles
 
@@ -482,3 +727,13 @@ Event time, never ingestion time. Explicit time boundaries. Executable data
 contracts. Deterministic output paths. Fail before bad data reaches consumers.
 Commit offsets only after successful writes. Declare store policies in the
 feature spec and test each one. Every guarantee links to a test.
+
+---
+
+<div align="center">
+
+[README](README.md) · [Status](STATUS.md) · [Design](docs/DESIGN.md) · [Platform blueprint](docs/PLATFORM_BLUEPRINT.md) · [Benchmarks](docs/benchmarks.md)
+
+<a href="#top">Back to top</a>
+
+</div>

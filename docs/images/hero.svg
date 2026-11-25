@@ -1,0 +1,141 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 500" width="1280" height="500" role="img" aria-labelledby="t d">
+<title id="t">FeatureForge</title>
+<desc id="d">Animated overview: one YAML feature spec drives a Flink job, a guarded materializer, an online store on Redis or Cassandra and a serving API that returns a status for every value. Validated events also go to an Iceberg event fact table, accepted updates go to an Iceberg publication history, and both feed training datasets in the modes event_time and published_as_of.</desc>
+<defs>
+  <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#0d1117"/><stop offset="1" stop-color="#161b22"/>
+  </linearGradient>
+  <linearGradient id="forge" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#ffd08a"/><stop offset="0.5" stop-color="#ff9a4a"/><stop offset="1" stop-color="#f0603c"/>
+  </linearGradient>
+  <linearGradient id="cool" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#9ecbff"/><stop offset="1" stop-color="#58a6ff"/>
+  </linearGradient>
+  <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+    <stop offset="0" stop-color="#ff9a4a" stop-opacity="0.35"/><stop offset="1" stop-color="#ff9a4a" stop-opacity="0"/>
+  </radialGradient>
+  <radialGradient id="glowBlue" cx="0.5" cy="0.5" r="0.5">
+    <stop offset="0" stop-color="#58a6ff" stop-opacity="0.28"/><stop offset="1" stop-color="#58a6ff" stop-opacity="0"/>
+  </radialGradient>
+  <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+    <path d="M32 0H0V32" fill="none" stroke="#ffffff" stroke-opacity="0.035" stroke-width="1"/>
+  </pattern>
+  <filter id="soft" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="3"/></filter>
+</defs>
+<clipPath id="cardclip"><rect x="2" y="2" width="1276" height="496" rx="17"/></clipPath><rect x="1" y="1" width="1278" height="498" rx="18" fill="url(#bg)" stroke="#30363d" stroke-width="2"/><rect x="1" y="1" width="1278" height="498" rx="18" fill="url(#grid)"/>
+<g clip-path="url(#cardclip)"><circle cx="1080" cy="70" r="230" fill="url(#glow)"/>
+<circle cx="180" cy="470" r="220" fill="url(#glowBlue)"/></g>
+
+<g transform="translate(56,44) scale(1.3181818181818181)">
+  <rect x="0" y="0" width="44" height="44" rx="11" fill="#1c2330" stroke="url(#forge)" stroke-width="2"/>
+  <path d="M7 15h30v3c-4 0-7 2-8 5h-3v4h6v5H12v-5h6v-4c-1-3-5-5-11-5z" fill="url(#forge)"/>
+  <circle cx="34" cy="9" r="2.2" fill="#ffd08a"><animate attributeName="opacity" values="1;0.25;1" dur="2.4s" repeatCount="indefinite"/></circle>
+</g>
+<text x="132" y="92" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif" font-size="56" font-weight="800" letter-spacing="-1.5" fill="url(#forge)">FeatureForge</text>
+<text x="58" y="142" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif" font-size="22" font-weight="500" fill="#e6edf3">An ML feature platform that keeps features correct between offline training and online reads.</text>
+<text x="58" y="172" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif" font-size="15.5" fill="#9da7b3">Point-in-time training datasets  ·  event-time semantics  ·  idempotent writes  ·  a status for every served value  ·  every guarantee links to a test</text>
+
+<!-- spec rail -->
+<path d="M252,214 H1114" stroke="#bc8cff" stroke-opacity="0.55" stroke-width="1.5" stroke-dasharray="3 4"/>
+<path d="M395,214 V257.0" stroke="#bc8cff" stroke-opacity="0.55" stroke-width="1.5" stroke-dasharray="3 4"/><path d="M620,214 V257.0" stroke="#bc8cff" stroke-opacity="0.55" stroke-width="1.5" stroke-dasharray="3 4"/><path d="M845,214 V257.0" stroke="#bc8cff" stroke-opacity="0.55" stroke-width="1.5" stroke-dasharray="3 4"/><path d="M1114,214 V257.0" stroke="#bc8cff" stroke-opacity="0.55" stroke-width="1.5" stroke-dasharray="3 4"/>
+<circle r="3.5" fill="#bc8cff"><animateMotion dur="5s" repeatCount="indefinite" path="M252,214 H1114"/></circle>
+<rect x="56" y="197" width="196" height="34" rx="17" fill="#1c2330" stroke="#bc8cff" stroke-opacity="0.8" stroke-width="1.5"/>
+<text x="154" y="219" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace" font-size="13" fill="#bc8cff">feature spec · YAML</text>
+<text x="1224" y="204" text-anchor="end" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif" font-size="12" fill="#6e7681">one spec drives the job, the backfill, the stores, the history and the datasets</text>
+
+
+<path id="p_main" d="M226,286 H1005" fill="none" stroke="#ff9a4a" stroke-opacity="0.45" stroke-width="2"/>
+<path id="p_facts" d="M141,315.0 V390 Q141,404 155,404 H310" fill="none" stroke="#58a6ff" stroke-opacity="0.45" stroke-width="2"/>
+<path id="p_hist" d="M620,315.0 V375.0" fill="none" stroke="#58a6ff" stroke-opacity="0.45" stroke-width="2"/>
+<path id="p_hist_ds" d="M705,404 H770" fill="none" stroke="#58a6ff" stroke-opacity="0.45" stroke-width="2"/>
+<path id="p_facts_ds" d="M395,433.0 V450 Q395,464 409,464 H876 Q890,464 890,450 V433.0" fill="none" stroke="#58a6ff" stroke-opacity="0.45" stroke-width="2"/>
+
+<circle r="4.2" fill="#ff9a4a"><animateMotion dur="7s" begin="0.00s" repeatCount="indefinite"><mpath href="#p_main"/></animateMotion></circle><circle r="10.08" fill="#ff9a4a" opacity="0.18"><animateMotion dur="7s" begin="0.00s" repeatCount="indefinite"><mpath href="#p_main"/></animateMotion></circle>
+<circle r="4.2" fill="#ff9a4a"><animateMotion dur="7s" begin="-1.40s" repeatCount="indefinite"><mpath href="#p_main"/></animateMotion></circle><circle r="10.08" fill="#ff9a4a" opacity="0.18"><animateMotion dur="7s" begin="-1.40s" repeatCount="indefinite"><mpath href="#p_main"/></animateMotion></circle>
+<circle r="4.2" fill="#ff9a4a"><animateMotion dur="7s" begin="-2.80s" repeatCount="indefinite"><mpath href="#p_main"/></animateMotion></circle><circle r="10.08" fill="#ff9a4a" opacity="0.18"><animateMotion dur="7s" begin="-2.80s" repeatCount="indefinite"><mpath href="#p_main"/></animateMotion></circle>
+<circle r="4.2" fill="#ff9a4a"><animateMotion dur="7s" begin="-4.20s" repeatCount="indefinite"><mpath href="#p_main"/></animateMotion></circle><circle r="10.08" fill="#ff9a4a" opacity="0.18"><animateMotion dur="7s" begin="-4.20s" repeatCount="indefinite"><mpath href="#p_main"/></animateMotion></circle>
+<circle r="4.2" fill="#ff9a4a"><animateMotion dur="7s" begin="-5.60s" repeatCount="indefinite"><mpath href="#p_main"/></animateMotion></circle><circle r="10.08" fill="#ff9a4a" opacity="0.18"><animateMotion dur="7s" begin="-5.60s" repeatCount="indefinite"><mpath href="#p_main"/></animateMotion></circle>
+<circle r="3.6" fill="#58a6ff"><animateMotion dur="4.5s" begin="-0.00s" repeatCount="indefinite"><mpath href="#p_facts"/></animateMotion></circle><circle r="8.64" fill="#58a6ff" opacity="0.18"><animateMotion dur="4.5s" begin="-0.00s" repeatCount="indefinite"><mpath href="#p_facts"/></animateMotion></circle>
+<circle r="3.6" fill="#58a6ff"><animateMotion dur="4.5s" begin="-2.25s" repeatCount="indefinite"><mpath href="#p_facts"/></animateMotion></circle><circle r="8.64" fill="#58a6ff" opacity="0.18"><animateMotion dur="4.5s" begin="-2.25s" repeatCount="indefinite"><mpath href="#p_facts"/></animateMotion></circle>
+<circle r="3.6" fill="#58a6ff"><animateMotion dur="2.2s" begin="-0.00s" repeatCount="indefinite"><mpath href="#p_hist"/></animateMotion></circle><circle r="8.64" fill="#58a6ff" opacity="0.18"><animateMotion dur="2.2s" begin="-0.00s" repeatCount="indefinite"><mpath href="#p_hist"/></animateMotion></circle>
+<circle r="3.6" fill="#58a6ff"><animateMotion dur="1.6s" begin="-0.00s" repeatCount="indefinite"><mpath href="#p_hist_ds"/></animateMotion></circle><circle r="8.64" fill="#58a6ff" opacity="0.18"><animateMotion dur="1.6s" begin="-0.00s" repeatCount="indefinite"><mpath href="#p_hist_ds"/></animateMotion></circle>
+<circle r="3.6" fill="#58a6ff"><animateMotion dur="6s" begin="0.00s" repeatCount="indefinite"><mpath href="#p_facts_ds"/></animateMotion></circle><circle r="8.64" fill="#58a6ff" opacity="0.18"><animateMotion dur="6s" begin="0.00s" repeatCount="indefinite"><mpath href="#p_facts_ds"/></animateMotion></circle>
+<circle r="3.6" fill="#58a6ff"><animateMotion dur="6s" begin="-2.00s" repeatCount="indefinite"><mpath href="#p_facts_ds"/></animateMotion></circle><circle r="8.64" fill="#58a6ff" opacity="0.18"><animateMotion dur="6s" begin="-2.00s" repeatCount="indefinite"><mpath href="#p_facts_ds"/></animateMotion></circle>
+<circle r="3.6" fill="#58a6ff"><animateMotion dur="6s" begin="-4.00s" repeatCount="indefinite"><mpath href="#p_facts_ds"/></animateMotion></circle><circle r="8.64" fill="#58a6ff" opacity="0.18"><animateMotion dur="6s" begin="-4.00s" repeatCount="indefinite"><mpath href="#p_facts_ds"/></animateMotion></circle>
+
+<g>
+  <rect x="56" y="257.0" width="170" height="58" rx="12" fill="#1c2330" stroke="#ff9a4a" stroke-opacity="0.55" stroke-width="1.5"/>
+  <rect x="56" y="257.0" width="4" height="58" rx="2" fill="#ff9a4a"/>
+  <text x="141.0" y="282" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif" font-size="15.5" font-weight="600" fill="#e6edf3">Kafka events</text>
+  <text x="141.0" y="301" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif" font-size="12" fill="#9da7b3">validated · event time</text>
+</g>
+<g>
+  <rect x="310" y="257.0" width="170" height="58" rx="12" fill="#1c2330" stroke="#ff9a4a" stroke-opacity="0.55" stroke-width="1.5"/>
+  <rect x="310" y="257.0" width="4" height="58" rx="2" fill="#ff9a4a"/>
+  <text x="395.0" y="282" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif" font-size="15.5" font-weight="600" fill="#e6edf3">Flink job</text>
+  <text x="395.0" y="301" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif" font-size="12" fill="#9da7b3">event time · late data</text>
+</g>
+<g>
+  <rect x="535" y="257.0" width="170" height="58" rx="12" fill="#1c2330" stroke="#ff9a4a" stroke-opacity="0.55" stroke-width="1.5"/>
+  <rect x="535" y="257.0" width="4" height="58" rx="2" fill="#ff9a4a"/>
+  <text x="620.0" y="282" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif" font-size="15.5" font-weight="600" fill="#e6edf3">Materializer</text>
+  <text x="620.0" y="301" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif" font-size="12" fill="#9da7b3">guarded, idempotent writes</text>
+</g>
+<g>
+  <rect x="760" y="257.0" width="170" height="58" rx="12" fill="#1c2330" stroke="#ff9a4a" stroke-opacity="0.55" stroke-width="1.5"/>
+  <rect x="760" y="257.0" width="4" height="58" rx="2" fill="#ff9a4a"/>
+  <text x="845.0" y="282" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif" font-size="15.5" font-weight="600" fill="#e6edf3">Redis · Cassandra</text>
+  <text x="845.0" y="301" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif" font-size="12" fill="#9da7b3">one store contract</text>
+</g>
+<g>
+  <rect x="1005" y="257.0" width="219" height="58" rx="12" fill="#1c2330" stroke="#3fb950" stroke-opacity="0.55" stroke-width="1.5"/>
+  <rect x="1005" y="257.0" width="4" height="58" rx="2" fill="#3fb950"/>
+  <text x="1114.5" y="282" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif" font-size="15.5" font-weight="600" fill="#e6edf3">Feature serving API</text>
+  <text x="1114.5" y="301" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif" font-size="12" fill="#9da7b3">one entry per entity and feature</text>
+</g>
+
+<g>
+  <rect x="310" y="375.0" width="170" height="58" rx="12" fill="#1c2330" stroke="#58a6ff" stroke-opacity="0.55" stroke-width="1.5"/>
+  <rect x="310" y="375.0" width="4" height="58" rx="2" fill="#58a6ff"/>
+  <text x="395.0" y="400" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif" font-size="15.5" font-weight="600" fill="#e6edf3">Event fact table</text>
+  <text x="395.0" y="419" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif" font-size="12" fill="#9da7b3">Iceberg · once per event_id</text>
+</g>
+<g>
+  <rect x="535" y="375.0" width="170" height="58" rx="12" fill="#1c2330" stroke="#58a6ff" stroke-opacity="0.55" stroke-width="1.5"/>
+  <rect x="535" y="375.0" width="4" height="58" rx="2" fill="#58a6ff"/>
+  <text x="620.0" y="400" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif" font-size="15.5" font-weight="600" fill="#e6edf3">Publication history</text>
+  <text x="620.0" y="419" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif" font-size="12" fill="#9da7b3">Iceberg · published_at</text>
+</g>
+<g>
+  <rect x="770" y="375.0" width="240" height="58" rx="12" fill="#1c2330" stroke="#58a6ff" stroke-opacity="0.55" stroke-width="1.5"/>
+  <rect x="770" y="375.0" width="4" height="58" rx="2" fill="#58a6ff"/>
+  <text x="890.0" y="400" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif" font-size="15.5" font-weight="600" fill="#e6edf3">Training dataset</text>
+  <text x="890.0" y="419" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace" font-size="11" fill="#9da7b3">event_time · published_as_of</text>
+</g>
+
+<text x="1114" y="342" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif" font-size="12" fill="#6e7681">a status, never a silent zero</text>
+<g>
+  <rect x="1005" y="354" width="104" height="24" rx="12" fill="#3fb950" fill-opacity="0.10" stroke="#3fb950" stroke-opacity="0.55">
+    <animate attributeName="fill-opacity" values="0.10;0.10;0.38;0.10;0.10" keyTimes="0;0.020;0.080;0.240;1" dur="8s" repeatCount="indefinite"/>
+  </rect>
+  <text x="1057.0" y="370" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace" font-size="11.5" fill="#3fb950">ok</text>
+</g>
+<g>
+  <rect x="1120" y="354" width="104" height="24" rx="12" fill="#e3b341" fill-opacity="0.10" stroke="#e3b341" stroke-opacity="0.55">
+    <animate attributeName="fill-opacity" values="0.10;0.10;0.38;0.10;0.10" keyTimes="0;0.260;0.320;0.480;1" dur="8s" repeatCount="indefinite"/>
+  </rect>
+  <text x="1172.0" y="370" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace" font-size="11.5" fill="#e3b341">stale</text>
+</g>
+<g>
+  <rect x="1005" y="386" width="104" height="24" rx="12" fill="#9da7b3" fill-opacity="0.10" stroke="#9da7b3" stroke-opacity="0.55">
+    <animate attributeName="fill-opacity" values="0.10;0.10;0.38;0.10;0.10" keyTimes="0;0.500;0.560;0.720;1" dur="8s" repeatCount="indefinite"/>
+  </rect>
+  <text x="1057.0" y="402" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace" font-size="11.5" fill="#9da7b3">missing</text>
+</g>
+<g>
+  <rect x="1120" y="386" width="104" height="24" rx="12" fill="#ff7b72" fill-opacity="0.10" stroke="#ff7b72" stroke-opacity="0.55">
+    <animate attributeName="fill-opacity" values="0.10;0.10;0.38;0.10;0.10" keyTimes="0;0.740;0.800;0.960;1" dur="8s" repeatCount="indefinite"/>
+  </rect>
+  <text x="1172.0" y="402" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace" font-size="11.5" fill="#ff7b72">backend_error</text>
+</g>
+</svg>

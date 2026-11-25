@@ -1,10 +1,26 @@
+<a id="top"></a>
+
+<div align="center">
+  <img src="docs/images/header-contributing.svg" alt="Contributing to FeatureForge: every guarantee has a test" width="100%">
+</div>
+
 # Contributing to FeatureForge
 
+<div align="center">
+
+[Quick setup](#quick-setup) · [Workflow](#workflow) · [Which tests to run](#which-integration-tests-to-run) · [Platform contracts](#platform-contracts) · [Testing](#testing) · [CI](#continuous-integration) · [Troubleshooting](#troubleshooting) · [Pull requests](#commits-and-pull-requests)
+
+</div>
+
 FeatureForge is a production-inspired ML feature platform. Contributions are
-welcome if they keep its core promise: **every guarantee has a test that proves it.**
+welcome if they keep its core promise.
+
+> [!IMPORTANT]
+> **Every guarantee has a test that proves it.** A change that adds a claim adds the test, and a
+> change that cannot be tested yet is written down as a known gap in [STATUS.md](STATUS.md).
 
 Read first: [README](README.md) · [ARCHITECTURE](ARCHITECTURE.md) ·
-[STATUS](STATUS.md) · [ADRs](docs/adr/)
+[STATUS](STATUS.md) · [DESIGN](docs/DESIGN.md) · [ADRs](docs/adr/)
 
 ---
 
@@ -12,8 +28,15 @@ Read first: [README](README.md) · [ARCHITECTURE](ARCHITECTURE.md) ·
 
 Prerequisites: Python 3.11–3.13, Docker, GNU Make, Git.
 
+| You want to | Install | Then |
+|---|---|---|
+| See the service answer in about a minute | `pip install -e ".[serve]"` | `make quickstart` |
+| Work on the code | `pip install -e ".[dev,feature-store,spark,streaming]"` | `make check` |
+| Run or change the tour notebook | `pip install -e ".[dev,notebook]"` | `pytest tests/unit/test_tour_notebook.py` |
+| Skip the local setup | Open the repository in a GitHub Codespace or a VS Code dev container | `make quickstart` |
+
 ```bash
-git clone [https://github.com/oster-dev/featureforge.git](https://github.com/oster-dev/featureforge.git)
+git clone https://github.com/oster-dev/featureforge.git
 cd featureforge
 python3 -m venv .venv && source .venv/bin/activate
 python -m pip install --upgrade pip
@@ -21,13 +44,31 @@ python -m pip install -e ".[dev,feature-store,spark,streaming]"
 featureforge --help
 ```
 
-Start the infrastructure you need:
+The dev container ([`.devcontainer/devcontainer.json`](.devcontainer/devcontainer.json)) brings
+Python 3.13, Docker-in-Docker and `make`, installs the `serve` extra and forwards port 8080.
+
+### Local infrastructure
+
+Start only what your change needs. Every service runs in Docker Compose.
 
 ```bash
-make docker-up                     # Redis only, for Feast serving
-docker compose up -d --build       # Kafka, Flink, Redis, for streaming
-docker compose ps                  # wait until services are healthy
+make docker-up                                   # Redis only, for Feast serving
+make quickstart                                  # Redis and the feature serving service
+docker compose up -d --build                     # the full default stack
+docker compose --profile cassandra up -d --build # the default stack and a Cassandra node
+docker compose ps                                # wait until services are healthy
 ```
+
+| Service | Image or build | Started by | Used for |
+|---|---|---|---|
+| `kafka` | Apache Kafka 3.9.1 | default | Event, feature, rejected and late topics |
+| `jobmanager`, `taskmanager` | Apache Flink 1.20.3, built from `docker/flink` | default | The validation job and the generic feature job |
+| `redis` | Redis 7.4 | default | Online store of the batch path and of the specs |
+| `feature-service` | Built from `docker/service` | default | The feature serving service on port 8080 |
+| `prometheus`, `grafana` | Prometheus 3.16.0, Grafana 13.3.1 | default | Metrics and the dashboard ([docs/observability.md](docs/observability.md)) |
+| `cassandra` | Apache Cassandra 5.0.9 | profile `cassandra` | Second online store |
+| `toxiproxy` | Toxiproxy 2.12.0 | profile `fault` | Slow and broken connections for the fault tests |
+| `iceberg-catalog` | PostgreSQL 16 | profile `catalog` | Iceberg catalog test with PostgreSQL |
 
 Reviewer walkthrough with expected output: [docs/demo.md](docs/demo.md).
 
@@ -54,8 +95,9 @@ git switch -c <type>/<short-name>
 git branch --show-current
 ```
 
-Never commit on `main`. A commit made there never reaches GitHub by itself and
-has to be moved to a branch afterwards.
+> [!WARNING]
+> Never commit on `main`. A commit made there never reaches GitHub by itself and
+> has to be moved to a branch afterwards.
 
 ### Before every commit
 
@@ -67,12 +109,15 @@ pytest -m "not integration"
 git diff --check
 ```
 
+`make check` runs the lint and the tests without infrastructure in one command.
+
 Before pushing, run the full suite once with the compose stack running:
 `pytest -v`. It takes about nine minutes on a laptop.
 
-Fix formatting with `ruff format .` and imports with `ruff check --fix .`.
-Run `ruff format .` before `git add`, otherwise the staged version stays
-unformatted. CI fails on both checks, and it is the cheapest failure to avoid.
+> [!TIP]
+> Fix formatting with `ruff format .` and imports with `ruff check --fix .`.
+> Run `ruff format .` before `git add`, otherwise the staged version stays
+> unformatted. CI fails on both checks, and it is the cheapest failure to avoid.
 
 ### Which integration tests to run
 
@@ -83,19 +128,32 @@ unformatted. CI fails on both checks, and it is the cheapest failure to avoid.
 | Redis store policies | `pytest -m integration tests/integration/test_streaming_redis_online_store*.py tests/integration/test_redis_skip_rate_store.py` |
 | The spec-driven store, record parser, decision function or materializer (`spec_store.py`, `contracts/feature_record.py`, `contracts/count_vector.py`, `materialize_spec.py`) | `pytest tests/unit/test_count_vector_update.py tests/unit/test_feature_record.py tests/unit/test_spec_store.py tests/unit/test_materialize_spec.py tests/unit/test_materialize_spec_history.py`, then `docker compose up -d kafka redis` and `pytest -m integration tests/integration/test_spec_store_redis.py tests/integration/test_materialize_spec_kafka_to_redis.py tests/integration/test_materialize_spec_kafka_to_history.py`. A change to the end-to-end path also needs `tests/integration/test_content_play_count_end_to_end.py` on the full stack |
 | The history table, `published_as_of`, label specs, the Spark join of the history or the training datasets (`history.py`, `published_as_of.py`, `published_spark.py`, `training_dataset.py`, `label_*.py`) | `pytest tests/unit/test_history.py tests/unit/test_history_catalog_config.py tests/unit/test_published_as_of.py tests/unit/test_label_spec.py tests/unit/test_label_reference.py tests/unit/test_label_spark.py tests/unit/test_training_dataset.py`, then `docker compose up -d` and `pytest -m integration tests/integration/test_history_spark_read.py tests/integration/test_history_postgres_catalog.py tests/integration/test_published_spark.py tests/integration/test_training_dataset_published.py`. Run the integration files in their own `pytest` call, see the Spark entry in Troubleshooting |
+| The event fact store or the event writer (`event_log.py`, `event_writer.py`, `events_spark.py`) | `pytest tests/unit/test_event_log_append.py`, then `docker compose up -d kafka` and `pytest -m integration tests/integration/test_event_writer_kafka.py tests/integration/test_cli_training_dataset.py` in their own `pytest` call |
 | A feature spec, the spec model, reference or job plan | `python -m featureforge.cli validate-spec`, then `pytest tests/unit/test_spec_model.py tests/unit/test_spec_reference.py tests/unit/test_spec_golden_parity.py tests/unit/test_spec_flink_plan.py` |
+| The `OnlineStore` protocol, the store factory or a store (`store_protocol.py`, `spec_store.py`, `cassandra_store.py`, `cassandra_schema.py`) | `pytest tests/unit/test_spec_store.py tests/unit/test_cassandra_schema.py tests/unit/test_cassandra_store.py`, then the contract suite for **both** backends: `pytest -m integration tests/integration/test_online_store_contract.py` with Redis running, and `docker compose --profile cassandra up -d cassandra` followed by `FEATUREFORGE_STORE_BACKENDS=cassandra pytest -m integration tests/integration/test_cassandra_node.py tests/integration/test_online_store_contract.py` |
+| The feature serving service, a reader or the metrics (`feature_service.py`, `service_api.py`, `serving_reader.py`, `redis_serving_reader.py`, `cassandra_serving_reader.py`, `service_metrics.py`) | `pytest tests/unit/test_feature_service.py tests/unit/test_serving_readers.py tests/unit/test_async_serving.py tests/unit/test_service_metrics.py tests/unit/test_event_loop_lag.py tests/unit/test_cassandra_serving_reader.py`, then `docker compose --profile fault up -d redis toxiproxy` and `pytest -m integration tests/integration/test_feature_service_redis.py tests/integration/test_feature_service_faults.py`. A change to the Cassandra reader also needs `tests/integration/test_serving_reader_cassandra.py` on a running node |
+| The request path of the service, in a way that can change latency | The row above, then `make bench-smoke`. Record the base and the change with `make bench-record` and compare them with `make bench-compare BASE=a.json NEW=b.json`, see [Benchmarks](#benchmarks) |
+| The benchmark scripts (`benchmark_feature_serving.py`, `run_serving_benchmark.py`, `compare_benchmarks.py`) | `pytest tests/unit/test_run_serving_benchmark.py tests/unit/test_compare_benchmarks.py tests/unit/test_benchmark_git_state.py`, then `make bench-smoke` |
+| The quickstart, the dev container or the tour notebook (`scripts/quickstart.py`, `.devcontainer/`, `notebooks/`) | `pytest tests/unit/test_quickstart.py tests/unit/test_devcontainer.py tests/unit/test_tour_notebook.py`, then `make quickstart` and `make quickstart-failure`. The notebook test needs `pip install -e ".[dev,notebook]"` and checks that the committed notebook was executed without errors and holds no local path |
 | The generic Flink job (`jobs/feature_from_spec.py`), `src/`, `docker/flink/Dockerfile`, or `docker-compose.yml` | `docker compose up -d --build`, then the full streaming selection below: the generic job is the only implementation of both streaming features |
 | Flink jobs, contracts, routing, materializers, savepoint or crash recovery | The full streaming selection below |
 
-Full streaming selection (identical to CI):
+<details>
+<summary><b>Full streaming selection, identical to CI (20 modules)</b></summary>
+
+<br>
+
+The two Cassandra modules need the node, so start the stack with the profile:
 
 ```bash
+docker compose --profile cassandra up -d --build
 pytest -v -ra -m integration \
   tests/integration/test_user_play_count_kafka_to_redis.py \
   tests/integration/test_user_play_count_replay_idempotency.py \
   tests/integration/test_streaming_validation_routing.py \
   tests/integration/test_user_play_count_late_events.py \
   tests/integration/test_user_skip_rate_job.py \
+  tests/integration/test_user_skip_rate_event_identity.py \
   tests/integration/test_feature_from_spec_job.py \
   tests/integration/test_skip_rate_flink_to_redis.py \
   tests/integration/test_generic_job_recovery.py \
@@ -106,13 +164,24 @@ pytest -v -ra -m integration \
   tests/integration/test_redis_skip_rate_store.py \
   tests/integration/test_spec_store_redis.py \
   tests/integration/test_materialize_spec_kafka_to_redis.py \
+  tests/integration/test_materialize_spec_kafka_to_cassandra.py \
   tests/integration/test_materialize_spec_kafka_to_history.py \
-  tests/integration/test_content_play_count_end_to_end.py
+  tests/integration/test_content_play_count_end_to_end.py \
+  tests/integration/test_cassandra_end_to_end.py
 ```
+
+`make test-streaming` rebuilds the default stack and runs the same modules as CI does, each
+against a fresh TaskManager, through
+[`scripts/ci/run_flink_integration.sh`](scripts/ci/run_flink_integration.sh). Set
+`COMPOSE_PROFILES=cassandra` for it as the CI job does.
+
+</details>
 
 Streaming tests are slow. Each Flink test recreates the TaskManager first, so
 expect several minutes. This is intentional: see
 [Flink test isolation](#flink-test-isolation).
+
+<div align="right"><a href="#top">Back to top</a></div>
 
 ---
 
@@ -137,16 +206,30 @@ flowchart TD
         S1[Identity is event_id]
         S2[Conflicting payloads fail loudly]
         S3[Store policy is declared in the spec]
-        S4[Offset committed after Redis write]
+        S4[Offset committed after the store write]
     end
     subgraph Specs
         P1[A spec is validated before it runs]
         P2[One reference is the oracle]
         P3[Golden values are hand-calculated]
     end
+    subgraph Serving
+        V1[One entry per entity and feature]
+        V2[A status, never a silent zero]
+        V3[No retry inside the budget]
+    end
+    subgraph Measurements
+        M1[A number names its commit and machine]
+        M2[A change must exceed the noise]
+    end
 ```
 
-**Data**
+Open the group that your change touches.
+
+<details>
+<summary><b>Data</b> · one canonical offline source, deterministic paths</summary>
+
+<br>
 
 - Backfill, correctness gate, freshness check, Feast and parity tests must all
   read `output/offline_store/`. Never add an offline-store override to
@@ -156,7 +239,12 @@ flowchart TD
 - Keep partition paths deterministic. Do not switch to random part files
   without adding versioning, lineage and reader selection.
 
-**Time**
+</details>
+
+<details>
+<summary><b>Time</b> · event time and right-closed windows</summary>
+
+<br>
 
 - Feature window: `(t - window, t]`. Label window: `t < event_time <= label_end`.
 - Changing a boundary means updating the reference, the spec reference, Spark,
@@ -164,7 +252,12 @@ flowchart TD
 - Spark: convert timestamps to UTC epoch microseconds before Spark and back
   after collection. Never rely on session timezone alone.
 
-**Streaming**
+</details>
+
+<details>
+<summary><b>Streaming</b> · identity, update policies, TTL and keys</summary>
+
+<br>
 
 - `ingested_at` is receipt metadata, not part of logical identity. Same
   `event_id` with a different payload raises `EventIdentityConflictError`.
@@ -183,7 +276,12 @@ flowchart TD
   version opens a new namespace.
 - Kafka topic names must not contain colons. Redis key prefixes may.
 
-**Feature specs**
+</details>
+
+<details>
+<summary><b>Feature specs</b> · the spec comes first, the reference is the oracle</summary>
+
+<br>
 
 - Define a new feature as a spec in `feature_repo/specs/` first. Do not add a
   feature-specific Flink job: the generic job `jobs/feature_from_spec.py` is
@@ -211,8 +309,12 @@ flowchart TD
   `docker/flink/Dockerfile`. The image installs its dependencies explicitly and
   checks the project imports at build time.
 
-**Training datasets and history**
+</details>
 
+<details>
+<summary><b>Training datasets and history</b> · two modes that never stand in for each other</summary>
+
+<br>
 
 - A dataset call names its mode, `event_time` or `published_as_of`. There is no
   default, and one mode never stands in for the other (ADR-010, ADR-014). The
@@ -233,13 +335,77 @@ flowchart TD
 - `training_dataset.py` does not import PyIceberg. The caller reads the history
   and passes the pinned frames.
 
+</details>
 
-**Failure visibility**
+<details>
+<summary><b>Online stores</b> · one protocol, one contract suite</summary>
+
+<br>
+
+- A store implements the `OnlineStore` protocol and is created by the store factory from
+  `online.store` in the spec ([ADR-013](docs/adr/ADR-013-online-store-protocol.md)). Do not
+  select a backend anywhere else.
+- A new backend must pass `tests/integration/test_online_store_contract.py` unchanged. The
+  suite is the definition of the behavior. A backend that needs an exception from it needs
+  an ADR.
+- The materializer writes to the store first, appends the publication evidence next and
+  commits the Kafka offset last. Changing that order changes what a crash can lose.
+
+</details>
+
+<details>
+<summary><b>Feature serving</b> · a status per entry, a budget and no retry</summary>
+
+<br>
+
+- A response has one entry for every requested pair of entity and feature. An entry is
+  never dropped, and its status is `ok`, `missing`, `stale` or `backend_error`
+  ([ADR-016](docs/adr/ADR-016-feature-serving.md)).
+- Never return `0` or another default without `defaulted: true`. A default exists only
+  where the spec declares `online.fallback` with the policy `default_value`.
+- A `stale` entry keeps its value and its age. The caller decides.
+- A reader raises when its backend fails and never returns a partial result. A reader
+  returns exactly one item per requested pair, in the order of the request.
+- There is no retry in the request path. A retry hides tail latency inside the budget.
+- An unknown feature name or version and a request above 100 entities or 50 features
+  answer 422. They are request errors and not feature statuses.
+- The response carries `error_type` only. The message goes to the log.
+- A new metric gets a row in [docs/observability.md](docs/observability.md) and a test in
+  `tests/unit/test_service_metrics.py`. Keep label values bounded: no entity and no
+  feature name as a label.
+
+</details>
+
+<details>
+<summary><b>Failure visibility</b> · a failure must not look like success</summary>
+
+<br>
 
 Failures must not look like success: raise a clear exception, return a
 non-zero exit code, write a blocked manifest, or expose a stable failed-check
 name. Add a failure simulation under `tests/failure_simulations/` and a
 runbook under `docs/runbooks/` for new operational incidents.
+
+</details>
+
+### Benchmarks
+
+A latency or throughput number in the documentation is a claim like any other.
+
+- Record numbers with `make bench-record` (`BENCH_BACKEND=cassandra` for the second
+  backend). The runner refuses a dirty working tree and extra containers, so a report names
+  the commit that it measured.
+- Compare two reports with `make bench-compare BASE=a.json NEW=b.json`. State a change only
+  when the script marks it: at least 10 percent, and the ranges of the repeats do not
+  overlap.
+- Write the machine, the data size, the request shape, the number of processes and the
+  commit next to every number, and add the raw report under `docs/benchmarks/`.
+- Report what did not work as well: a run with timeouts stays in
+  [docs/benchmarks.md](docs/benchmarks.md) with its count and its error type.
+- `make bench-smoke` takes about a minute and only shows that the tool and the backend
+  work. Its numbers are never quoted.
+
+<div align="right"><a href="#top">Back to top</a></div>
 
 ---
 
@@ -247,8 +413,8 @@ runbook under `docs/runbooks/` for new operational incidents.
 
 | Layer | Location | Purpose |
 |---|---|---|
-| Unit | `tests/unit/` | Contracts, feature math, boundaries, parity, policies, specs |
-| Integration | `tests/integration/` | Multi-component paths on real Redis, Feast, Kafka, Flink |
+| Unit | `tests/unit/` | Contracts, feature math, boundaries, parity, policies, specs, the service with fake readers |
+| Integration | `tests/integration/` | Multi-component paths on real Redis, Cassandra, Feast, Kafka, Flink and Toxiproxy |
 | Failure simulation | `tests/failure_simulations/` | Controlled reliability scenarios |
 | Fixtures | `fixtures/` | Deterministic inputs with hand-calculated expected values |
 
@@ -295,21 +461,24 @@ restart strategy, because the restart is what it verifies.
 
 ```mermaid
 flowchart LR
-    PR[Push, PR or nightly] --> B[Baseline<br/>lint, format,<br/>no infrastructure]
+    PR[Push, PR or nightly] --> B[Baseline<br/>Ruff, mypy,<br/>no infrastructure]
     PR --> C[Python 3.11 and 3.12<br/>compatibility]
-    PR --> S[Serving integration<br/>Redis, Feast, parity]
-    PR --> F[Streaming integration<br/>Kafka, Flink, Redis]
+    PR --> S[Serving integration<br/>Redis, Feast, Toxiproxy,<br/>history and datasets]
+    PR --> K[Cassandra<br/>schema, store,<br/>contract suite]
+    PR --> F[Streaming integration<br/>Kafka, Flink, Redis,<br/>Cassandra]
+    PR --> M[Benchmark smoke<br/>Redis]
 ```
 
 - **Keep the jobs independent.** Never add Redis, Kafka, Flink or Docker
   Compose setup to the baseline job.
 - A new Flink integration module must be added to `MODULES` in
   `scripts/ci/run_flink_integration.sh`, otherwise CI never runs it.
-- An integration test of the serving job must be added to the file list and
-  to `required_suites` in `.github/workflows/ci.yml`. A test with the
-  `integration` marker that is in neither list never runs in CI.
-- Never remove skip guards from baseline tests to manufacture a green run.
-  Skipped must never look like proven.
+- An integration test of the serving job or of the Cassandra job must be added to the file
+  list and to the required suites of its job in `.github/workflows/ci.yml`. A test with the
+  `integration` marker that is in no list never runs in CI.
+- The serving job and the Cassandra job fail on a skipped test. Never remove skip guards
+  from baseline tests to manufacture a green run. Skipped must never look like proven.
+- The benchmark smoke job proves that the benchmark tool runs. It is not a performance gate.
 - Failed streaming runs upload a diagnostics artifact. Download it before
   guessing: it contains the Compose logs.
 
@@ -334,6 +503,12 @@ Background: [ADR-004](docs/adr/ADR-004-github-actions-ci.md).
 | A spec is rejected | `python -m featureforge.cli validate-spec <spec.yaml>` prints each violated rule and the available names |
 | `SkipRateUpdateConflictError` or `UpdateConflictError` | Compare stored and incoming count vectors, find the upstream producer, fix or replay upstream. Never edit Redis by hand or weaken the policy |
 | `materialize_spec` fails with `record fields do not match` | The record on the feature topic does not match the spec: compare the topic payload with the spec fields and the spec version, then fix the producer or the spec. Never edit Redis by hand |
+| The quickstart prints `backend_error` for every entry | Redis is not reachable from the service. `docker compose ps` must show `redis` and `feature-service` as healthy, then `curl -s http://127.0.0.1:8080/readyz` |
+| `make quickstart` fails with a port conflict | Another process holds port 8080 or 6379. Stop it, or stop an older stack with `docker compose down` |
+| The Cassandra tests cannot connect | The node needs about a minute to start: `docker compose --profile cassandra up -d cassandra`, then wait until `docker compose --profile cassandra ps` reports it as healthy. Set `FEATUREFORGE_CASSANDRA_HOST` if it does not run on `127.0.0.1` |
+| The contract suite passes but never ran for Cassandra | It runs for the backends in `FEATUREFORGE_STORE_BACKENDS`, and the default is `redis`. CI fails when a contract test of the Cassandra job has no `cassandra` in its name |
+| `make bench-record` refuses to start | It needs a clean working tree and only the backend services running, so a report always names the commit that it measured. Commit or stash, stop the other containers, and run it again |
+| A benchmark comparison shows no change | `scripts/compare_benchmarks.py` marks a change only when it is at least 10 percent and the ranges of the repeats do not overlap. A smaller difference is noise on one laptop |
 
 Useful commands:
 
@@ -341,7 +516,11 @@ Useful commands:
 docker compose exec kafka /opt/kafka/bin/kafka-topics.sh \
   --bootstrap-server kafka:29092 --list
 curl -s http://127.0.0.1:8081/overview
+curl -s http://127.0.0.1:8080/readyz
+curl -s http://127.0.0.1:8080/metrics | grep featureforge_
 ```
+
+<div align="right"><a href="#top">Back to top</a></div>
 
 ---
 
@@ -360,6 +539,10 @@ paths, gates, manifests, topics, store policies, specs, CI behavior, or setup co
   [ADR-005](docs/adr/ADR-005-aws-s3-offline-store-profile.md).
 - Screenshots under `docs/images/` are version-controlled evidence. Never
   include private desktop content, browser tabs or credentials.
+- Describe work by topic, not by a phase or a stage label. A reader should not need the
+  project history to understand a sentence.
+- Animated SVGs under `docs/images/` must also read correctly as a still image, because
+  some viewers do not play animations.
 
 ---
 
@@ -368,26 +551,33 @@ paths, gates, manifests, topics, store policies, specs, CI behavior, or setup co
 Small, focused commits that describe the behavior or contract changed:
 
 ```text
-feat: add user skip rate 24h streaming feature
+feat: add the Cassandra spec store behind the OnlineStore protocol
+feat: add the feature serving service with a status per entry (ADR-016)
 feat: add generic spec-driven Flink job for count and ratio features
-feat: add spec-driven Redis store and feature record parser
+perf: read Redis on the event loop instead of a worker thread
+bench: record the Cassandra baseline after the event-loop read
 refactor: remove the hand-written feature jobs
-test: verify streaming routing and late-event behavior
 test: resume the generic job from a savepoint with its state intact
 test: recover the generic job from a TaskManager crash via checkpoint
 test: run a YAML-only feature from events to Redis on the generic stack
-test: add skip-rate golden fixture with hand-calculated values
-ci: expand Flink integration selection
-ci: run the published-as-of and dataset integration tests
-feat: add the published-as-of mode to the training dataset (ADR-014)
+ci: run the Cassandra schema, store and contract suite
 fix: preserve UTC timestamp semantics in Spark features
-docs: rewrite ARCHITECTURE with current streaming state
+docs: bring STATUS.md up to date after the event loop lag metric
 ```
 
 Before committing: `git status`, `git diff --check`. After staging:
 `git diff --cached --check`.
 
-A pull request should cover:
+A pull request says what changed, why, what was measured and where the change stops:
+
+```text
+## What
+## Why
+## Measured        (only when the change claims a number)
+## Limits
+```
+
+A change to a contract answers more questions. Use the long form for it:
 
 ```text
 ## Problem
@@ -402,3 +592,13 @@ A pull request should cover:
 Run the checks from [Before every commit](#before-every-commit) plus the
 integration tests that match your change. Wait for all CI checks to pass
 on the newest commit before merging.
+
+---
+
+<div align="center">
+
+[README](README.md) · [Architecture](ARCHITECTURE.md) · [Status](STATUS.md) · [Design](docs/DESIGN.md) · [Demo guide](docs/demo.md)
+
+<a href="#top">Back to top</a>
+
+</div>
