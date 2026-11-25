@@ -755,3 +755,55 @@ Limits
   loop needs to come back to the call. That was not measured. The burst of the first run at 2,000
   req/s was not at saturation, and no monitor was on.
 - Two runs on one day. One machine, one process, Redis in Docker Desktop.
+
+## Baselines Cassandra after change 6 (ADR-016)
+
+Question: where does Cassandra stand after the endpoint became asynchronous (#127), measured with
+`make bench-record BENCH_BACKEND=cassandra`?
+
+Method: commit `3a31f56`, clean tree, one uvicorn process, 1,000,000 users with 2 features each,
+5 entities per request, a warm-up of 30 s, then 3 runs of 30 s per rate. Cassandra 5.0 as one node in
+Docker Desktop, seeded in 141 s, flushed, no compaction pending, and no other Compose service was
+running. Raw data `docs/benchmarks/baseline-cassandra-3a31f56.json`. It replaces the Cassandra
+baseline of `8989796`. The Cassandra reader did not change since then. The endpoint did: it is an
+`async def` now and runs `lookup` through the thread pool for a reader without an asynchronous
+client.
+
+| Target req/s | Achieved req/s | p50 | p99 | CPU ms per request | Not ok |
+|---|---|---|---|---|---|
+| 500 | 500 | 3.95 to 4.70 ms | 9.02 to 13.61 ms | 0.98 to 1.04 | 0, 80, 0 |
+| 1000 | 1000 | 2.79 to 3.39 ms | 10.55 to 12.87 ms | 0.63 to 0.64 | 0, 0, 0 |
+| 1500 | 1500 | 2.74 to 2.95 ms | 14.24 to 14.80 ms | 0.59 to 0.61 | 0, 0, 0 |
+| 2000 | 1998 to 2000 | 10.85 to 14.92 ms | 46.20 to 54.02 ms | 0.50 to 0.51 | 0, 0, 0 |
+| 2500 | 2127 to 2145 | 2.46 to 2.80 s | 4.97 to 5.28 s | 0.46 | 700, 90, 0 |
+
+The CPU per request is the server CPU cores divided by the achieved rate.
+
+Findings
+
+- Cassandra held 1,500 req/s with a p99 of 14.2 to 14.8 ms and kept the rate at 2,000 req/s with a
+  p99 of 46 to 54 ms. It saturated at about 2,100 req/s (2,127 to 2,145 at 2,500 req/s).
+- Against the baseline of `8989796` the p99 was lower by more than 10 percent with ranges that do
+  not overlap at 1,500 req/s (16.3 to 23.2 ms before) and at 2,000 req/s (68.9 to 216.2 ms before).
+  At 500 and 1,000 req/s the ranges overlap. The saturation is about 2 percent higher (2,085 to
+  2,098 before), below the 10 percent threshold of the compare script. The CPU per request is the
+  same, 0.46 to 0.51 ms from 2,000 req/s on against 0.46 to 0.50 ms.
+- The p99 target of 25 ms held at 500, 1,000 and 1,500 req/s in every run. The 80 entries that are
+  not ok at 500 req/s are 0.05 percent of the entries, below the budget of 0.1 percent.
+- Bursts: 80 entries at 500 req/s (run 2, error type: {"OperationTimedOut": 80}); 700 entries at 2,500 req/s (run 1, error type: {"OperationTimedOut": 700}); 90 entries at 2,500 req/s (run 2, error type: {"OperationTimedOut": 90}). Whole requests failed. The runs at 2,500 req/s are above the saturation
+  point.
+- Why the tail is lower than before is not known. It can be the difference between two days.
+
+Limits
+
+- Client and service share one machine. Cassandra is one node in Docker Desktop, so there is no
+  replication and no network. Its own capacity was not measured.
+- The burst at 500 req/s is in the first rate after the seed, like the bursts of the earlier
+  Cassandra series. A longer warm-up did not change that result in an earlier test.
+- One service process only. No claim for several processes or hosts.
+
+Compare it with the baseline before
+
+```bash
+make bench-compare BASE=docs/benchmarks/baseline-cassandra-8989796.json NEW=docs/benchmarks/baseline-cassandra-3a31f56.json
+```
