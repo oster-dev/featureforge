@@ -1,0 +1,118 @@
+{
+  "generated_at": "2026-11-25T15:08:21.460663+00:00",
+  "setup": {
+    "entities": 1000000,
+    "backend": "redis",
+    "redis_keys": 2000001,
+    "entities_per_request": 5,
+    "features": [
+      "user_play_count_1h",
+      "user_skip_rate_24h"
+    ],
+    "access_pattern": "Zipf-like, exponent about 1",
+    "budget_ms": 50.0,
+    "warmup_s": 10.0,
+    "repeats": 1,
+    "service": "one uvicorn process, access log off"
+  },
+  "environment": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "cpu": "Apple M4 Pro",
+    "logical_cpus": 14,
+    "memory_bytes": 25769803776,
+    "python": "3.13.9",
+    "packages": {
+      "fastapi": "0.141.1",
+      "uvicorn": "0.53.0",
+      "starlette": "1.6.0",
+      "redis": "5.3.1",
+      "pydantic": "2.13.5",
+      "numpy": "2.5.3",
+      "psutil": "7.2.2"
+    },
+    "redis_server": "7.4.12",
+    "redis_aof_enabled": true,
+    "git": {
+      "commit": "5b1181139501304466562735073eaf75507f3e63",
+      "dirty": false
+    }
+  },
+  "results": [
+    {
+      "target_rps": 3000,
+      "scheduled": 180000,
+      "completed": 180000,
+      "achieved_rps": 2999.058310236265,
+      "errors": 0,
+      "error_rate": 0.0,
+      "entries_total": 1800000,
+      "entries_not_ok": 0,
+      "entry_statuses": {
+        "ok": 1800000
+      },
+      "entry_error_types": {},
+      "latency_ms": {
+        "p50": 0.8885833667591214,
+        "p90": 1.5346333617344503,
+        "p95": 1.9912603718694275,
+        "p99": 4.631381257204344,
+        "p99.9": 12.199134559370743,
+        "max": 24.083374766632915
+      },
+      "service_ms": {
+        "p50": 0.7911670254543424,
+        "p90": 1.4035461004823448,
+        "p95": 1.868958055274561,
+        "p99": 4.136319743702215,
+        "p99.9": 11.494618067518521,
+        "max": 23.969833040609956
+      },
+      "max_in_flight": 16,
+      "reconnects": 0,
+      "duration_s": 60.0,
+      "server_cpu_cores": 0.6924099384586557,
+      "client_cpu_cores": 0.28602860431153404,
+      "workers": 4,
+      "connections_per_worker": 32,
+      "repeat": 1
+    },
+    {
+      "target_rps": 5000,
+      "scheduled": 300000,
+      "completed": 300000,
+      "achieved_rps": 4920.810133829691,
+      "errors": 0,
+      "error_rate": 0.0,
+      "entries_total": 3000000,
+      "entries_not_ok": 0,
+      "entry_statuses": {
+        "ok": 3000000
+      },
+      "entry_error_types": {},
+      "latency_ms": {
+        "p50": 338.52364640915766,
+        "p90": 801.2136337929408,
+        "p95": 883.4845064848195,
+        "p99": 999.849967577029,
+        "p99.9": 1053.8654162253952,
+        "max": 1085.6526660500094
+      },
+      "service_ms": {
+        "p50": 25.519207934848964,
+        "p90": 32.30178332887591,
+        "p95": 36.70275001786649,
+        "p99": 43.97677541244777,
+        "p99.9": 56.93520953471314,
+        "max": 98.45687495544553
+      },
+      "max_in_flight": 1311,
+      "reconnects": 0,
+      "duration_s": 60.0,
+      "server_cpu_cores": 0.9244184430968048,
+      "client_cpu_cores": 0.3642345750904103,
+      "workers": 4,
+      "connections_per_worker": 32,
+      "repeat": 1
+    }
+  ]
+}
