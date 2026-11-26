@@ -120,6 +120,9 @@ def _reject_identity_conflicts(spec: FeatureSpec, events: DataFrame) -> None:
         )
 
 
+_SUPPORTED_OPS = frozenset({Op.COUNT, Op.SUM, Op.AVG})
+
+
 def backfill_spec(spec: FeatureSpec, events: DataFrame, observations: DataFrame) -> DataFrame:
     """Evaluate the spec for every row of observations over (t - size, t].
 
@@ -127,10 +130,11 @@ def backfill_spec(spec: FeatureSpec, events: DataFrame, observations: DataFrame)
     observations carries the spec keys and observation_time as timestamp.
     """
     validate_event_fields(spec)
-    unsupported = sorted({a.op.value for a in spec.aggregations if a.op is not Op.COUNT})
+    unsupported = sorted({a.op.value for a in spec.aggregations if a.op not in _SUPPORTED_OPS})
     if unsupported:
         raise NotImplementedError(
-            f"spark backfill supports count aggregations only; unsupported: {unsupported}"
+            "spark backfill supports count, sum and avg aggregations only; "
+            f"unsupported: {unsupported}"
         )
     _require_columns("events", events, set(InteractionEventV1.model_fields))
     _require_columns("observations", observations, {*spec.keys, "observation_time"})
@@ -154,7 +158,18 @@ def backfill_spec(spec: FeatureSpec, events: DataFrame, observations: DataFrame)
         condition = in_window
         if agg.filter is not None:
             condition = in_window & compile_expression(agg.filter, event_columns)
-        aggregates.append(F.count(F.when(condition, F.lit(1))).alias(agg.name))
+        if agg.op is Op.COUNT:
+            aggregate = F.count(F.when(condition, F.lit(1)))
+        else:
+            if agg.column is None:
+                raise ValueError(f"aggregation '{agg.name}' needs a column")
+            values = F.when(condition, F.col(agg.column))
+            # count and sum over no events are 0, avg over no events is missing (ADR-008)
+            if agg.op is Op.SUM:
+                aggregate = F.coalesce(F.sum(values), F.lit(0))
+            else:
+                aggregate = F.avg(values)
+        aggregates.append(aggregate.alias(agg.name))
     result = joined.groupBy(*spec.keys, "observation_time").agg(*aggregates)
 
     aggregate_columns = {agg.name: F.col(agg.name) for agg in spec.aggregations}

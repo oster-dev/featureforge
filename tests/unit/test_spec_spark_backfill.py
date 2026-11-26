@@ -208,12 +208,12 @@ def test_conflicting_payload_fails_outside_window_and_for_other_entities(spark):
 def test_unsupported_operators_fail_loudly(spark):
     spec = SKIP_RATE.model_copy(
         update={
-            "aggregations": [Aggregation(name="total", op=Op.SUM, column="play_seconds")],
+            "aggregations": [Aggregation(name="total", op=Op.MIN, column="play_seconds")],
             "derived": {},
         }
     )
     events = [make_event(1, T0, "user_000001", "content_000001")]
-    with pytest.raises(NotImplementedError, match="sum"):
+    with pytest.raises(NotImplementedError, match="min"):
         backfill_spec(
             spec,
             events_frame(spark, events),

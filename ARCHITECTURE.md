@@ -21,7 +21,7 @@ training and online reads, from batch and streaming sources.
 > in [docs/DESIGN.md](docs/DESIGN.md).
 
 The platform is the spec-driven path: one YAML spec drives the Flink job, the
-Spark backfill for count specs, the Redis or Cassandra store, the feature serving service, the
+Spark backfill for count, sum and avg specs, the Redis or Cassandra store, the feature serving service, the
 publication history and the training datasets. The Feast-based batch path (section 2) is batch
 path v1. It serves the original batch features and was built first. Those features are not yet
 defined as specs.
@@ -82,7 +82,7 @@ flowchart TB
 | Concern | Implementation |
 |---|---|
 | Batch features | Pandas (reference), PySpark (parity-tested) |
-| Spec-driven backfill | PySpark, count specs: values at explicit observation times, equal to the spec reference, no availability time |
+| Spec-driven backfill | PySpark, count, sum and avg specs: values at explicit observation times, equal to the spec reference, no availability time |
 | Offline store | One canonical Parquet root, Hive-style `observation_date` partitions |
 | Streaming | Kafka, Flink (PyFlink), Pydantic contracts |
 | Feature definitions as data | YAML specs, Pydantic validation, exact reference, one generic Flink job for all spec-defined streaming features |
@@ -680,9 +680,9 @@ workflow with registry and rollback. Scope and order: [STATUS.md](STATUS.md) and
 - Flink Kafka sinks use `AT_LEAST_ONCE`. Idempotency comes from dedupe and
   guarded store writes, not from end-to-end exactly-once. Kafka, the online store and Iceberg
   do not share a transaction.
-- The engines support count aggregations and one entity key. `window_replace` has no store, so
-  non-count features cannot be served online. The `published_as_of` dataset mode needs one
-  entity key.
+- The Flink job supports count aggregations and one entity key, the Spark backfill also sum and
+  avg. `window_replace` has no store, so non-count features cannot be served online. The
+  `published_as_of` dataset mode needs one entity key.
 - The parity between Redis and `published_as_of` is tested over two bounded runs of one entity
   (`tests/integration/test_materialize_spec_kafka_to_history.py`). `history_start` marks only the
   beginning of the evidence, so a later gap reads as `not_published`.
