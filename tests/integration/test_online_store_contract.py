@@ -236,32 +236,47 @@ def test_concurrent_writers_never_lose_the_highest_count(make_store):
     assert store.read("user_000001").counts["play_count"] == max(counts)
 
 
+def wait_until_expired(store, entity, limit_seconds):
+    """Poll until the value has expired. Cassandra counts a TTL in whole seconds."""
+    deadline = time.monotonic() + limit_seconds
+    while time.monotonic() < deadline:
+        if store.read(entity) is None:
+            return True
+        time.sleep(0.2)
+    return False
+
+
 def test_an_expired_value_reads_as_none(make_store):
-    store = make_store(with_ttl(PLAY, 1))
+    store = make_store(with_ttl(PLAY, 3))
 
     assert store.write(record(PLAY, "user_000001", {"play_count": 3})) == "written"
     assert store.read("user_000001") is not None
-    time.sleep(1.5)
-    assert store.read("user_000001") is None
+    assert wait_until_expired(store, "user_000001", 3 + 2)
 
 
 def test_unchanged_and_stale_deliveries_do_not_extend_the_expiry(make_store):
-    store = make_store(with_ttl(PLAY, 3))
+    ttl = 6
+    store = make_store(with_ttl(PLAY, ttl))
     first = record(PLAY, "user_000001", {"play_count": 3})
 
     assert store.write(first) == "written"
+    started = time.monotonic()
     time.sleep(2)
     assert store.write(first) == "unchanged"
     assert store.write(record(PLAY, "user_000001", {"play_count": 2})) == "stale"
-    time.sleep(1.5)
-    assert store.read("user_000001") is None
+    assert wait_until_expired(store, "user_000001", ttl + 2)
+    # Without an extension the value is gone by started + ttl. A write at started + 2 that
+    # extended the expiry would keep it until after started + ttl + 1.
+    assert time.monotonic() - started < ttl + 1
 
 
 def test_a_written_update_restarts_the_expiry(make_store):
-    store = make_store(with_ttl(PLAY, 3))
+    ttl = 6
+    store = make_store(with_ttl(PLAY, ttl))
 
     assert store.write(record(PLAY, "user_000001", {"play_count": 1})) == "written"
-    time.sleep(2)
+    time.sleep(3)
     assert store.write(record(PLAY, "user_000001", {"play_count": 2})) == "written"
-    time.sleep(2)
+    time.sleep(3.2)
+    # The first write alone has expired by now (3 + 3.2 > 6). The restart keeps the value.
     assert store.read("user_000001") is not None
