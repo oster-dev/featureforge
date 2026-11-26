@@ -38,6 +38,7 @@ LABEL_COLUMN = "label__label_under_test"
 PLAY_COUNT = load_spec(SPECS / "user_play_count_1h.yaml")
 SKIP_RATE = load_spec(SPECS / "user_skip_rate_24h.yaml")
 CONTENT_PLAY_COUNT = load_spec(SPECS / "content_play_count_1h.yaml")
+PLAY_SECONDS = load_spec(ROOT / "fixtures" / "specs" / "user_play_seconds_1h.yaml")
 
 
 @pytest.fixture(scope="module")
@@ -379,3 +380,54 @@ def test_the_module_never_touches_publication_evidence() -> None:
 
     for forbidden in ("pyiceberg", "HistoryTable", "published_at", "streaming.history"):
         assert forbidden not in source
+
+
+def test_sum_and_avg_features_match_hand_calculated_values(
+    spark: SparkSession, tmp_path: Path
+) -> None:
+    def play(n: int, when: datetime, seconds: int, event_type: str = "play") -> InteractionEventV1:
+        return make_event(n, when, event_type).model_copy(update={"play_seconds": seconds})
+
+    second = BASE + timedelta(hours=2)
+    events = [
+        play(1, BASE - timedelta(hours=1), 100),  # on the lower bound, excluded
+        play(2, BASE - timedelta(minutes=30), 60),
+        play(3, BASE - timedelta(minutes=10), 120),
+        play(4, BASE, 30),  # on the upper bound, included
+        play(5, BASE + MICRO, 500),  # after t, excluded
+        play(6, BASE + timedelta(minutes=90), 40, "skip"),  # dropped by the filter
+    ]
+    label = make_label("exists")
+    output = tmp_path / "dataset"
+
+    build(
+        spark,
+        [PLAY_SECONDS],
+        label,
+        events,
+        [BASE, second],
+        second + HORIZON + timedelta(seconds=1),
+        output,
+    )
+    rows = {row["t"]: row for row in read_rows(spark, output)}
+
+    assert set(rows) == {micros(BASE), micros(second)}
+    first = rows[micros(BASE)]
+    assert first["user_play_seconds_1h__play_count"] == 3
+    assert first["user_play_seconds_1h__play_seconds_sum"] == 210
+    assert first["user_play_seconds_1h__avg_play_seconds"] == 70
+    empty = rows[micros(second)]
+    assert empty["user_play_seconds_1h__play_count"] == 0
+    assert empty["user_play_seconds_1h__play_seconds_sum"] == 0
+    assert empty["user_play_seconds_1h__avg_play_seconds"] is None
+
+    for when in (BASE, second):
+        expected = evaluate_spec(
+            PLAY_SECONDS, events, entity={"user_id": USER}, observation_time=when
+        ).values
+        for column in feature_columns(PLAY_SECONDS):
+            actual = rows[micros(when)][f"user_play_seconds_1h__{column}"]
+            if expected[column] is None:
+                assert actual is None
+            else:
+                assert actual == pytest.approx(expected[column])

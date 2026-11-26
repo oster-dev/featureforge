@@ -24,14 +24,14 @@ TIMES = [
     datetime(2026, 1, 1, 18, 0, tzinfo=UTC),
     datetime(2026, 1, 2, 18, 0, tzinfo=UTC),
 ]
-SUM_SPEC = """name: user_play_seconds_1h
+MIN_SPEC = """name: user_play_seconds_1h
 version: 1
 owner: test
-description: Total play seconds in the last hour
+description: Smallest play seconds in the last hour
 entity: user_id
 source: interaction-events.validated.v1
 aggregations:
-  - {name: total_seconds, op: sum, column: play_seconds}
+  - {name: min_seconds, op: min, column: play_seconds}
 window: {size: 1h, slide: 1m, boundary: right_closed}
 lateness: {watermark_delay: 10m, allowed: 30m}
 dedupe: {key: event_id, ttl: 24h}
@@ -157,14 +157,14 @@ def test_existing_output_is_never_overwritten(spark, tmp_path):
 
 
 def test_unsupported_operator_is_reported(spark, tmp_path, capsys):
-    spec = tmp_path / "sum_spec.yaml"
-    spec.write_text(SUM_SPEC)
+    spec = tmp_path / "min_spec.yaml"
+    spec.write_text(MIN_SPEC)
     observations = tmp_path / "observations.jsonl"
     valid_observations(observations)
     output = tmp_path / "out"
 
     assert run_backfill_spec_command(spec, EVENTS, observations, output, spark) == 1
-    assert "sum" in capsys.readouterr().out
+    assert "unsupported: ['min']" in capsys.readouterr().out
     assert not output.exists()
 
 

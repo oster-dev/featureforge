@@ -69,9 +69,9 @@ flowchart LR
     REF -. "compared on golden fixtures<br/>and randomized boundaries" .-> IMPL
 ```
 
-The language is bounded on purpose. It is not a general SQL or streaming compiler. The Flink job and
-the Spark backfill support count aggregations and one entity key today, and other operators fail with
-an explicit error instead of being computed wrongly.
+The language is bounded on purpose. It is not a general SQL or streaming compiler. The Flink job supports count aggregations and one entity key. The Spark backfill also
+supports sum and avg. Other operators fail with an explicit error instead of being computed
+wrongly.
 
 The same semantics exist in several implementations: an exact **spec reference**, the generic Flink
 job, the Spark backfill and the spec-driven store. The reference is the oracle. The others are
@@ -296,7 +296,7 @@ The full list is in [STATUS.md](../STATUS.md). The ones that shape the design:
 - Recovery is shown for a TaskManager crash and a planned stop with a savepoint. JobManager failure is
   not proven, and checkpoints live in JobManager memory.
 - Topics have one partition. Scaling over partitions is not demonstrated.
-- The engines support count aggregations and one entity key. `published_as_of` needs one entity key.
+- The Flink job supports count aggregations and one entity key, the Spark backfill also sum and avg. `published_as_of` needs one entity key.
 - There is no store for `window_replace`, so non-count features cannot be served online yet.
 - The event table has one writer and no compaction or retention. Its append slows down with the number of
   data files (about 4 ms per file).
