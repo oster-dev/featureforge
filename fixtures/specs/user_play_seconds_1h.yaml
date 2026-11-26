@@ -1,0 +1,16 @@
+name: user_play_seconds_1h
+version: 1
+owner: personalization-team
+description: Play count, summed and average play seconds in the last hour. Reference fixture only.
+entity: user_id
+source: interaction-events.validated.v1
+aggregations:
+  - {name: play_count, op: count, filter: "event_type == 'play'"}
+  - {name: play_seconds_sum, op: sum, column: play_seconds, filter: "event_type == 'play'"}
+  - {name: avg_play_seconds, op: avg, column: play_seconds, filter: "event_type == 'play'"}
+window: {size: 1h, slide: 1m, boundary: right_closed}
+lateness: {watermark_delay: 10m, allowed: 30m}
+dedupe: {key: event_id, ttl: 24h}
+online: {store: redis, ttl: 2h, update_policy: window_replace}
+offline: {store: iceberg, table: features.user_play_seconds_1h}
+freshness_slo: 5m
