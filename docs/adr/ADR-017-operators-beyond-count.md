@@ -1,6 +1,6 @@
 # ADR-017 Operators beyond count in the engines and the stores
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-26
 - Scope: Flink job, Spark backfill, spec model and the online store policies
 - Refines: ADR-008 (update policy rules), ADR-009
@@ -53,9 +53,16 @@ and which store policy it uses.
 - `last_k` and `approx_distinct` need the new `window_replace` store policy first.
 - Composite keys are a separate step and are not decided here.
 
+## Answers to the first questions
+
+- The summed field is guaranteed non-negative. `play_seconds` is a strict integer with `ge=0` in
+  the event contract, so `sum` over it is a non-negative integer and monotone under added events.
+- A derived expression may return a missing value for an empty window. The spec model accepts
+  `play_seconds_sum / play_count if play_count > 0 else None`, and the reference returns `None` for
+  an empty window and `90.0` for the fixture (`tests/unit/test_spec_sum_avg_golden.py`).
+
 ## Open questions
 
-- Is the summed field guaranteed non-negative by the event contract?
-- Can a derived expression return a missing value for an empty window?
-- Integer and float components in one vector.
+- Do the feature record parser and the store accept a missing derived value?
+- Integer and float components in one vector (min and max over non-integer fields).
 - `last_k`: order by (event_time, event_id), and the largest allowed k.
