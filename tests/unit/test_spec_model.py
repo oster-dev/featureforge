@@ -64,7 +64,7 @@ def test_non_count_aggregation_cannot_use_monotone_policy():
     data = _skip_rate()
     data["aggregations"] = [{"name": "avg_x", "op": "avg", "column": "x"}]
     data["derived"] = {}
-    with pytest.raises(ValidationError, match="count-only"):
+    with pytest.raises(ValidationError, match="supports only count and sum"):
         FeatureSpec.model_validate(data)
 
 
