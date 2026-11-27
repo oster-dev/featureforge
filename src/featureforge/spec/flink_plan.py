@@ -23,7 +23,7 @@ from featureforge.spec.reference import evaluate_expression, names_in
 
 EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 _MS = timedelta(milliseconds=1)
-SUPPORTED_OPS = frozenset({Op.COUNT, Op.SUM, Op.AVG})
+SUPPORTED_OPS = frozenset({Op.COUNT, Op.SUM, Op.AVG, Op.MIN, Op.MAX})
 
 
 class UnsupportedSpecError(ValueError):
@@ -40,7 +40,7 @@ class AggregationPlan:
 
     @property
     def width(self) -> int:
-        return 2 if self.op is Op.AVG else 1
+        return 2 if self.op in (Op.AVG, Op.MIN, Op.MAX) else 1
 
 
 @dataclass(frozen=True)
@@ -91,7 +91,7 @@ def build_flink_plan(spec: FeatureSpec) -> FlinkJobPlan:
         if aggregation.op not in SUPPORTED_OPS:
             problems.append(
                 f"aggregation '{aggregation.name}' uses op {aggregation.op.value}; "
-                "only count, sum and avg are supported yet"
+                "only count, sum, avg, min and max are supported yet"
             )
     if problems:
         raise UnsupportedSpecError(
@@ -134,15 +134,46 @@ def accumulate(
             continue
         if aggregation.op is Op.COUNT:
             state[aggregation.slot] += 1
+            continue
+        value = int(event[_column(aggregation)])
+        slot = aggregation.slot
+        if aggregation.op in (Op.MIN, Op.MAX):
+            if state[slot + 1] == 0:
+                state[slot] = value
+            elif aggregation.op is Op.MIN:
+                state[slot] = min(state[slot], value)
+            else:
+                state[slot] = max(state[slot], value)
+            state[slot + 1] += 1
         else:
-            state[aggregation.slot] += int(event[_column(aggregation)])
+            state[slot] += value
             if aggregation.op is Op.AVG:
-                state[aggregation.slot + 1] += 1
+                state[slot + 1] += 1
     return tuple(state)
 
 
-def merge(left: tuple[int, ...], right: tuple[int, ...]) -> tuple[int, ...]:
-    return tuple(a + b for a, b in zip(left, right, strict=True))
+def merge(plan: FlinkJobPlan, left: tuple[int, ...], right: tuple[int, ...]) -> tuple[int, ...]:
+    """Combine two partial states of one window.
+
+    Counts, sums and the parts of an avg add up. An extreme takes the smaller or larger value
+    and ignores a side that saw no matching event.
+    """
+    if len(left) != plan.slots or len(right) != plan.slots:
+        raise ValueError(f"both accumulators need {plan.slots} slots for this plan")
+    state = [a + b for a, b in zip(left, right, strict=True)]
+    for aggregation in plan.aggregations:
+        if aggregation.op not in (Op.MIN, Op.MAX):
+            continue
+        slot = aggregation.slot
+        if left[slot + 1] == 0:
+            state[slot] = right[slot]
+        elif right[slot + 1] == 0:
+            state[slot] = left[slot]
+        elif aggregation.op is Op.MIN:
+            state[slot] = min(left[slot], right[slot])
+        else:
+            state[slot] = max(left[slot], right[slot])
+    return tuple(state)
 
 
 def utc_timestamp(milliseconds: int) -> str:
@@ -152,7 +183,8 @@ def utc_timestamp(milliseconds: int) -> str:
 def aggregate_values(
     plan: FlinkJobPlan, accumulator: tuple[int, ...]
 ) -> dict[str, int | float | None]:
-    """The value of every aggregation. An avg is missing for a window without matching events."""
+    """The value of every aggregation. An avg, min or max is missing for a window without
+    matching events."""
     if len(accumulator) != plan.slots:
         raise ValueError(f"accumulator has {len(accumulator)} slots, the plan needs {plan.slots}")
     values: dict[str, int | float | None] = {}
@@ -160,6 +192,9 @@ def aggregate_values(
         if aggregation.op is Op.AVG:
             total, count = accumulator[aggregation.slot], accumulator[aggregation.slot + 1]
             values[aggregation.name] = total / count if count else None
+        elif aggregation.op in (Op.MIN, Op.MAX):
+            matched = accumulator[aggregation.slot + 1]
+            values[aggregation.name] = accumulator[aggregation.slot] if matched else None
         else:
             values[aggregation.name] = accumulator[aggregation.slot]
     return values

@@ -71,10 +71,10 @@ def test_composite_key_is_rejected(skip_spec):
         build_flink_plan(spec)
 
 
-def test_an_operator_beyond_sum_and_avg_is_rejected(skip_spec):
-    smallest = Aggregation(name="min_play_seconds", op=Op.MIN, column="play_seconds")
-    spec = skip_spec.model_copy(update={"aggregations": [smallest]})
-    with pytest.raises(UnsupportedSpecError, match="min_play_seconds"):
+def test_an_operator_beyond_min_and_max_is_rejected(skip_spec):
+    recent = Aggregation(name="recent_play_seconds", op=Op.LAST_K, column="play_seconds", k=3)
+    spec = skip_spec.model_copy(update={"aggregations": [recent]})
+    with pytest.raises(UnsupportedSpecError, match="recent_play_seconds"):
         build_flink_plan(spec)
 
 
@@ -139,7 +139,7 @@ def test_accumulate_counts_only_matching_events_and_merge_adds(skip_plan):
     for event_type in ("play", "skip", "impression", "complete", "play"):
         accumulator = accumulate(skip_plan, {"event_type": event_type}, accumulator)
     assert accumulator == (2, 1)
-    assert merge((2, 1), (1, 3)) == (3, 4)
+    assert merge(skip_plan, (2, 1), (1, 3)) == (3, 4)
 
 
 def test_utc_timestamp_matches_the_hand_written_format():
@@ -197,7 +197,7 @@ def test_accumulate_sums_the_column_and_merge_adds_every_slot(play_seconds_plan)
         event = {"event_type": event_type, "play_seconds": seconds}
         accumulator = accumulate(play_seconds_plan, event, accumulator)
     assert accumulator == (2, 150, 150, 2)
-    assert merge((1, 10, 10, 1), (2, 20, 30, 2)) == (3, 30, 40, 3)
+    assert merge(play_seconds_plan, (1, 10, 10, 1), (2, 20, 30, 2)) == (3, 30, 40, 3)
 
 
 def test_a_derived_value_with_a_missing_input_is_missing():
