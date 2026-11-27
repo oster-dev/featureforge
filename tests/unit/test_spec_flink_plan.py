@@ -211,5 +211,7 @@ def test_a_derived_value_with_a_missing_input_is_missing():
 
 
 def test_the_online_path_refuses_avg_as_an_aggregation():
-    with pytest.raises(ValueError, match="only count and sum aggregations are supported, got avg"):
+    with pytest.raises(
+        ValueError, match="only count, sum, min and max aggregations are supported, got avg"
+    ):
         record_fields(PLAY_SECONDS)

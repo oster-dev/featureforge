@@ -34,7 +34,11 @@ from pyiceberg.types import (
 from sqlalchemy.engine import make_url
 
 from featureforge.spec.model import FeatureSpec
-from featureforge.streaming.contracts.feature_record import FeatureRecord, record_fields
+from featureforge.streaming.contracts.feature_record import (
+    FeatureRecord,
+    extreme_names,
+    record_fields,
+)
 
 CATALOG_NAME = "history"
 DEFAULT_CATALOG_URL = "postgresql+psycopg2://featureforge:featureforge@127.0.0.1:55432/iceberg"
@@ -79,6 +83,7 @@ def history_columns(spec: FeatureSpec) -> tuple[Column, ...]:
     if clash:
         raise ValueError(f"column names of spec {spec.name} clash with history columns: {clash}")
 
+    extremes = extreme_names(spec)
     timestamp = pa.timestamp("us", tz="UTC")
     return (
         Column("update_id", StringType(), pa.string(), True),
@@ -86,7 +91,7 @@ def history_columns(spec: FeatureSpec) -> tuple[Column, ...]:
         Column(entity_key, StringType(), pa.string(), True),
         Column("observation_time", TimestamptzType(), timestamp, True),
         Column("window_start_exclusive", TimestamptzType(), timestamp, True),
-        *(Column(name, LongType(), pa.int64(), True) for name in counters),
+        *(Column(name, LongType(), pa.int64(), name not in extremes) for name in counters),
         *(Column(name, DoubleType(), pa.float64(), False) for name in derived),
         Column("published_at", TimestamptzType(), timestamp, True),
     )

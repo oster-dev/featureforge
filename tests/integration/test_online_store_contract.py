@@ -327,3 +327,58 @@ def test_sum_rising_count_with_a_falling_sum_raises_and_keeps_the_value(make_sto
     with pytest.raises(UpdateConflictError, match="Incomparable"):
         store.write(sum_record(4, 250))
     assert store.read(SUM_ENTITY) == stored
+
+
+EXTREMES = load_spec(
+    Path(__file__).resolve().parents[2]
+    / "fixtures"
+    / "specs"
+    / "user_play_seconds_extremes_1h.yaml"
+)
+
+
+def extremes_record(play_count, smallest, largest):
+    counts = {
+        "play_count": play_count,
+        "min_play_seconds": smallest,
+        "max_play_seconds": largest,
+    }
+    return record(EXTREMES, SUM_ENTITY, counts)
+
+
+@pytest.mark.parametrize("values", [(3, 60, 120), (0, None, None)])
+def test_extremes_round_trip_keeps_missing_extremes(make_store, values):
+    store = make_store(EXTREMES)
+    incoming = extremes_record(*values)
+
+    assert store.read(SUM_ENTITY) is None
+    assert store.write(incoming) == "written"
+    assert store.read(SUM_ENTITY) == incoming
+
+
+@pytest.mark.parametrize(
+    ("incoming", "outcome", "stored_after"),
+    [
+        ((3, 60, 120), "unchanged", (3, 60, 120)),
+        ((2, 100, 120), "stale", (3, 60, 120)),
+        ((4, 50, 150), "written", (4, 50, 150)),
+    ],
+)
+def test_extremes_same_window_corrections_follow_the_policy(
+    make_store, incoming, outcome, stored_after
+):
+    store = make_store(EXTREMES)
+    assert store.write(extremes_record(3, 60, 120)) == "written"
+
+    assert store.write(extremes_record(*incoming)) == outcome
+    assert store.read(SUM_ENTITY) == extremes_record(*stored_after)
+
+
+def test_extremes_a_rising_minimum_with_a_rising_count_raises_and_keeps_the_value(make_store):
+    store = make_store(EXTREMES)
+    stored = extremes_record(2, 50, 100)
+    assert store.write(stored) == "written"
+
+    with pytest.raises(UpdateConflictError, match="Incomparable"):
+        store.write(extremes_record(3, 60, 100))
+    assert store.read(SUM_ENTITY) == stored

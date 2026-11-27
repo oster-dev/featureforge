@@ -245,6 +245,7 @@ jobs:
             tests/integration/test_history_spark_read.py \
             tests/integration/test_history_postgres_catalog.py \
             tests/integration/test_published_spark.py \
+            tests/integration/test_published_spark_min_max.py \
             tests/integration/test_training_dataset_published.py \
             tests/integration/test_cli_training_dataset.py \
             tests/integration/test_feature_service_redis.py \
@@ -267,6 +268,7 @@ jobs:
               "test_history_spark_read",
               "test_history_postgres_catalog",
               "test_published_spark",
+              "test_published_spark_min_max",
               "test_training_dataset_published",
               "test_cli_training_dataset",
               "test_feature_service_redis",

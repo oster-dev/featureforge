@@ -113,26 +113,36 @@ def validate_event_fields(
             f"spec '{spec.name}' references unknown event fields {sorted(unknown)}; "
             f"available: {sorted(model.model_fields)}"
         )
-    _check_monotone_sums(spec, model)
+    _check_monotone_columns(spec, model)
 
 
-def _check_monotone_sums(spec: FeatureSpec, model: type[InteractionEventV1]) -> None:
-    """A sum is only monotone under added events if its field is a non-negative integer."""
+def _check_monotone_columns(spec: FeatureSpec, model: type[InteractionEventV1]) -> None:
+    """A monotone sum needs a non-negative integer field, a monotone min or max an integer one.
+
+    A float component cannot be compared and stored exactly across the engines (ADR-017).
+    """
     if spec.online.update_policy is not UpdatePolicy.COMPONENTWISE_MONOTONIC:
         return
     for aggregation in spec.aggregations:
-        if aggregation.op is not Op.SUM or aggregation.column is None:
+        if aggregation.op not in (Op.SUM, Op.MIN, Op.MAX) or aggregation.column is None:
             continue
         field = model.model_fields[aggregation.column]
-        lower = next(
-            (item.ge for item in field.metadata if getattr(item, "ge", None) is not None),
-            None,
-        )
-        if field.annotation is not int or lower is None or lower < 0:
+        if aggregation.op is Op.SUM:
+            lower = next(
+                (item.ge for item in field.metadata if getattr(item, "ge", None) is not None),
+                None,
+            )
+            if field.annotation is not int or lower is None or lower < 0:
+                raise ValueError(
+                    f"aggregation '{aggregation.name}' sums '{aggregation.column}', which is "
+                    "not a non-negative integer in the event contract, so the sum is not "
+                    "monotone under added events (ADR-017)"
+                )
+        elif field.annotation is not int:
             raise ValueError(
-                f"aggregation '{aggregation.name}' sums '{aggregation.column}', which is not "
-                "a non-negative integer in the event contract, so the sum is not monotone "
-                "under added events (ADR-017)"
+                f"aggregation '{aggregation.name}' uses '{aggregation.column}', which is not "
+                "an integer in the event contract, so its extreme cannot be stored as an "
+                "integer component (ADR-017)"
             )
 
 

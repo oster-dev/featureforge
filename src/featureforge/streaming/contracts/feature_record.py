@@ -7,12 +7,13 @@ import json
 import math
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from featureforge.spec.compiled_expression import compile_expression
 from featureforge.spec.model import FeatureSpec, Op
-from featureforge.streaming.contracts.count_vector import CountVector
+from featureforge.spec.reference import names_in
+from featureforge.streaming.contracts.count_vector import CountVector, Direction
 
 SCHEMA_VERSION = "v1"
 BASE_FIELDS = (
@@ -38,14 +39,16 @@ class FeatureRecord:
     entity_value: str
     observation_time: datetime
     window_start_exclusive: datetime
-    counts: Mapping[str, int]
+    counts: Mapping[str, int | None]
     derived: Mapping[str, float | None]
+    directions: Mapping[str, Direction] = field(default_factory=dict, compare=False)
 
     def vector(self) -> CountVector:
         return CountVector(
             entity=self.entity_value,
             observation_time=self.observation_time,
             counts=dict(self.counts),
+            directions=dict(self.directions),
         )
 
     def to_json(self) -> str:
@@ -67,13 +70,24 @@ class FeatureRecord:
 def counter_names(spec: FeatureSpec) -> tuple[str, ...]:
     names = []
     for aggregation in spec.aggregations:
-        if aggregation.op not in (Op.COUNT, Op.SUM):
+        if aggregation.op not in (Op.COUNT, Op.SUM, Op.MIN, Op.MAX):
             raise ValueError(
-                f"only count and sum aggregations are supported, got {aggregation.op.value} "
+                f"only count, sum, min and max aggregations are supported, got "
+                f"{aggregation.op.value} "
                 f"for {aggregation.name}"
             )
         names.append(aggregation.name)
     return tuple(names)
+
+
+def extreme_names(spec: FeatureSpec) -> frozenset[str]:
+    """The components that are a minimum or a maximum. They are missing for an empty window."""
+    return frozenset(a.name for a in spec.aggregations if a.op in (Op.MIN, Op.MAX))
+
+
+def component_directions(spec: FeatureSpec) -> dict[str, Direction]:
+    """A minimum falls with added events, every other component grows (ADR-017)."""
+    return {a.name: "down" if a.op is Op.MIN else "up" for a in spec.aggregations}
 
 
 def record_fields(spec: FeatureSpec) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
@@ -112,6 +126,8 @@ class RecordDecoder:
     def __init__(self, spec: FeatureSpec) -> None:
         self._spec = spec
         self._entity_key, self._counters, self._derived_names = record_fields(spec)
+        self._extremes = extreme_names(spec)
+        self._directions = component_directions(spec)
         self._expected = {
             *BASE_FIELDS,
             self._entity_key,
@@ -150,10 +166,13 @@ class RecordDecoder:
         if observation_time - window_start != spec.window.size:
             raise ValueError(f"record window must be exactly {spec.window.size}")
 
-        counts: dict[str, int] = {}
+        counts: dict[str, int | None] = {}
         for name in self._counters:
             value = data[name]
-            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            if name in self._extremes:
+                if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
+                    raise ValueError(f"{name} must be an integer or null")
+            elif isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise ValueError(f"{name} must be a non-negative integer")
             counts[name] = value
 
@@ -166,7 +185,10 @@ class RecordDecoder:
                 if not math.isfinite(value):
                     raise ValueError(f"{name} must be finite")
             try:
-                expected_value = compile_expression(expression)(counts)
+                if any(counts.get(ref, 0) is None for ref in names_in(expression)):
+                    expected_value = None
+                else:
+                    expected_value = compile_expression(expression)(counts)
             except ZeroDivisionError as exc:
                 raise ValueError(f"{name} cannot be evaluated for these counts") from exc
             if value is None:
@@ -188,6 +210,7 @@ class RecordDecoder:
             window_start_exclusive=window_start,
             counts=counts,
             derived=derived,
+            directions=self._directions,
         )
 
 

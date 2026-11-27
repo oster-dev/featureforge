@@ -11,6 +11,6 @@ aggregations:
 window: {size: 1h, slide: 1m, boundary: right_closed}
 lateness: {watermark_delay: 10m, allowed: 30m}
 dedupe: {key: event_id, ttl: 24h}
-online: {store: redis, ttl: 2h, update_policy: window_replace}
+online: {store: redis, ttl: 2h, update_policy: componentwise_monotonic}
 offline: {store: iceberg, table: features.user_play_seconds_extremes_1h}
 freshness_slo: 5m
