@@ -52,7 +52,7 @@ The spec model rejects inconsistent specs before anything runs:
 - a slide that does not divide the window,
 - a dedupe TTL shorter than window plus allowed lateness,
 - an online TTL shorter than the window,
-- monotone update policies with non-count aggregations,
+- `append_only` with anything but one count, `componentwise_monotonic` with operators other than count and sum,
 - expressions outside the safe subset and fields that are not in the event contract.
 
 ```mermaid
@@ -138,7 +138,7 @@ stored one under the update policy of the spec:
 - `append_only`: exactly one count aggregation, ordered by window and count.
 - `componentwise_monotonic`: several counts, compared per component. An incomparable vector raises and
   leaves the stored value unchanged.
-- `window_replace` (non-count operators) is declared but no store implements it yet.
+- `window_replace` (for `last_k` and `approx_distinct`) is declared but no store implements it yet.
 
 ```mermaid
 flowchart LR
@@ -297,7 +297,7 @@ The full list is in [STATUS.md](../STATUS.md). The ones that shape the design:
   not proven, and checkpoints live in JobManager memory.
 - Topics have one partition. Scaling over partitions is not demonstrated.
 - The Flink job and the Spark backfill support count, sum and avg aggregations and one entity key. `published_as_of` needs one entity key.
-- There is no store for `window_replace`, so non-count features cannot be served online yet.
+- There is no store for `window_replace`, so `last_k` and `approx_distinct` cannot be served online yet. `sum` and `avg` (as a derived value) are served with `componentwise_monotonic`.
 - The event table has one writer and no compaction or retention. Its append slows down with the number of
   data files (about 4 ms per file).
 - Serving is measured on one machine and one process. Single runs show short bursts of `backend_error`
@@ -331,7 +331,7 @@ Netflix (facts in Iceberg, shared feature encoders for online and offline, tempo
 regeneration), as an inspiration and not a copy. The encoder here is the spec engine, whose references,
 Flink job and Spark backfill agree on golden fixtures.
 
-What is smaller: the engines support count and ratio features only, there is no sawtooth window
+What is smaller: the engines support count, sum, avg and ratio features only, there is no sawtooth window
 (ADR-008 names it as the alternative if state growth becomes the bottleneck), and everything runs locally
 on synthetic data.
 
