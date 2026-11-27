@@ -181,6 +181,20 @@ PLAY_SECONDS = FeatureCase(
 )
 
 
+PLAY_SECONDS_DERIVED = FeatureCase(
+    spec_file="user_play_seconds_derived_1h.yaml",
+    fixture_file=PLAY_SECONDS.fixture_file,
+    fixture_lines=PLAY_SECONDS.fixture_lines,
+    users=PLAY_SECONDS.users,
+    required_windows=PLAY_SECONDS.required_windows,
+    last_window=PLAY_SECONDS.last_window,
+    min_records=PLAY_SECONDS.min_records,
+    hand_written=play_seconds_reference,
+    host_specs=PLAY_SECONDS.host_specs,
+    container_specs=PLAY_SECONDS.container_specs,
+)
+
+
 def run_command(*arguments: str) -> str:
     result = subprocess.run(
         arguments,
@@ -322,6 +336,7 @@ def delete_topics(topics: list[str]) -> None:
         pytest.param(SKIP_RATE, id="user_skip_rate_24h"),
         pytest.param(PLAY_COUNT, id="user_play_count_1h"),
         pytest.param(PLAY_SECONDS, id="user_play_seconds_1h"),
+        pytest.param(PLAY_SECONDS_DERIVED, id="user_play_seconds_derived_1h"),
     ],
 )
 def test_generic_job_reproduces_golden_fixture(case: FeatureCase) -> None:
