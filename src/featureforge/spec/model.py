@@ -229,11 +229,17 @@ class FeatureSpec(_Strict):
             raise ValueError("online.fallback.defaults requires the policy default_value")
 
         policy = self.online.update_policy
-        monotone = policy in (UpdatePolicy.APPEND_ONLY, UpdatePolicy.COMPONENTWISE_MONOTONIC)
-        if monotone and any(a.op is not Op.COUNT for a in self.aggregations):
+        monotone_ops: dict[UpdatePolicy, tuple[Op, ...]] = {
+            UpdatePolicy.APPEND_ONLY: (Op.COUNT,),
+            UpdatePolicy.COMPONENTWISE_MONOTONIC: (Op.COUNT, Op.SUM),
+        }
+        allowed = monotone_ops.get(policy)
+        if allowed is not None and any(a.op not in allowed for a in self.aggregations):
+            listed = " and ".join(op.value for op in allowed)
             raise ValueError(
-                f"update_policy {policy.value} requires count-only aggregations; "
-                "use window_replace for other operators (see ADR-008)"
+                f"update_policy {policy.value} supports only {listed} aggregations; "
+                "express avg as a derived value over a sum and a count, "
+                "or use window_replace for other operators (see ADR-017)"
             )
         if policy is UpdatePolicy.APPEND_ONLY and len(self.aggregations) != 1:
             raise ValueError("append_only requires exactly one aggregation")

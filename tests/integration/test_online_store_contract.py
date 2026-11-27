@@ -280,3 +280,50 @@ def test_a_written_update_restarts_the_expiry(make_store):
     time.sleep(3.2)
     # The first write alone has expired by now (3 + 3.2 > 6). The restart keeps the value.
     assert store.read("user_000001") is not None
+
+
+SUM_AVG = load_spec(
+    Path(__file__).resolve().parents[2] / "fixtures" / "specs" / "user_play_seconds_derived_1h.yaml"
+)
+SUM_ENTITY = "user000001"
+
+
+def sum_record(play_count, play_seconds_sum):
+    counts = {"play_count": play_count, "play_seconds_sum": play_seconds_sum}
+    return record(SUM_AVG, SUM_ENTITY, counts)
+
+
+@pytest.mark.parametrize("counts", [(3, 270), (0, 0)])
+def test_sum_round_trip_keeps_a_missing_average(make_store, counts):
+    store = make_store(SUM_AVG)
+    incoming = sum_record(*counts)
+
+    assert store.read(SUM_ENTITY) is None
+    assert store.write(incoming) == "written"
+    assert store.read(SUM_ENTITY) == incoming
+
+
+@pytest.mark.parametrize(
+    ("incoming", "outcome", "stored_after"),
+    [
+        ((3, 270), "unchanged", (3, 270)),
+        ((2, 200), "stale", (3, 270)),
+        ((4, 350), "written", (4, 350)),
+    ],
+)
+def test_sum_same_window_corrections_follow_the_policy(make_store, incoming, outcome, stored_after):
+    store = make_store(SUM_AVG)
+    assert store.write(sum_record(3, 270)) == "written"
+
+    assert store.write(sum_record(*incoming)) == outcome
+    assert store.read(SUM_ENTITY) == sum_record(*stored_after)
+
+
+def test_sum_rising_count_with_a_falling_sum_raises_and_keeps_the_value(make_store):
+    store = make_store(SUM_AVG)
+    stored = sum_record(3, 270)
+    assert store.write(stored) == "written"
+
+    with pytest.raises(UpdateConflictError, match="Incomparable"):
+        store.write(sum_record(4, 250))
+    assert store.read(SUM_ENTITY) == stored

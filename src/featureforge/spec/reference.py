@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from functools import lru_cache
 from typing import Any
 
-from featureforge.spec.model import Aggregation, FeatureSpec, Op
+from featureforge.spec.model import Aggregation, FeatureSpec, Op, UpdatePolicy
 from featureforge.streaming.contracts.events import InteractionEventV1
 from featureforge.streaming.reference.user_play_count import EventIdentityConflictError
 
@@ -113,6 +113,27 @@ def validate_event_fields(
             f"spec '{spec.name}' references unknown event fields {sorted(unknown)}; "
             f"available: {sorted(model.model_fields)}"
         )
+    _check_monotone_sums(spec, model)
+
+
+def _check_monotone_sums(spec: FeatureSpec, model: type[InteractionEventV1]) -> None:
+    """A sum is only monotone under added events if its field is a non-negative integer."""
+    if spec.online.update_policy is not UpdatePolicy.COMPONENTWISE_MONOTONIC:
+        return
+    for aggregation in spec.aggregations:
+        if aggregation.op is not Op.SUM or aggregation.column is None:
+            continue
+        field = model.model_fields[aggregation.column]
+        lower = next(
+            (item.ge for item in field.metadata if getattr(item, "ge", None) is not None),
+            None,
+        )
+        if field.annotation is not int or lower is None or lower < 0:
+            raise ValueError(
+                f"aggregation '{aggregation.name}' sums '{aggregation.column}', which is not "
+                "a non-negative integer in the event contract, so the sum is not monotone "
+                "under added events (ADR-017)"
+            )
 
 
 @dataclass(frozen=True)

@@ -210,6 +210,6 @@ def test_a_derived_value_with_a_missing_input_is_missing():
     assert full["double_avg"] == 180
 
 
-def test_the_online_path_still_refuses_sum_and_avg_records():
-    with pytest.raises(ValueError, match="only count aggregations are supported"):
+def test_the_online_path_refuses_avg_as_an_aggregation():
+    with pytest.raises(ValueError, match="only count and sum aggregations are supported, got avg"):
         record_fields(PLAY_SECONDS)

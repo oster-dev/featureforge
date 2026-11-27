@@ -86,7 +86,7 @@ flowchart TB
 | Offline store | One canonical Parquet root, Hive-style `observation_date` partitions |
 | Streaming | Kafka, Flink (PyFlink), Pydantic contracts |
 | Feature definitions as data | YAML specs, Pydantic validation, exact reference, one generic Flink job for all spec-defined streaming features |
-| Online store | Redis and Cassandra behind the `OnlineStore` protocol, chosen by `online.store` in the spec. One spec-driven store and materializer for count and ratio specs. The two original features keep their typed models and command lines as thin wrappers over it |
+| Online store | Redis and Cassandra behind the `OnlineStore` protocol, chosen by `online.store` in the spec. One spec-driven store and materializer for count, sum and ratio specs. The two original features keep their typed models and command lines as thin wrappers over it |
 | Feature serving | A FastAPI service (`featureforge-serve`) with a `ServingReader` per backend: one entry with a status for every entity and feature, a budget per request, no retries |
 | Publication history | One Iceberg table per spec (PyIceberg writes, Spark reads, SQLite or PostgreSQL catalog), appended idempotently by `materialize_spec` with `--history-root` |
 | Event fact store | One Iceberg table of validated events, idempotent by `event_id`, read at a pinned snapshot |
@@ -217,7 +217,7 @@ It never blocks the valid events behind it.
 
 The update policy is part of the spec (`online.update_policy`). The stores of
 the two original features are thin wrappers over the spec-driven store, which
-implements the ordering for any count or ratio spec.
+implements the ordering for any count, sum or ratio spec.
 
 ```mermaid
 flowchart TD
@@ -301,7 +301,7 @@ streaming compiler.
 flowchart LR
     Y[Feature spec<br/>YAML] --> L[Loader<br/>validate, check event fields]
     L --> R[Spec reference<br/>exact oracle]
-    L --> P[Job plan<br/>count and ratio only]
+    L --> P[Job plan<br/>count, sum, avg and ratio]
     P --> G[Generic Flink job]
     G --> T[(Feature topic)]
     T --> MS[Spec-driven<br/>materializer]
@@ -318,9 +318,11 @@ flowchart LR
   evaluated without `eval()`.
 - **Validation before execution.** The spec model rejects a slide that does not
   divide the window, a dedupe TTL shorter than window plus allowed lateness,
-  an online TTL shorter than the window, monotone update policies with
-  non-count aggregations, and expressions outside the safe subset. The loader
-  also rejects fields that are not in the event contract.
+  an online TTL shorter than the window, `append_only` with anything but one
+  count, `componentwise_monotonic` with operators other than count and sum, and
+  expressions outside the safe subset. The loader also rejects fields that are
+  not in the event contract, and a summed field that is not a non-negative
+  integer under `componentwise_monotonic`.
 - **One exact reference.** The spec reference evaluates every operator over
   `(t - size, t]`, validates event identities across the whole input before any
   filtering, and returns `None`, never zero, for an empty `avg`, `min` or `max`.
@@ -681,7 +683,9 @@ workflow with registry and rollback. Scope and order: [STATUS.md](STATUS.md) and
   guarded store writes, not from end-to-end exactly-once. Kafka, the online store and Iceberg
   do not share a transaction.
 - The Flink job and the Spark backfill support count, sum and avg aggregations and one entity
-  key. `window_replace` has no store, so non-count features cannot be served online. The
+  key. `sum` and `avg` can be served online with `componentwise_monotonic`, the average as
+  a derived value. `window_replace` has no store, so `last_k` and `approx_distinct` cannot be
+  served online. The
   `published_as_of` dataset mode needs one entity key.
 - The parity between Redis and `published_as_of` is tested over two bounded runs of one entity
   (`tests/integration/test_materialize_spec_kafka_to_history.py`). `history_start` marks only the

@@ -421,3 +421,55 @@ def test_the_namespace_sets_the_key_prefix() -> None:
     server = FeatureServer.for_redis(as_redis(fake), [SKIP_RATE], namespace="custom:ns")
     server.lookup([FeatureRef(SKIP_RATE.name)], [{"user_id": "u1"}], reference_time=REFERENCE)
     assert fake.mget_calls == [[f"custom:ns:v{SKIP_RATE.version}:{SKIP_RATE.name}:u1"]]
+
+
+SUM_AVG = load_spec(
+    SPEC_DIR.parents[1] / "fixtures" / "specs" / "user_play_seconds_derived_1h.yaml"
+)
+
+
+def test_a_missing_derived_value_is_a_null_in_an_ok_entry() -> None:
+    fake = FakeRedis()
+    fake.data[key_of(SUM_AVG, "u1")] = make_record(
+        SUM_AVG, "u1", fresh_time(SUM_AVG), base=0
+    ).to_json()
+
+    result = lookup(fake, [SUM_AVG], [FeatureRef(SUM_AVG.name)], [{"user_id": "u1"}])
+
+    (entry,) = result.entries
+    assert entry.status == "ok"
+    assert entry.freshness == "fresh"
+    assert entry.values == {"play_count": 0, "play_seconds_sum": 0, "avg_play_seconds": None}
+
+
+def test_default_value_policy_keeps_a_null_in_an_ok_entry() -> None:
+    spec = with_fallback(
+        SUM_AVG,
+        FallbackPolicy.DEFAULT_VALUE,
+        {"play_count": 0, "play_seconds_sum": 0, "avg_play_seconds": -1},
+    )
+    fake = FakeRedis()
+    fake.data[key_of(spec, "u1")] = make_record(spec, "u1", fresh_time(spec), base=0).to_json()
+
+    result = lookup(fake, [spec], [FeatureRef(spec.name)], [{"user_id": "u1"}])
+
+    (entry,) = result.entries
+    assert entry.status == "ok"
+    assert entry.defaulted is False
+    assert entry.values is not None
+    assert entry.values["avg_play_seconds"] is None
+
+
+def test_http_lookup_returns_a_missing_derived_value_as_null() -> None:
+    fake = FakeRedis()
+    fake.data[key_of(SUM_AVG, "u1")] = make_record(
+        SUM_AVG, "u1", fresh_time(SUM_AVG), base=0
+    ).to_json()
+    body = {**BODY, "features": [{"name": SUM_AVG.name}]}
+
+    response = make_client(fake, [SUM_AVG]).post("/v1/features/lookup", json=body)
+
+    assert response.status_code == 200
+    entry = response.json()["entries"][0]
+    assert entry["status"] == "ok"
+    assert entry["values"] == {"play_count": 0, "play_seconds_sum": 0, "avg_play_seconds": None}

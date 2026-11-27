@@ -317,6 +317,9 @@ class HistoryTable:
             "observation_time": record.observation_time,
             "window_start_exclusive": record.window_start_exclusive,
             **{name: record.counts[name] for name in self._counters},
-            **{name: float(record.derived[name]) for name in self._derived},
+            **{
+                name: None if (value := record.derived[name]) is None else float(value)
+                for name in self._derived
+            },
             "published_at": item.published_at.astimezone(UTC),
         }

@@ -1,0 +1,17 @@
+name: user_play_seconds_derived_1h
+version: 1
+owner: personalization-team
+description: Play count and summed play seconds in the last hour, with the average as a derived value. Reference fixture only.
+entity: user_id
+source: interaction-events.validated.v1
+aggregations:
+  - {name: play_count, op: count, filter: "event_type == 'play'"}
+  - {name: play_seconds_sum, op: sum, column: play_seconds, filter: "event_type == 'play'"}
+derived:
+  avg_play_seconds: "play_seconds_sum / play_count if play_count > 0 else None"
+window: {size: 1h, slide: 1m, boundary: right_closed}
+lateness: {watermark_delay: 10m, allowed: 30m}
+dedupe: {key: event_id, ttl: 24h}
+online: {store: redis, ttl: 2h, update_policy: componentwise_monotonic}
+offline: {store: iceberg, table: features.user_play_seconds_derived_1h}
+freshness_slo: 5m
