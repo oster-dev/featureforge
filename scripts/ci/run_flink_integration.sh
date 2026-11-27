@@ -23,12 +23,15 @@ MODULES=(
   tests/integration/test_redis_skip_rate_store.py
   tests/integration/test_spec_store_redis.py
   tests/integration/test_spec_store_sum_avg_redis.py
+  tests/integration/test_spec_store_min_max_redis.py
   tests/integration/test_materialize_spec_kafka_to_redis.py
   tests/integration/test_materialize_spec_sum_avg_kafka_to_redis.py
+  tests/integration/test_materialize_spec_min_max_kafka_to_redis.py
   tests/integration/test_materialize_spec_kafka_to_cassandra.py
   tests/integration/test_materialize_spec_kafka_to_history.py
   tests/integration/test_content_play_count_end_to_end.py
   tests/integration/test_sum_avg_end_to_end.py
+  tests/integration/test_min_max_end_to_end.py
   tests/integration/test_cassandra_end_to_end.py
 )
 
