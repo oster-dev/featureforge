@@ -680,8 +680,8 @@ workflow with registry and rollback. Scope and order: [STATUS.md](STATUS.md) and
 - Flink Kafka sinks use `AT_LEAST_ONCE`. Idempotency comes from dedupe and
   guarded store writes, not from end-to-end exactly-once. Kafka, the online store and Iceberg
   do not share a transaction.
-- The Flink job supports count aggregations and one entity key, the Spark backfill also sum and
-  avg. `window_replace` has no store, so non-count features cannot be served online. The
+- The Flink job and the Spark backfill support count, sum and avg aggregations and one entity
+  key. `window_replace` has no store, so non-count features cannot be served online. The
   `published_as_of` dataset mode needs one entity key.
 - The parity between Redis and `published_as_of` is tested over two bounded runs of one entity
   (`tests/integration/test_materialize_spec_kafka_to_history.py`). `history_start` marks only the

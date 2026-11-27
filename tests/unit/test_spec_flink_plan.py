@@ -16,11 +16,14 @@ from featureforge.spec.flink_plan import (
 )
 from featureforge.spec.loader import load_spec
 from featureforge.spec.model import Aggregation, Op
+from featureforge.streaming.contracts.feature_record import record_fields
 
 ROOT = Path(__file__).resolve().parents[2]
 SPECS = ROOT / "feature_repo" / "specs"
 FIXTURE = ROOT / "fixtures" / "streaming" / "user_skip_rate_24h_v1.jsonl"
 HOUR_MS = 3_600_000
+PLAY_SECONDS = load_spec(ROOT / "fixtures" / "specs" / "user_play_seconds_1h.yaml")
+PLAY_SECONDS_EVENTS = ROOT / "fixtures" / "streaming" / "user_play_seconds_1h_v1.jsonl"
 
 
 def at(day: int, hour: int, minute: int = 0, second: int = 0) -> datetime:
@@ -57,7 +60,7 @@ def test_plan_for_shipped_specs(spec_file, window_hours, dedupe_hours, counters,
     assert plan.watermark_delay_ms == 600_000
     assert plan.allowed_lateness_ms == 1_800_000
     assert plan.dedupe_ttl_ms == dedupe_hours * HOUR_MS
-    assert tuple(c.name for c in plan.counters) == counters
+    assert tuple(a.name for a in plan.aggregations) == counters
     assert tuple(name for name, _ in plan.derived) == derived
     assert plan.zero == (0,) * len(counters)
 
@@ -68,19 +71,19 @@ def test_composite_key_is_rejected(skip_spec):
         build_flink_plan(spec)
 
 
-def test_non_count_operator_is_rejected(skip_spec):
-    average = Aggregation(name="avg_play_seconds", op=Op.AVG, column="play_seconds")
-    spec = skip_spec.model_copy(update={"aggregations": [average]})
-    with pytest.raises(UnsupportedSpecError, match="avg_play_seconds"):
+def test_an_operator_beyond_sum_and_avg_is_rejected(skip_spec):
+    smallest = Aggregation(name="min_play_seconds", op=Op.MIN, column="play_seconds")
+    spec = skip_spec.model_copy(update={"aggregations": [smallest]})
+    with pytest.raises(UnsupportedSpecError, match="min_play_seconds"):
         build_flink_plan(spec)
 
 
-def golden_record(plan, user_id, observation):
+def golden_record(plan, user_id, observation, fixture=FIXTURE):
     end = to_ms(observation)
     start = end - plan.window_size_ms
     seen: set[str] = set()
     accumulator = plan.zero
-    for line in FIXTURE.read_text(encoding="utf-8").splitlines():
+    for line in fixture.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
         payload = json.loads(line)
@@ -152,3 +155,61 @@ def test_late_event_record_names_feature_and_keeps_payload(skip_plan):
         "feature_name": "user_skip_rate_24h",
         "raw_payload": '{"event_id":"x"}',
     }
+
+
+@pytest.fixture(scope="module")
+def play_seconds_plan():
+    return build_flink_plan(PLAY_SECONDS)
+
+
+def test_sum_and_avg_take_one_and_two_slots(play_seconds_plan):
+    assert [(a.name, a.op, a.slot) for a in play_seconds_plan.aggregations] == [
+        ("play_count", Op.COUNT, 0),
+        ("play_seconds_sum", Op.SUM, 1),
+        ("avg_play_seconds", Op.AVG, 2),
+    ]
+    assert play_seconds_plan.slots == 4
+    assert play_seconds_plan.zero == (0, 0, 0, 0)
+
+
+@pytest.mark.parametrize(
+    ("user_id", "observation", "plays", "seconds", "average"),
+    [
+        ("user000001", at(1, 11), 3, 270, 90),
+        ("user000002", at(1, 11), 1, 200, 200),
+        ("user000003", at(1, 11), 0, 0, None),
+        ("user000001", at(1, 11, 30), 2, 590, 295),
+        ("user000002", at(1, 11, 30), 0, 0, None),
+    ],
+)
+def test_plan_reproduces_the_sum_and_avg_golden_values(
+    play_seconds_plan, user_id, observation, plays, seconds, average
+):
+    record = golden_record(play_seconds_plan, user_id, observation, PLAY_SECONDS_EVENTS)
+    assert record["play_count"] == plays
+    assert record["play_seconds_sum"] == seconds
+    assert record["avg_play_seconds"] == average
+
+
+def test_accumulate_sums_the_column_and_merge_adds_every_slot(play_seconds_plan):
+    accumulator = play_seconds_plan.zero
+    for event_type, seconds in (("play", 100), ("skip", 30), ("play", 50)):
+        event = {"event_type": event_type, "play_seconds": seconds}
+        accumulator = accumulate(play_seconds_plan, event, accumulator)
+    assert accumulator == (2, 150, 150, 2)
+    assert merge((1, 10, 10, 1), (2, 20, 30, 2)) == (3, 30, 40, 3)
+
+
+def test_a_derived_value_with_a_missing_input_is_missing():
+    spec = PLAY_SECONDS.model_copy(update={"derived": {"double_avg": "avg_play_seconds * 2"}})
+    plan = build_flink_plan(spec)
+    empty = json.loads(feature_record(plan, "user000003", 0, HOUR_MS, plan.zero))
+    full = json.loads(feature_record(plan, "user000001", 0, HOUR_MS, (3, 270, 270, 3)))
+    assert empty["avg_play_seconds"] is None
+    assert empty["double_avg"] is None
+    assert full["double_avg"] == 180
+
+
+def test_the_online_path_still_refuses_sum_and_avg_records():
+    with pytest.raises(ValueError, match="only count aggregations are supported"):
+        record_fields(PLAY_SECONDS)

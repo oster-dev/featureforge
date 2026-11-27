@@ -4,9 +4,9 @@ import json
 import re
 import subprocess
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.request import urlopen
 from uuid import uuid4
@@ -59,10 +59,12 @@ class FeatureCase:
     fixture_file: str
     fixture_lines: int
     users: frozenset[str]
-    required_windows: dict[tuple[str, str], dict[str, float]]
+    required_windows: dict[tuple[str, str], Mapping[str, float | None]]
     last_window: tuple[str, str]
     min_records: int
-    hand_written: Callable[[list[InteractionEventV1], str, datetime], dict[str, float]]
+    hand_written: Callable[[list[InteractionEventV1], str, datetime], Mapping[str, float | None]]
+    host_specs: Path = SPECS
+    container_specs: str = CONTAINER_SPECS
 
 
 SKIP_RATE = FeatureCase(
@@ -99,6 +101,83 @@ PLAY_COUNT = FeatureCase(
     last_window=("user_000001", "2026-01-01T13:00:00Z"),
     min_records=100,
     hand_written=play_count_reference,
+)
+
+
+def play_seconds_reference(
+    events: list[InteractionEventV1], user_id: str, observation: datetime
+) -> dict[str, float | None]:
+    """Count, sum and average of the play seconds, calculated without the spec machinery."""
+    start = observation - timedelta(hours=1)
+    unique: dict[object, InteractionEventV1] = {}
+    for event in events:
+        unique.setdefault(event.event_id, event)
+    seconds = [
+        event.play_seconds
+        for event in unique.values()
+        if event.user_id == user_id
+        and event.event_type == "play"
+        and start < event.event_time <= observation
+    ]
+    return {
+        "play_count": len(seconds),
+        "play_seconds_sum": sum(seconds),
+        "avg_play_seconds": sum(seconds) / len(seconds) if seconds else None,
+    }
+
+
+PLAY_SECONDS = FeatureCase(
+    spec_file="user_play_seconds_1h.yaml",
+    fixture_file="user_play_seconds_1h_v1.jsonl",
+    fixture_lines=9,
+    users=frozenset({"user000001", "user000002", "user000003"}),
+    required_windows={
+        ("user000001", "2026-01-01T10:00:00Z"): {
+            "play_count": 1,
+            "play_seconds_sum": 100,
+            "avg_play_seconds": 100,
+        },
+        ("user000001", "2026-01-01T10:01:00Z"): {
+            "play_count": 2,
+            "play_seconds_sum": 220,
+            "avg_play_seconds": 110,
+        },
+        ("user000001", "2026-01-01T11:00:00Z"): {
+            "play_count": 3,
+            "play_seconds_sum": 270,
+            "avg_play_seconds": 90,
+        },
+        ("user000001", "2026-01-01T11:30:00Z"): {
+            "play_count": 2,
+            "play_seconds_sum": 590,
+            "avg_play_seconds": 295,
+        },
+        ("user000001", "2026-01-01T12:00:00Z"): {
+            "play_count": 1,
+            "play_seconds_sum": 500,
+            "avg_play_seconds": 500,
+        },
+        ("user000002", "2026-01-01T11:00:00Z"): {
+            "play_count": 1,
+            "play_seconds_sum": 200,
+            "avg_play_seconds": 200,
+        },
+        ("user000003", "2026-01-01T10:30:00Z"): {
+            "play_count": 0,
+            "play_seconds_sum": 0,
+            "avg_play_seconds": None,
+        },
+        ("user000003", "2026-01-01T11:00:00Z"): {
+            "play_count": 0,
+            "play_seconds_sum": 0,
+            "avg_play_seconds": None,
+        },
+    },
+    last_window=("user000001", "2026-01-01T12:00:00Z"),
+    min_records=200,
+    hand_written=play_seconds_reference,
+    host_specs=ROOT / "fixtures" / "specs",
+    container_specs="/opt/flink/fixture-specs",
 )
 
 
@@ -242,12 +321,13 @@ def delete_topics(topics: list[str]) -> None:
     [
         pytest.param(SKIP_RATE, id="user_skip_rate_24h"),
         pytest.param(PLAY_COUNT, id="user_play_count_1h"),
+        pytest.param(PLAY_SECONDS, id="user_play_seconds_1h"),
     ],
 )
 def test_generic_job_reproduces_golden_fixture(case: FeatureCase) -> None:
     from confluent_kafka import Consumer, Producer, TopicPartition
 
-    spec = load_spec(SPECS / case.spec_file)
+    spec = load_spec(case.host_specs / case.spec_file)
     lines = [
         line
         for line in (FIXTURES / case.fixture_file).read_text(encoding="utf-8").splitlines()
@@ -337,7 +417,7 @@ def test_generic_job_reproduces_golden_fixture(case: FeatureCase) -> None:
             "--python",
             "/opt/flink/jobs/feature_from_spec.py",
             "--spec",
-            f"{CONTAINER_SPECS}/{case.spec_file}",
+            f"{case.container_specs}/{case.spec_file}",
             "--input-topic",
             input_topic,
             "--feature-topic",

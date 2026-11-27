@@ -91,8 +91,8 @@ class DeduplicateEvents(KeyedProcessFunction):
         yield from ()
 
 
-class CountEvents(AggregateFunction):
-    """Keep one integer per counter of the plan for each entity and window."""
+class AggregateEvents(AggregateFunction):
+    """Keep the state of the plan (one or two integers per aggregation) for each entity and window."""
 
     def __init__(self, plan):
         self.plan = plan
@@ -220,9 +220,9 @@ def main() -> None:
         .allowed_lateness(plan.allowed_lateness_ms)
         .side_output_late_data(late_events)
         .aggregate(
-            CountEvents(plan),
+            AggregateEvents(plan),
             EmitFeature(plan),
-            accumulator_type=Types.TUPLE([Types.LONG()] * len(plan.counters)),
+            accumulator_type=Types.TUPLE([Types.LONG()] * plan.slots),
             output_type=Types.STRING(),
         )
         .name(f"{slug}-spec-windows")
