@@ -231,11 +231,12 @@ class FeatureSpec(_Strict):
         policy = self.online.update_policy
         monotone_ops: dict[UpdatePolicy, tuple[Op, ...]] = {
             UpdatePolicy.APPEND_ONLY: (Op.COUNT,),
-            UpdatePolicy.COMPONENTWISE_MONOTONIC: (Op.COUNT, Op.SUM),
+            UpdatePolicy.COMPONENTWISE_MONOTONIC: (Op.COUNT, Op.SUM, Op.MIN, Op.MAX),
         }
         allowed = monotone_ops.get(policy)
         if allowed is not None and any(a.op not in allowed for a in self.aggregations):
-            listed = " and ".join(op.value for op in allowed)
+            names = [op.value for op in allowed]
+            listed = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
             raise ValueError(
                 f"update_policy {policy.value} supports only {listed} aggregations; "
                 "express avg as a derived value over a sum and a count, "

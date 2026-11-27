@@ -12,8 +12,8 @@ FILTER = "event_type == 'play'"
 COUNT = f'  - {{name: play_count, op: count, filter: "{FILTER}"}}'
 SUM = f'  - {{name: play_seconds_sum, op: sum, column: play_seconds, filter: "{FILTER}"}}'
 AVG = f'  - {{name: avg_play_seconds, op: avg, column: play_seconds, filter: "{FILTER}"}}'
-MIN = "  - {name: min_play_seconds, op: min, column: play_seconds}"
-MAX = "  - {name: max_play_seconds, op: max, column: play_seconds}"
+MIN = f'  - {{name: min_play_seconds, op: min, column: play_seconds, filter: "{FILTER}"}}'
+MAX = f'  - {{name: max_play_seconds, op: max, column: play_seconds, filter: "{FILTER}"}}'
 DERIVED_AVG = (
     'derived:\n  avg_play_seconds: "play_seconds_sum / play_count if play_count > 0 else None"\n'
 )
@@ -42,6 +42,14 @@ OTHER_OPERATORS = [
 ]
 
 
+class SignedPlaySecondsEvent(InteractionEventV1):
+    play_seconds: int
+
+
+class FloatPlaySecondsEvent(InteractionEventV1):
+    play_seconds: float
+
+
 def load(tmp_path: Path, *aggregations: str, policy: str, derived: str = ""):
     path = tmp_path / "spec.yaml"
     path.write_text(
@@ -51,22 +59,26 @@ def load(tmp_path: Path, *aggregations: str, policy: str, derived: str = ""):
     return load_spec(path)
 
 
-def test_componentwise_monotonic_accepts_count_sum_and_derived_avg(tmp_path: Path) -> None:
-    spec = load(tmp_path, COUNT, SUM, policy="componentwise_monotonic", derived=DERIVED_AVG)
+def test_componentwise_monotonic_accepts_count_sum_min_max_and_derived_avg(
+    tmp_path: Path,
+) -> None:
+    spec = load(
+        tmp_path, COUNT, SUM, MIN, MAX, policy="componentwise_monotonic", derived=DERIVED_AVG
+    )
 
     assert spec.online.update_policy.value == "componentwise_monotonic"
     assert set(spec.derived) == {"avg_play_seconds"}
 
 
-@pytest.mark.parametrize("aggregation", OTHER_OPERATORS)
-def test_componentwise_monotonic_rejects_other_operators(tmp_path: Path, aggregation: str) -> None:
-    with pytest.raises(ValueError, match="componentwise_monotonic supports only count and sum"):
-        load(tmp_path, COUNT, aggregation, policy="componentwise_monotonic")
+def test_componentwise_monotonic_rejects_avg_as_an_aggregation(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="supports only count, sum, min and max"):
+        load(tmp_path, COUNT, AVG, policy="componentwise_monotonic")
 
 
-def test_append_only_stays_count_only(tmp_path: Path) -> None:
+@pytest.mark.parametrize("aggregation", [SUM, MIN, MAX], ids=["sum", "min", "max"])
+def test_append_only_stays_count_only(tmp_path: Path, aggregation: str) -> None:
     with pytest.raises(ValueError, match="append_only supports only count"):
-        load(tmp_path, SUM, policy="append_only")
+        load(tmp_path, aggregation, policy="append_only")
 
 
 @pytest.mark.parametrize("aggregation", OTHER_OPERATORS)
@@ -74,14 +86,6 @@ def test_window_replace_still_accepts_other_operators(tmp_path: Path, aggregatio
     spec = load(tmp_path, COUNT, aggregation, policy="window_replace")
 
     assert spec.online.update_policy.value == "window_replace"
-
-
-class SignedPlaySecondsEvent(InteractionEventV1):
-    play_seconds: int
-
-
-class FloatPlaySecondsEvent(InteractionEventV1):
-    play_seconds: float
 
 
 def test_sum_over_a_non_negative_integer_field_is_accepted(tmp_path: Path) -> None:
@@ -98,6 +102,26 @@ def test_monotone_sum_needs_a_non_negative_integer_field(
 
     with pytest.raises(ValueError, match="play_seconds_sum"):
         validate_event_fields(spec, model)
+
+
+def test_monotone_min_and_max_accept_a_signed_integer_field(tmp_path: Path) -> None:
+    spec = load(tmp_path, COUNT, MIN, MAX, policy="componentwise_monotonic")
+
+    validate_event_fields(spec, SignedPlaySecondsEvent)
+
+
+@pytest.mark.parametrize(
+    ("aggregation", "name"),
+    [(MIN, "min_play_seconds"), (MAX, "max_play_seconds")],
+    ids=["min", "max"],
+)
+def test_monotone_min_and_max_reject_a_float_field(
+    tmp_path: Path, aggregation: str, name: str
+) -> None:
+    spec = load(tmp_path, COUNT, aggregation, policy="componentwise_monotonic")
+
+    with pytest.raises(ValueError, match=name):
+        validate_event_fields(spec, FloatPlaySecondsEvent)
 
 
 def test_window_replace_sum_may_use_a_signed_field(tmp_path: Path) -> None:
