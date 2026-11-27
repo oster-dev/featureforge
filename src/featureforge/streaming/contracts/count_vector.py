@@ -32,7 +32,7 @@ class CountVector:
             raise ValueError("counts must not be empty")
 
 
-def _progress(value: int | None, direction: Direction) -> float:
+def progress(value: int | None, direction: Direction) -> float:
     """Map a component value to a number where a larger one means more events seen."""
     if value is None:
         return float("-inf")
@@ -83,10 +83,10 @@ def decide_count_vector_update(
         incoming.directions.get(name) or stored.directions.get(name) or "up" for name in names
     ]
     old_scores = [
-        _progress(value, direction) for value, direction in zip(current, directions, strict=True)
+        progress(value, direction) for value, direction in zip(current, directions, strict=True)
     ]
     new_scores = [
-        _progress(value, direction) for value, direction in zip(candidate, directions, strict=True)
+        progress(value, direction) for value, direction in zip(candidate, directions, strict=True)
     ]
     if all(new >= old for new, old in zip(new_scores, old_scores, strict=True)):
         return "written"

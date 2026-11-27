@@ -16,7 +16,7 @@ from pyspark.sql import DataFrame, SparkSession, Window
 from pyspark.sql import functions as F
 
 from featureforge.spec.model import FeatureSpec
-from featureforge.streaming.contracts.feature_record import record_fields
+from featureforge.streaming.contracts.feature_record import component_directions, record_fields
 from featureforge.streaming.history import CATALOG_NAME, HistoryTable
 
 STATUS_COLUMN = "status"
@@ -74,7 +74,18 @@ def published_as_of_frame(
         (F.col(entity_key) == F.col("_h_entity")) & (F.col("published_at") <= F.col("_t")),
         "left",
     )
-    order = [F.col(name).desc() for name in ("published_at", "_window", *counters, "update_id")]
+    directions = component_directions(spec)
+    order = [
+        F.col("published_at").desc(),
+        F.col("_window").desc(),
+        *(
+            F.col(name).desc_nulls_last()
+            if directions[name] == "up"
+            else F.col(name).asc_nulls_last()
+            for name in counters
+        ),
+        F.col("update_id").desc(),
+    ]
     latest = joined.withColumn(
         "_rank", F.row_number().over(Window.partitionBy(entity_key, "_t").orderBy(*order))
     ).where(F.col("_rank") == 1)

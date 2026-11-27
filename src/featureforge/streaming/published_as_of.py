@@ -14,7 +14,12 @@ from typing import Literal
 
 from pyiceberg.expressions import In
 
-from featureforge.streaming.contracts.feature_record import FeatureRecord, record_fields
+from featureforge.streaming.contracts.count_vector import Direction, progress
+from featureforge.streaming.contracts.feature_record import (
+    FeatureRecord,
+    component_directions,
+    record_fields,
+)
 from featureforge.streaming.history import HistoryTable
 
 Status = Literal["present", "not_published", "expired"]
@@ -35,12 +40,16 @@ class PublishedValue:
     expires_at: datetime | None = None
 
 
-def _rank(row: dict, counters: tuple[str, ...]) -> tuple:
-    """Order versions: the latest published_at wins, ties go to the newer window."""
+def _rank(row: dict, counters: tuple[str, ...], directions: dict[str, Direction]) -> tuple:
+    """Order versions: the latest published_at wins, ties go to the newer window.
+
+    Then the more advanced components win. A minimum is more advanced when it is smaller,
+    and a missing extreme is behind every value.
+    """
     return (
         row["published_at"],
         row["observation_time"],
-        tuple(row[name] for name in counters),
+        tuple(progress(row[name], directions.get(name, "up")) for name in counters),
         row["update_id"],
     )
 
@@ -62,6 +71,7 @@ def published_as_of(
 
     spec = history.spec
     entity_key, counters, derived = record_fields(spec)
+    directions = component_directions(spec)
 
     table = history.table
     table.refresh()
@@ -73,7 +83,9 @@ def published_as_of(
         if row["published_at"] > as_of:
             continue
         entity = row[entity_key]
-        if entity not in latest or _rank(row, counters) > _rank(latest[entity], counters):
+        if entity not in latest or _rank(row, counters, directions) > _rank(
+            latest[entity], counters, directions
+        ):
             latest[entity] = row
 
     results: dict[str, PublishedValue] = {}
@@ -102,6 +114,7 @@ def published_as_of(
             window_start_exclusive=row["window_start_exclusive"],
             counts={name: row[name] for name in counters},
             derived={name: row[name] for name in derived},
+            directions=directions,
         )
         results[entity] = PublishedValue(
             entity=entity,
