@@ -31,7 +31,7 @@ from featureforge.spec.flink_plan import (
     feature_record,
     late_event_record,
 )
-from featureforge.spec.flink_plan import merge as merge_counts
+from featureforge.spec.flink_plan import merge as merge_accumulators
 from featureforge.spec.loader import load_spec
 from featureforge.streaming.contracts.events import InteractionEventV1
 from featureforge.streaming.contracts.feature_time import (
@@ -107,7 +107,7 @@ class AggregateEvents(AggregateFunction):
         return accumulator
 
     def merge(self, left, right):
-        return merge_counts(tuple(left), tuple(right))
+        return merge_accumulators(self.plan, tuple(left), tuple(right))
 
 
 class EmitFeature(ProcessWindowFunction):

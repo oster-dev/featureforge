@@ -195,6 +195,103 @@ PLAY_SECONDS_DERIVED = FeatureCase(
 )
 
 
+def play_seconds_extremes_reference(
+    events: list[InteractionEventV1], user_id: str, observation: datetime
+) -> dict[str, float | None]:
+    """Count, smallest and largest play seconds, calculated without the spec machinery."""
+    start = observation - timedelta(hours=1)
+    unique: dict[object, InteractionEventV1] = {}
+    for event in events:
+        unique.setdefault(event.event_id, event)
+    seconds = [
+        event.play_seconds
+        for event in unique.values()
+        if event.user_id == user_id
+        and event.event_type == "play"
+        and start < event.event_time <= observation
+    ]
+    return {
+        "play_count": len(seconds),
+        "min_play_seconds": min(seconds) if seconds else None,
+        "max_play_seconds": max(seconds) if seconds else None,
+    }
+
+
+PLAY_SECONDS_EXTREMES = FeatureCase(
+    spec_file="user_play_seconds_extremes_1h.yaml",
+    fixture_file=PLAY_SECONDS.fixture_file,
+    fixture_lines=PLAY_SECONDS.fixture_lines,
+    users=PLAY_SECONDS.users,
+    required_windows={
+        ("user000001", "2026-01-01T10:00:00Z"): {
+            "play_count": 1,
+            "min_play_seconds": 100,
+            "max_play_seconds": 100,
+        },
+        ("user000001", "2026-01-01T10:01:00Z"): {
+            "play_count": 2,
+            "min_play_seconds": 100,
+            "max_play_seconds": 120,
+        },
+        ("user000001", "2026-01-01T10:30:00Z"): {
+            "play_count": 3,
+            "min_play_seconds": 60,
+            "max_play_seconds": 120,
+        },
+        ("user000001", "2026-01-01T10:45:00Z"): {
+            "play_count": 3,
+            "min_play_seconds": 60,
+            "max_play_seconds": 120,
+        },
+        ("user000001", "2026-01-01T11:00:00Z"): {
+            "play_count": 3,
+            "min_play_seconds": 60,
+            "max_play_seconds": 120,
+        },
+        ("user000001", "2026-01-01T11:01:00Z"): {
+            "play_count": 3,
+            "min_play_seconds": 60,
+            "max_play_seconds": 500,
+        },
+        ("user000001", "2026-01-01T11:30:00Z"): {
+            "play_count": 2,
+            "min_play_seconds": 90,
+            "max_play_seconds": 500,
+        },
+        ("user000001", "2026-01-01T12:00:00Z"): {
+            "play_count": 1,
+            "min_play_seconds": 500,
+            "max_play_seconds": 500,
+        },
+        ("user000002", "2026-01-01T11:00:00Z"): {
+            "play_count": 1,
+            "min_play_seconds": 200,
+            "max_play_seconds": 200,
+        },
+        ("user000002", "2026-01-01T11:14:00Z"): {
+            "play_count": 1,
+            "min_play_seconds": 200,
+            "max_play_seconds": 200,
+        },
+        ("user000003", "2026-01-01T10:30:00Z"): {
+            "play_count": 0,
+            "min_play_seconds": None,
+            "max_play_seconds": None,
+        },
+        ("user000003", "2026-01-01T11:00:00Z"): {
+            "play_count": 0,
+            "min_play_seconds": None,
+            "max_play_seconds": None,
+        },
+    },
+    last_window=PLAY_SECONDS.last_window,
+    min_records=PLAY_SECONDS.min_records,
+    hand_written=play_seconds_extremes_reference,
+    host_specs=PLAY_SECONDS.host_specs,
+    container_specs=PLAY_SECONDS.container_specs,
+)
+
+
 def run_command(*arguments: str) -> str:
     result = subprocess.run(
         arguments,
@@ -337,6 +434,7 @@ def delete_topics(topics: list[str]) -> None:
         pytest.param(PLAY_COUNT, id="user_play_count_1h"),
         pytest.param(PLAY_SECONDS, id="user_play_seconds_1h"),
         pytest.param(PLAY_SECONDS_DERIVED, id="user_play_seconds_derived_1h"),
+        pytest.param(PLAY_SECONDS_EXTREMES, id="user_play_seconds_extremes_1h"),
     ],
 )
 def test_generic_job_reproduces_golden_fixture(case: FeatureCase) -> None:
