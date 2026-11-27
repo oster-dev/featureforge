@@ -52,7 +52,7 @@ The spec model rejects inconsistent specs before anything runs:
 - a slide that does not divide the window,
 - a dedupe TTL shorter than window plus allowed lateness,
 - an online TTL shorter than the window,
-- `append_only` with anything but one count, `componentwise_monotonic` with operators other than count and sum,
+- `append_only` with anything but one count, `componentwise_monotonic` with operators other than count, sum, min and max,
 - expressions outside the safe subset and fields that are not in the event contract.
 
 ```mermaid
@@ -297,7 +297,7 @@ The full list is in [STATUS.md](../STATUS.md). The ones that shape the design:
   not proven, and checkpoints live in JobManager memory.
 - Topics have one partition. Scaling over partitions is not demonstrated.
 - The Flink job and the Spark backfill support count, sum, avg, min and max aggregations and one entity key. `published_as_of` needs one entity key.
-- There is no store for `window_replace`, so `last_k` and `approx_distinct` cannot be served online yet. `sum` and `avg` (as a derived value) are served with `componentwise_monotonic`.
+- There is no store for `window_replace`, so `last_k` and `approx_distinct` cannot be served online yet. `sum`, `min` and `max`, and `avg` as a derived value, are served with `componentwise_monotonic`.
 - The event table has one writer and no compaction or retention. Its append slows down with the number of
   data files (about 4 ms per file).
 - Serving is measured on one machine and one process. Single runs show short bursts of `backend_error`

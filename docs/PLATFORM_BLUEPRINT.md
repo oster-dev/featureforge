@@ -21,7 +21,7 @@
 
 **Baseline.** v0.1.0 is released and the streaming core is delivered. One generic Flink job
 runs the two original streaming features and a third feature that is defined by a YAML spec
-alone. A spec-driven store and materializer serve count, sum and ratio features on Redis or
+alone. A spec-driven store and materializer serve count, sum, min, max and ratio features on Redis or
 Cassandra behind one protocol (ADR-009, ADR-013). Publication evidence, label specs, training
 datasets in two explicit modes and an event fact table are delivered (ADR-010 to ADR-012,
 ADR-014, ADR-015). A feature serving service returns a status for every value, with metrics, a
@@ -59,7 +59,7 @@ deployment lifecycle.
 
 ```mermaid
 flowchart TB
-    SPEC["Feature specs<br/>count, sum and ratio delivered,<br/>more operators and a catalog planned"]:::wip
+    SPEC["Feature specs<br/>count, sum, min, max and ratio delivered,<br/>more operators and a catalog planned"]:::wip
 
     subgraph Compute
         BATCH["Pandas reference<br/>PySpark backfill"]:::done

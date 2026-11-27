@@ -64,10 +64,14 @@ and which store policy it uses.
   spec expression gives none for the components of the record. The record carries `null`,
   the history stores `null`, and a serving entry stays `ok` with a `null` value. A missing
   value is never replaced by zero or by a fallback default (ADR-003).
+- A missing extreme is the state before the first matching event. In the decision it is behind
+  every value in both directions, so a first event is a correction and a vector with a missing
+  extreme against a stored value is stale. A minimum is more advanced when it is smaller.
 
 ## Open questions
 
-- Integer and float components in one vector (min and max over non-integer fields).
+- Float components (min and max over a non-integer field, a sum over a float field). The loader
+  rejects them under `componentwise_monotonic` until a decision exists.
 - `last_k`: order by (event_time, event_id), and the largest allowed k.
 
 ## Delivery
@@ -76,6 +80,8 @@ and which store policy it uses.
   backfill, the spec model with `componentwise_monotonic`, the record parser, the Redis and the
   Cassandra store, the history table and the serving entry. A summed field must be a non-negative
   integer in the event contract, the loader rejects any other field under this policy.
-- `min` and `max`: the Spark backfill and the Flink job. The online path follows.
-- Not delivered: `min` and `max` online, `last_k`, `approx_distinct` and the
+- `min` and `max`: the Spark backfill, the Flink job and the online path with a direction per
+  component, a missing extreme as `null`, the history table and the version ranking of
+  published-as-of. A minimum or maximum field must be an integer in the event contract.
+- Not delivered: `last_k`, `approx_distinct` and the
   `window_replace` store policy.
