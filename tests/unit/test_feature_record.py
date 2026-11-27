@@ -171,7 +171,7 @@ def test_composite_entity_keys_are_rejected():
 def test_non_count_aggregations_are_rejected():
     average = Aggregation(name="avg_play_seconds", op=Op.AVG, column="play_seconds")
     spec = PLAY.model_copy(update={"aggregations": [average]})
-    with pytest.raises(ValueError, match="count and sum aggregations"):
+    with pytest.raises(ValueError, match="count, sum, min and max aggregations"):
         parse_feature_record("{}", spec)
 
 
