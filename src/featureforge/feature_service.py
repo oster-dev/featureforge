@@ -49,7 +49,7 @@ class FeatureEntry:
     version: int
     entity: Mapping[str, str]
     status: Status
-    values: Mapping[str, float] | None
+    values: Mapping[str, float | None] | None
     observation_time: datetime | None = None
     age_seconds: float | None = None
     freshness: Freshness | None = None

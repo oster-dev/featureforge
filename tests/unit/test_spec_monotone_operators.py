@@ -5,6 +5,8 @@ from pathlib import Path
 import pytest
 
 from featureforge.spec.loader import load_spec
+from featureforge.spec.reference import validate_event_fields
+from featureforge.streaming.contracts.events import InteractionEventV1
 
 FILTER = "event_type == 'play'"
 COUNT = f'  - {{name: play_count, op: count, filter: "{FILTER}"}}'
@@ -72,3 +74,33 @@ def test_window_replace_still_accepts_other_operators(tmp_path: Path, aggregatio
     spec = load(tmp_path, COUNT, aggregation, policy="window_replace")
 
     assert spec.online.update_policy.value == "window_replace"
+
+
+class SignedPlaySecondsEvent(InteractionEventV1):
+    play_seconds: int
+
+
+class FloatPlaySecondsEvent(InteractionEventV1):
+    play_seconds: float
+
+
+def test_sum_over_a_non_negative_integer_field_is_accepted(tmp_path: Path) -> None:
+    spec = load(tmp_path, COUNT, SUM, policy="componentwise_monotonic", derived=DERIVED_AVG)
+
+    validate_event_fields(spec)
+
+
+@pytest.mark.parametrize("model", [SignedPlaySecondsEvent, FloatPlaySecondsEvent])
+def test_monotone_sum_needs_a_non_negative_integer_field(
+    tmp_path: Path, model: type[InteractionEventV1]
+) -> None:
+    spec = load(tmp_path, COUNT, SUM, policy="componentwise_monotonic", derived=DERIVED_AVG)
+
+    with pytest.raises(ValueError, match="play_seconds_sum"):
+        validate_event_fields(spec, model)
+
+
+def test_window_replace_sum_may_use_a_signed_field(tmp_path: Path) -> None:
+    spec = load(tmp_path, COUNT, SUM, policy="window_replace")
+
+    validate_event_fields(spec, SignedPlaySecondsEvent)

@@ -39,7 +39,7 @@ class FeatureRecord:
     observation_time: datetime
     window_start_exclusive: datetime
     counts: Mapping[str, int]
-    derived: Mapping[str, float]
+    derived: Mapping[str, float | None]
 
     def vector(self) -> CountVector:
         return CountVector(
@@ -67,9 +67,9 @@ class FeatureRecord:
 def counter_names(spec: FeatureSpec) -> tuple[str, ...]:
     names = []
     for aggregation in spec.aggregations:
-        if aggregation.op is not Op.COUNT:
+        if aggregation.op not in (Op.COUNT, Op.SUM):
             raise ValueError(
-                f"only count aggregations are supported, got {aggregation.op.value} "
+                f"only count and sum aggregations are supported, got {aggregation.op.value} "
                 f"for {aggregation.name}"
             )
         names.append(aggregation.name)
@@ -157,18 +157,26 @@ class RecordDecoder:
                 raise ValueError(f"{name} must be a non-negative integer")
             counts[name] = value
 
-        derived: dict[str, float] = {}
+        derived: dict[str, float | None] = {}
         for name, expression in self._expressions:
             value = data[name]
-            if isinstance(value, bool) or not isinstance(value, int | float):
-                raise ValueError(f"{name} must be a number")
-            if not math.isfinite(value):
-                raise ValueError(f"{name} must be finite")
+            if value is not None:
+                if isinstance(value, bool) or not isinstance(value, int | float):
+                    raise ValueError(f"{name} must be a number")
+                if not math.isfinite(value):
+                    raise ValueError(f"{name} must be finite")
             try:
                 expected_value = compile_expression(expression)(counts)
             except ZeroDivisionError as exc:
                 raise ValueError(f"{name} cannot be evaluated for these counts") from exc
-            if not math.isclose(value, expected_value, rel_tol=1e-12, abs_tol=1e-15):
+            if value is None:
+                if expected_value is not None:
+                    raise ValueError(f"{name} must be a number")
+                derived[name] = None
+                continue
+            if expected_value is None or not math.isclose(
+                value, expected_value, rel_tol=1e-12, abs_tol=1e-15
+            ):
                 raise ValueError(f"{name} must match its spec expression")
             derived[name] = value
 
