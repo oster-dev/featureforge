@@ -120,7 +120,7 @@ def _reject_identity_conflicts(spec: FeatureSpec, events: DataFrame) -> None:
         )
 
 
-_SUPPORTED_OPS = frozenset({Op.COUNT, Op.SUM, Op.AVG})
+_SUPPORTED_OPS = frozenset({Op.COUNT, Op.SUM, Op.AVG, Op.MIN, Op.MAX})
 
 
 def backfill_spec(spec: FeatureSpec, events: DataFrame, observations: DataFrame) -> DataFrame:
@@ -133,7 +133,7 @@ def backfill_spec(spec: FeatureSpec, events: DataFrame, observations: DataFrame)
     unsupported = sorted({a.op.value for a in spec.aggregations if a.op not in _SUPPORTED_OPS})
     if unsupported:
         raise NotImplementedError(
-            "spark backfill supports count, sum and avg aggregations only; "
+            "spark backfill supports count, sum, avg, min and max aggregations only; "
             f"unsupported: {unsupported}"
         )
     _require_columns("events", events, set(InteractionEventV1.model_fields))
@@ -164,9 +164,13 @@ def backfill_spec(spec: FeatureSpec, events: DataFrame, observations: DataFrame)
             if agg.column is None:
                 raise ValueError(f"aggregation '{agg.name}' needs a column")
             values = F.when(condition, F.col(agg.column))
-            # count and sum over no events are 0, avg over no events is missing (ADR-008)
+            # count and sum over no events are 0, avg, min and max over none are missing (ADR-008)
             if agg.op is Op.SUM:
                 aggregate = F.coalesce(F.sum(values), F.lit(0))
+            elif agg.op is Op.MIN:
+                aggregate = F.min(values)
+            elif agg.op is Op.MAX:
+                aggregate = F.max(values)
             else:
                 aggregate = F.avg(values)
         aggregates.append(aggregate.alias(agg.name))
