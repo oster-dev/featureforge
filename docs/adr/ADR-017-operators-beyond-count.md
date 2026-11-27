@@ -76,6 +76,6 @@ and which store policy it uses.
   backfill, the spec model with `componentwise_monotonic`, the record parser, the Redis and the
   Cassandra store, the history table and the serving entry. A summed field must be a non-negative
   integer in the event contract, the loader rejects any other field under this policy.
-- `min` and `max`: the Spark backfill. The Flink job and the online path follow.
-- Not delivered: `min` and `max` in Flink and online, `last_k`, `approx_distinct` and the
+- `min` and `max`: the Spark backfill and the Flink job. The online path follows.
+- Not delivered: `min` and `max` online, `last_k`, `approx_distinct` and the
   `window_replace` store policy.

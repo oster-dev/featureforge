@@ -348,7 +348,7 @@ the two original features delegate to it, so all three features expire.
 ### Generic job consolidation
 
 The generic job builds the windowed computation from a plan derived from a spec.
-It supports count, sum and avg aggregations and one entity key. Both features moved to it one
+It supports count, sum, avg, min and max aggregations and one entity key. Both features moved to it one
 test group at a time, each verified before the next, with the hand-written job kept as a
 parity check until all tests passed on the generic job:
 

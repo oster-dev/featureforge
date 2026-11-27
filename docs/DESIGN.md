@@ -69,8 +69,8 @@ flowchart LR
     REF -. "compared on golden fixtures<br/>and randomized boundaries" .-> IMPL
 ```
 
-The language is bounded on purpose. It is not a general SQL or streaming compiler. The Flink job supports count, sum and avg aggregations and one entity key, the Spark backfill
-also min and max. Other operators fail with an explicit error instead of being computed
+The language is bounded on purpose. It is not a general SQL or streaming compiler. The Flink job and the Spark backfill support count, sum, avg, min and max aggregations and one
+entity key. Other operators fail with an explicit error instead of being computed
 wrongly.
 
 The same semantics exist in several implementations: an exact **spec reference**, the generic Flink
@@ -296,7 +296,7 @@ The full list is in [STATUS.md](../STATUS.md). The ones that shape the design:
 - Recovery is shown for a TaskManager crash and a planned stop with a savepoint. JobManager failure is
   not proven, and checkpoints live in JobManager memory.
 - Topics have one partition. Scaling over partitions is not demonstrated.
-- The Flink job supports count, sum and avg aggregations and one entity key, the Spark backfill also min and max. `published_as_of` needs one entity key.
+- The Flink job and the Spark backfill support count, sum, avg, min and max aggregations and one entity key. `published_as_of` needs one entity key.
 - There is no store for `window_replace`, so `last_k` and `approx_distinct` cannot be served online yet. `sum` and `avg` (as a derived value) are served with `componentwise_monotonic`.
 - The event table has one writer and no compaction or retention. Its append slows down with the number of
   data files (about 4 ms per file).
@@ -331,7 +331,7 @@ Netflix (facts in Iceberg, shared feature encoders for online and offline, tempo
 regeneration), as an inspiration and not a copy. The encoder here is the spec engine, whose references,
 Flink job and Spark backfill agree on golden fixtures.
 
-What is smaller: the engines support count, sum, avg and ratio features only, there is no sawtooth window
+What is smaller: the engines support count, sum, avg, min, max and ratio features only, there is no sawtooth window
 (ADR-008 names it as the alternative if state growth becomes the bottleneck), and everything runs locally
 on synthetic data.
 

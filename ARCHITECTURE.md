@@ -301,7 +301,7 @@ streaming compiler.
 flowchart LR
     Y[Feature spec<br/>YAML] --> L[Loader<br/>validate, check event fields]
     L --> R[Spec reference<br/>exact oracle]
-    L --> P[Job plan<br/>count, sum, avg and ratio]
+    L --> P[Job plan<br/>count, sum, avg, min, max and ratio]
     P --> G[Generic Flink job]
     G --> T[(Feature topic)]
     T --> MS[Spec-driven<br/>materializer]
@@ -682,9 +682,8 @@ workflow with registry and rollback. Scope and order: [STATUS.md](STATUS.md) and
 - Flink Kafka sinks use `AT_LEAST_ONCE`. Idempotency comes from dedupe and
   guarded store writes, not from end-to-end exactly-once. Kafka, the online store and Iceberg
   do not share a transaction.
-- The Flink job supports count, sum and avg aggregations and one entity key, the Spark backfill
-  also min and max. `sum` and `avg` can be served online with `componentwise_monotonic`, the
-  average as
+- The Flink job and the Spark backfill support count, sum, avg, min and max aggregations and one
+  entity key. `sum` and `avg` can be served online with `componentwise_monotonic`, the average as
   a derived value. `window_replace` has no store, so `last_k` and `approx_distinct` cannot be
   served online. The
   `published_as_of` dataset mode needs one entity key.
