@@ -21,7 +21,7 @@ training and online reads, from batch and streaming sources.
 > in [docs/DESIGN.md](docs/DESIGN.md).
 
 The platform is the spec-driven path: one YAML spec drives the Flink job, the
-Spark backfill for count, sum and avg specs, the Redis or Cassandra store, the feature serving service, the
+Spark backfill for count, sum, avg, min and max specs, the Redis or Cassandra store, the feature serving service, the
 publication history and the training datasets. The Feast-based batch path (section 2) is batch
 path v1. It serves the original batch features and was built first. Those features are not yet
 defined as specs.
@@ -82,7 +82,7 @@ flowchart TB
 | Concern | Implementation |
 |---|---|
 | Batch features | Pandas (reference), PySpark (parity-tested) |
-| Spec-driven backfill | PySpark, count, sum and avg specs: values at explicit observation times, equal to the spec reference, no availability time |
+| Spec-driven backfill | PySpark, count, sum, avg, min and max specs: values at explicit observation times, equal to the spec reference, no availability time |
 | Offline store | One canonical Parquet root, Hive-style `observation_date` partitions |
 | Streaming | Kafka, Flink (PyFlink), Pydantic contracts |
 | Feature definitions as data | YAML specs, Pydantic validation, exact reference, one generic Flink job for all spec-defined streaming features |
@@ -682,8 +682,9 @@ workflow with registry and rollback. Scope and order: [STATUS.md](STATUS.md) and
 - Flink Kafka sinks use `AT_LEAST_ONCE`. Idempotency comes from dedupe and
   guarded store writes, not from end-to-end exactly-once. Kafka, the online store and Iceberg
   do not share a transaction.
-- The Flink job and the Spark backfill support count, sum and avg aggregations and one entity
-  key. `sum` and `avg` can be served online with `componentwise_monotonic`, the average as
+- The Flink job supports count, sum and avg aggregations and one entity key, the Spark backfill
+  also min and max. `sum` and `avg` can be served online with `componentwise_monotonic`, the
+  average as
   a derived value. `window_replace` has no store, so `last_k` and `approx_distinct` cannot be
   served online. The
   `published_as_of` dataset mode needs one entity key.

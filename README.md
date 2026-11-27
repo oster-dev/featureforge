@@ -44,7 +44,7 @@ that proves it, and [STATUS.md](STATUS.md) lists what is delivered and every kno
 
 **One spec, every engine**
 
-A feature is one YAML file. It drives the Flink job, the Spark backfill for count, sum and avg specs, the Redis or Cassandra store, the publication history and the training datasets. An exact reference is the oracle that each of them is compared with.
+A feature is one YAML file. It drives the Flink job, the Spark backfill for count, sum, avg, min and max specs, the Redis or Cassandra store, the publication history and the training datasets. An exact reference is the oracle that each of them is compared with.
 
 [ADR-008](docs/adr/ADR-008-feature-spec-design.md) · [ADR-009](docs/adr/ADR-009-spec-driven-online-stores.md)
 
