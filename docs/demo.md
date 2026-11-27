@@ -392,11 +392,11 @@ pytest -v -m integration tests/integration/test_feature_from_spec_job.py   # 2 p
 
 The test also requires hand-calculated windows (five for skip rate, seven for
 play count), no window emitted twice, and an empty late topic. A spec outside
-what the job supports, such as an `avg` aggregation or a composite key, is
+what the job supports, such as a `min` aggregation or a composite key, is
 rejected with a clear error before the job starts:
 
 ```bash
-pytest -v tests/unit/test_spec_flink_plan.py   # 13 passed
+pytest -v tests/unit/test_spec_flink_plan.py   # 22 passed
 ```
 
 ### 5. Stop the job with a savepoint and resume it

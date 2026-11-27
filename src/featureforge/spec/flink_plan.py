@@ -1,9 +1,13 @@
 """Flink job plan derived from a FeatureSpec (ADR-008).
 
 The plan holds everything a generic job needs from a spec: window, lateness,
-dedupe horizon, counters with their filters, and derived values. It supports
-count aggregations only. Other operators are rejected with a clear message
-instead of being computed wrongly. Nothing here imports Flink.
+dedupe horizon, aggregations with their filters, and derived values. It supports
+count, sum and avg aggregations (ADR-017). Other operators are rejected with a
+clear message instead of being computed wrongly. Nothing here imports Flink.
+
+The state of a window is a flat tuple of integers. Each aggregation owns one slot
+(count, sum) or two slots (avg: the sum and the number of events). Every slot is
+additive, so two states merge by adding them slot by slot.
 """
 
 from __future__ import annotations
@@ -15,10 +19,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from featureforge.spec.model import FeatureSpec, Op
-from featureforge.spec.reference import evaluate_expression
+from featureforge.spec.reference import evaluate_expression, names_in
 
 EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 _MS = timedelta(milliseconds=1)
+SUPPORTED_OPS = frozenset({Op.COUNT, Op.SUM, Op.AVG})
 
 
 class UnsupportedSpecError(ValueError):
@@ -26,9 +31,16 @@ class UnsupportedSpecError(ValueError):
 
 
 @dataclass(frozen=True)
-class CounterPlan:
+class AggregationPlan:
     name: str
+    op: Op
+    column: str | None
     filter_expression: str | None
+    slot: int
+
+    @property
+    def width(self) -> int:
+        return 2 if self.op is Op.AVG else 1
 
 
 @dataclass(frozen=True)
@@ -41,12 +53,34 @@ class FlinkJobPlan:
     watermark_delay_ms: int
     allowed_lateness_ms: int
     dedupe_ttl_ms: int
-    counters: tuple[CounterPlan, ...]
+    aggregations: tuple[AggregationPlan, ...]
     derived: tuple[tuple[str, str], ...]
 
     @property
+    def slots(self) -> int:
+        return sum(aggregation.width for aggregation in self.aggregations)
+
+    @property
     def zero(self) -> tuple[int, ...]:
-        return (0,) * len(self.counters)
+        return (0,) * self.slots
+
+
+def _aggregation_plans(spec: FeatureSpec) -> tuple[AggregationPlan, ...]:
+    plans: list[AggregationPlan] = []
+    slot = 0
+    for aggregation in spec.aggregations:
+        plan = AggregationPlan(
+            aggregation.name, aggregation.op, aggregation.column, aggregation.filter, slot
+        )
+        plans.append(plan)
+        slot += plan.width
+    return tuple(plans)
+
+
+def _column(aggregation: AggregationPlan) -> str:
+    if aggregation.column is None:
+        raise ValueError(f"aggregation '{aggregation.name}' needs a column")
+    return aggregation.column
 
 
 def build_flink_plan(spec: FeatureSpec) -> FlinkJobPlan:
@@ -54,10 +88,10 @@ def build_flink_plan(spec: FeatureSpec) -> FlinkJobPlan:
     if len(spec.keys) != 1:
         problems.append(f"composite entity keys {spec.keys} are not supported yet")
     for aggregation in spec.aggregations:
-        if aggregation.op is not Op.COUNT:
+        if aggregation.op not in SUPPORTED_OPS:
             problems.append(
                 f"aggregation '{aggregation.name}' uses op {aggregation.op.value}; "
-                "only count is supported yet"
+                "only count, sum and avg are supported yet"
             )
     if problems:
         raise UnsupportedSpecError(
@@ -73,7 +107,7 @@ def build_flink_plan(spec: FeatureSpec) -> FlinkJobPlan:
         watermark_delay_ms=spec.lateness.watermark_delay // _MS,
         allowed_lateness_ms=spec.lateness.allowed // _MS,
         dedupe_ttl_ms=spec.dedupe.ttl // _MS,
-        counters=tuple(CounterPlan(a.name, a.filter) for a in spec.aggregations),
+        aggregations=_aggregation_plans(spec),
         derived=tuple(spec.derived.items()),
     )
 
@@ -89,14 +123,22 @@ def dedupe_value(plan: FlinkJobPlan, payload: str) -> str:
 def accumulate(
     plan: FlinkJobPlan, event: Mapping[str, Any], accumulator: tuple[int, ...]
 ) -> tuple[int, ...]:
-    return tuple(
-        count
-        + int(
-            counter.filter_expression is None
-            or bool(evaluate_expression(counter.filter_expression, event))
-        )
-        for counter, count in zip(plan.counters, accumulator, strict=True)
-    )
+    """Add one event to the state of a window. An event that fails the filter adds nothing."""
+    if len(accumulator) != plan.slots:
+        raise ValueError(f"accumulator has {len(accumulator)} slots, the plan needs {plan.slots}")
+    state = list(accumulator)
+    for aggregation in plan.aggregations:
+        if aggregation.filter_expression is not None and not bool(
+            evaluate_expression(aggregation.filter_expression, event)
+        ):
+            continue
+        if aggregation.op is Op.COUNT:
+            state[aggregation.slot] += 1
+        else:
+            state[aggregation.slot] += int(event[_column(aggregation)])
+            if aggregation.op is Op.AVG:
+                state[aggregation.slot + 1] += 1
+    return tuple(state)
 
 
 def merge(left: tuple[int, ...], right: tuple[int, ...]) -> tuple[int, ...]:
@@ -107,6 +149,22 @@ def utc_timestamp(milliseconds: int) -> str:
     return (EPOCH + timedelta(milliseconds=milliseconds)).isoformat().replace("+00:00", "Z")
 
 
+def aggregate_values(
+    plan: FlinkJobPlan, accumulator: tuple[int, ...]
+) -> dict[str, int | float | None]:
+    """The value of every aggregation. An avg is missing for a window without matching events."""
+    if len(accumulator) != plan.slots:
+        raise ValueError(f"accumulator has {len(accumulator)} slots, the plan needs {plan.slots}")
+    values: dict[str, int | float | None] = {}
+    for aggregation in plan.aggregations:
+        if aggregation.op is Op.AVG:
+            total, count = accumulator[aggregation.slot], accumulator[aggregation.slot + 1]
+            values[aggregation.name] = total / count if count else None
+        else:
+            values[aggregation.name] = accumulator[aggregation.slot]
+    return values
+
+
 def feature_record(
     plan: FlinkJobPlan,
     key: str,
@@ -114,10 +172,13 @@ def feature_record(
     window_end_ms: int,
     accumulator: tuple[int, ...],
 ) -> str:
-    counts = {c.name: n for c, n in zip(plan.counters, accumulator, strict=True)}
-    values = dict(counts)
+    aggregates = aggregate_values(plan, accumulator)
+    values: dict[str, Any] = dict(aggregates)
     for name, expression in plan.derived:
-        values[name] = evaluate_expression(expression, counts)
+        if any(aggregates.get(ref) is None for ref in names_in(expression)):
+            values[name] = None
+        else:
+            values[name] = evaluate_expression(expression, aggregates)
     return json.dumps(
         {
             "feature_schema_version": "v1",

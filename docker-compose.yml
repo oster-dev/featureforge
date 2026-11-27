@@ -53,6 +53,7 @@ services:
     volumes:
       - ./jobs:/opt/flink/jobs:ro
       - ./feature_repo/specs:/opt/flink/specs:ro
+      - ./fixtures/specs:/opt/flink/fixture-specs:ro
       - flink-savepoints:/opt/flink/savepoints
     healthcheck:
       test:
