@@ -60,9 +60,20 @@ and which store policy it uses.
 - A derived expression may return a missing value for an empty window. The spec model accepts
   `play_seconds_sum / play_count if play_count > 0 else None`, and the reference returns `None` for
   an empty window and `90.0` for the fixture (`tests/unit/test_spec_sum_avg_golden.py`).
+- The feature record parser and both stores accept a missing derived value only where the
+  spec expression gives none for the components of the record. The record carries `null`,
+  the history stores `null`, and a serving entry stays `ok` with a `null` value. A missing
+  value is never replaced by zero or by a fallback default (ADR-003).
 
 ## Open questions
 
-- Do the feature record parser and the store accept a missing derived value?
 - Integer and float components in one vector (min and max over non-integer fields).
 - `last_k`: order by (event_time, event_id), and the largest allowed k.
+
+## Delivery
+
+- `sum` and `avg` (as a derived value over a `sum` and a `count`): the Flink job, the Spark
+  backfill, the spec model with `componentwise_monotonic`, the record parser, the Redis and the
+  Cassandra store, the history table and the serving entry. A summed field must be a non-negative
+  integer in the event contract, the loader rejects any other field under this policy.
+- Not delivered: `min` and `max`, `last_k`, `approx_distinct` and the `window_replace` store policy.
