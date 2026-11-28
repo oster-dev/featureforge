@@ -298,7 +298,7 @@ pytest -v tests/unit/test_spec_reference.py
 
 The `backfill-spec` command evaluates a spec for many entities and observation
 times at once with Spark and writes the values as Parquet. It needs the `spark`
-extra, supports count, sum, avg, min and max aggregations only and never overwrites an existing
+extra, supports count, sum, avg, min, max and last_k aggregations only and never overwrites an existing
 output. The observations are a JSONL file with the spec keys and
 `observation_time`:
 
@@ -484,7 +484,7 @@ python -m featureforge.streaming.materialize_spec \
   values are not proven for it.
 - The two original features run on the spec-driven store and materializer
   through thin wrappers. The path is proven end to end from events to Redis by
-  its own test for `content_play_count_1h`. A Spark backfill from a spec covers count, sum, avg, min and max aggregations only (`backfill-spec`),
+  its own test for `content_play_count_1h`. A Spark backfill from a spec covers count, sum, avg, min, max and last_k aggregations only (`backfill-spec`),
   and the two original Spark features are hand-written.
 - `online.ttl` is a Redis expiry from the last accepted write for all three
   streaming features. Keys written before the wrappers have no expiry until

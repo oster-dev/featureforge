@@ -69,7 +69,7 @@ flowchart LR
     REF -. "compared on golden fixtures<br/>and randomized boundaries" .-> IMPL
 ```
 
-The language is bounded on purpose. It is not a general SQL or streaming compiler. The Flink job and the Spark backfill support count, sum, avg, min and max aggregations and one
+The language is bounded on purpose. It is not a general SQL or streaming compiler. The Flink job supports count, sum, avg, min and max aggregations, the Spark backfill also last_k, and both support one
 entity key. Other operators fail with an explicit error instead of being computed
 wrongly.
 
@@ -296,7 +296,7 @@ The full list is in [STATUS.md](../STATUS.md). The ones that shape the design:
 - Recovery is shown for a TaskManager crash and a planned stop with a savepoint. JobManager failure is
   not proven, and checkpoints live in JobManager memory.
 - Topics have one partition. Scaling over partitions is not demonstrated.
-- The Flink job and the Spark backfill support count, sum, avg, min and max aggregations and one entity key. `published_as_of` needs one entity key.
+- The Flink job supports count, sum, avg, min and max aggregations, the Spark backfill also last_k, and both support one entity key. `published_as_of` needs one entity key.
 - There is no store for `window_replace`, so `last_k` and `approx_distinct` cannot be served online yet. `sum`, `min` and `max`, and `avg` as a derived value, are served with `componentwise_monotonic`.
 - The event table has one writer and no compaction or retention. Its append slows down with the number of
   data files (about 4 ms per file).

@@ -110,7 +110,7 @@ class Aggregation(_Strict):
     op: Op
     column: str | None = None
     filter: str | None = None
-    k: int | None = Field(default=None, ge=1)
+    k: int | None = Field(default=None, ge=1, le=100)
 
     @model_validator(mode="after")
     def _check(self) -> Aggregation:
