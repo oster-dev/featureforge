@@ -92,7 +92,7 @@ class DeduplicateEvents(KeyedProcessFunction):
 
 
 class AggregateEvents(AggregateFunction):
-    """Keep the state of the plan (one or two integers per aggregation) for each entity and window."""
+    """Keep the state of the plan for each entity and window (the layout is in flink_plan)."""
 
     def __init__(self, plan):
         self.plan = plan
@@ -118,7 +118,8 @@ class EmitFeature(ProcessWindowFunction):
 
     def process(self, key, context, elements):
         window = context.window()
-        accumulator = tuple(int(count) for count in next(iter(elements)))
+        state = next(iter(elements))
+        accumulator = tuple(slot if isinstance(slot, tuple) else int(slot) for slot in state)
         yield feature_record(self.plan, key, window.start, window.end, accumulator)
 
 
@@ -222,7 +223,11 @@ def main() -> None:
         .aggregate(
             AggregateEvents(plan),
             EmitFeature(plan),
-            accumulator_type=Types.TUPLE([Types.LONG()] * plan.slots),
+            accumulator_type=(
+                Types.PICKLED_BYTE_ARRAY()
+                if plan.buffered
+                else Types.TUPLE([Types.LONG()] * plan.slots)
+            ),
             output_type=Types.STRING(),
         )
         .name(f"{slug}-spec-windows")
