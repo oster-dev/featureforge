@@ -82,8 +82,10 @@ and which store policy it uses.
 - `min` and `max`: the Spark backfill, the Flink job and the online path with a direction per
   component, a missing extreme as `null`, the history table and the version ranking of
   published-as-of. A minimum or maximum field must be an integer in the event contract.
-- Not delivered: `last_k`, `approx_distinct` and the
-  `window_replace` store policy.
+- `last_k`: the Spark backfill. The value is an integer array, oldest first, ordered by
+  (event_time, event_id), empty for an empty window, and the spec model bounds `k` at 100.
+- Not delivered: `last_k` in the Flink job and the online path (parser, `window_replace`
+  store, history, serving), and `approx_distinct`.
 
 ## Addendum: the shape of last_k and the window_replace store (2026-11-28)
 

@@ -341,7 +341,7 @@ features (ADR-008). `feature_repo/specs/` contains specs for `user_play_count_1h
 and `user_skip_rate_24h`. The specs are validated, evaluated by an exact
 reference, and drive the generic Flink job `jobs/feature_from_spec.py`, which
 runs both features (see the next section). Stores and materializers became
-spec-driven in PRs #36 to #38, the Spark backfill from a spec covers count, sum, avg, min and max aggregations, and the two original Spark features are hand-written. `online.ttl`
+spec-driven in PRs #36 to #38, the Spark backfill from a spec covers count, sum, avg, min, max and last_k aggregations, and the two original Spark features are hand-written. `online.ttl`
 in a spec is enforced by the spec-driven store. Since PR #43 the stores of
 the two original features delegate to it, so all three features expire.
 
@@ -701,7 +701,7 @@ recorded in a publication history, validated events in an event fact table, and 
 read both at pinned snapshots. The feature serving service returns a status for every value, and
 its latency is measured on one laptop. Unified batch and stream online access through
 `OnlineFeatureClient` covers the play count and the skip rate. A Spark backfill from a spec covers
-count, sum, avg, min and max aggregations, and the two original Spark features are hand-written.
+count, sum, avg, min, max and last_k aggregations, and the two original Spark features are hand-written.
 
 Remaining before the streaming path can be called complete: JobManager-failure
 recovery verification, verification at the production TTL values, gap detection inside the

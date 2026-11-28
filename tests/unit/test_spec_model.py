@@ -104,3 +104,11 @@ def test_loader_rejects_unknown_event_fields(tmp_path, capsys):
         load_spec(path)
     assert main([str(path)]) == 1
     assert "unknown event fields" in capsys.readouterr().out
+
+
+def test_last_k_allows_k_up_to_100_and_rejects_more():
+    from featureforge.spec.model import Aggregation
+
+    assert Aggregation(name="recent", op="last_k", column="play_seconds", k=100).k == 100
+    with pytest.raises(ValidationError):
+        Aggregation(name="recent", op="last_k", column="play_seconds", k=101)

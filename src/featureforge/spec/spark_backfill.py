@@ -120,7 +120,30 @@ def _reject_identity_conflicts(spec: FeatureSpec, events: DataFrame) -> None:
         )
 
 
-_SUPPORTED_OPS = frozenset({Op.COUNT, Op.SUM, Op.AVG, Op.MIN, Op.MAX})
+def _last_k(condition: Column, column: str, k: int) -> Column:
+    """The last k values of the matching events, oldest first, ordered like the reference.
+
+    Events order by (event_time, event_id). The struct fields compare in that order, and the
+    value comes last. A group without matching events collects nothing, so it gives an empty
+    array, not null. The start of the slice cannot be negative, because slice returns an empty
+    array when a negative start reaches past the first element.
+    """
+    entries = F.collect_list(
+        F.when(
+            condition,
+            F.struct(
+                F.col("_event_us").alias("event_us"),
+                F.col("event_id").cast("string").alias("event_id"),
+                F.col(column).alias("value"),
+            ),
+        )
+    )
+    ordered = F.transform(F.sort_array(entries), lambda entry: entry["value"])
+    start = F.greatest(F.lit(1), F.size(ordered) - F.lit(k) + F.lit(1))
+    return F.slice(ordered, start, k)
+
+
+_SUPPORTED_OPS = frozenset({Op.COUNT, Op.SUM, Op.AVG, Op.MIN, Op.MAX, Op.LAST_K})
 
 
 def backfill_spec(spec: FeatureSpec, events: DataFrame, observations: DataFrame) -> DataFrame:
@@ -133,7 +156,7 @@ def backfill_spec(spec: FeatureSpec, events: DataFrame, observations: DataFrame)
     unsupported = sorted({a.op.value for a in spec.aggregations if a.op not in _SUPPORTED_OPS})
     if unsupported:
         raise NotImplementedError(
-            "spark backfill supports count, sum, avg, min and max aggregations only; "
+            "spark backfill supports count, sum, avg, min, max and last_k aggregations only; "
             f"unsupported: {unsupported}"
         )
     _require_columns("events", events, set(InteractionEventV1.model_fields))
@@ -171,6 +194,10 @@ def backfill_spec(spec: FeatureSpec, events: DataFrame, observations: DataFrame)
                 aggregate = F.min(values)
             elif agg.op is Op.MAX:
                 aggregate = F.max(values)
+            elif agg.op is Op.LAST_K:
+                if agg.k is None:
+                    raise ValueError(f"aggregation '{agg.name}' needs k")
+                aggregate = _last_k(condition, agg.column, agg.k)
             else:
                 aggregate = F.avg(values)
         aggregates.append(aggregate.alias(agg.name))
