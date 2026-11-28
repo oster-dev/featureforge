@@ -72,9 +72,9 @@ def test_composite_key_is_rejected(skip_spec):
 
 
 def test_an_operator_beyond_min_and_max_is_rejected(skip_spec):
-    recent = Aggregation(name="recent_play_seconds", op=Op.LAST_K, column="play_seconds", k=3)
-    spec = skip_spec.model_copy(update={"aggregations": [recent]})
-    with pytest.raises(UnsupportedSpecError, match="recent_play_seconds"):
+    distinct = Aggregation(name="distinct_content", op=Op.APPROX_DISTINCT, column="content_id")
+    spec = skip_spec.model_copy(update={"aggregations": [distinct]})
+    with pytest.raises(UnsupportedSpecError, match="distinct_content"):
         build_flink_plan(spec)
 
 
@@ -168,8 +168,9 @@ def test_sum_and_avg_take_one_and_two_slots(play_seconds_plan):
         ("play_seconds_sum", Op.SUM, 1),
         ("avg_play_seconds", Op.AVG, 2),
     ]
-    assert play_seconds_plan.slots == 4
-    assert play_seconds_plan.zero == (0, 0, 0, 0)
+    assert play_seconds_plan.slots == 5
+    assert play_seconds_plan.events_seen_slot == 4
+    assert play_seconds_plan.zero == (0, 0, 0, 0, 0)
 
 
 @pytest.mark.parametrize(
@@ -196,15 +197,15 @@ def test_accumulate_sums_the_column_and_merge_adds_every_slot(play_seconds_plan)
     for event_type, seconds in (("play", 100), ("skip", 30), ("play", 50)):
         event = {"event_type": event_type, "play_seconds": seconds}
         accumulator = accumulate(play_seconds_plan, event, accumulator)
-    assert accumulator == (2, 150, 150, 2)
-    assert merge(play_seconds_plan, (1, 10, 10, 1), (2, 20, 30, 2)) == (3, 30, 40, 3)
+    assert accumulator == (2, 150, 150, 2, 3)
+    assert merge(play_seconds_plan, (1, 10, 10, 1, 2), (2, 20, 30, 2, 3)) == (3, 30, 40, 3, 5)
 
 
 def test_a_derived_value_with_a_missing_input_is_missing():
     spec = PLAY_SECONDS.model_copy(update={"derived": {"double_avg": "avg_play_seconds * 2"}})
     plan = build_flink_plan(spec)
     empty = json.loads(feature_record(plan, "user000003", 0, HOUR_MS, plan.zero))
-    full = json.loads(feature_record(plan, "user000001", 0, HOUR_MS, (3, 270, 270, 3)))
+    full = json.loads(feature_record(plan, "user000001", 0, HOUR_MS, (3, 270, 270, 3, 4)))
     assert empty["avg_play_seconds"] is None
     assert empty["double_avg"] is None
     assert full["double_avg"] == 180

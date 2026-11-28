@@ -2,12 +2,16 @@
 
 The plan holds everything a generic job needs from a spec: window, lateness,
 dedupe horizon, aggregations with their filters, and derived values. It supports
-count, sum and avg aggregations (ADR-017). Other operators are rejected with a
-clear message instead of being computed wrongly. Nothing here imports Flink.
+count, sum, avg, min, max and last_k aggregations (ADR-017). Other operators are
+rejected with a clear message instead of being computed wrongly. Nothing here
+imports Flink.
 
-The state of a window is a flat tuple of integers. Each aggregation owns one slot
-(count, sum) or two slots (avg: the sum and the number of events). Every slot is
-additive, so two states merge by adding them slot by slot.
+The state of a window is a flat tuple. Each aggregation owns one slot (count, sum,
+last_k) or two slots (avg, min, max: the value and the number of events). A numeric
+slot is an integer, and two states merge by adding it. A last_k slot holds a tuple of
+(event time in microseconds, event id, value) entries, ordered ascending and at most k
+long. A spec with the policy window_replace gets one more slot at the end, the events
+seen, which counts every event of the window whatever the filters say (ADR-017).
 """
 
 from __future__ import annotations
@@ -18,12 +22,16 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from featureforge.spec.model import FeatureSpec, Op
+from featureforge.spec.model import FeatureSpec, Op, UpdatePolicy
 from featureforge.spec.reference import evaluate_expression, names_in
 
 EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 _MS = timedelta(milliseconds=1)
-SUPPORTED_OPS = frozenset({Op.COUNT, Op.SUM, Op.AVG, Op.MIN, Op.MAX})
+_US = timedelta(microseconds=1)
+SUPPORTED_OPS = frozenset({Op.COUNT, Op.SUM, Op.AVG, Op.MIN, Op.MAX, Op.LAST_K})
+EVENTS_SEEN = "events_seen"
+
+Accumulator = tuple[Any, ...]
 
 
 class UnsupportedSpecError(ValueError):
@@ -37,6 +45,7 @@ class AggregationPlan:
     column: str | None
     filter_expression: str | None
     slot: int
+    k: int | None = None
 
     @property
     def width(self) -> int:
@@ -55,14 +64,35 @@ class FlinkJobPlan:
     dedupe_ttl_ms: int
     aggregations: tuple[AggregationPlan, ...]
     derived: tuple[tuple[str, str], ...]
+    track_events_seen: bool = False
 
     @property
-    def slots(self) -> int:
+    def events_seen_slot(self) -> int | None:
+        if not self.track_events_seen:
+            return None
         return sum(aggregation.width for aggregation in self.aggregations)
 
     @property
-    def zero(self) -> tuple[int, ...]:
-        return (0,) * self.slots
+    def slots(self) -> int:
+        extra = 1 if self.track_events_seen else 0
+        return sum(aggregation.width for aggregation in self.aggregations) + extra
+
+    @property
+    def buffered(self) -> bool:
+        """True if a slot holds a buffer, so the state is no longer a tuple of integers."""
+        return any(aggregation.op is Op.LAST_K for aggregation in self.aggregations)
+
+    @property
+    def zero(self) -> Accumulator:
+        state: list[Any] = []
+        for aggregation in self.aggregations:
+            if aggregation.op is Op.LAST_K:
+                state.append(())
+            else:
+                state.extend([0] * aggregation.width)
+        if self.track_events_seen:
+            state.append(0)
+        return tuple(state)
 
 
 def _aggregation_plans(spec: FeatureSpec) -> tuple[AggregationPlan, ...]:
@@ -70,7 +100,12 @@ def _aggregation_plans(spec: FeatureSpec) -> tuple[AggregationPlan, ...]:
     slot = 0
     for aggregation in spec.aggregations:
         plan = AggregationPlan(
-            aggregation.name, aggregation.op, aggregation.column, aggregation.filter, slot
+            aggregation.name,
+            aggregation.op,
+            aggregation.column,
+            aggregation.filter,
+            slot,
+            aggregation.k,
         )
         plans.append(plan)
         slot += plan.width
@@ -83,6 +118,16 @@ def _column(aggregation: AggregationPlan) -> str:
     return aggregation.column
 
 
+def _k(aggregation: AggregationPlan) -> int:
+    if aggregation.k is None:
+        raise ValueError(f"aggregation '{aggregation.name}' needs k")
+    return aggregation.k
+
+
+def _event_time_us(event: Mapping[str, Any]) -> int:
+    return (datetime.fromisoformat(str(event["event_time"])) - EPOCH) // _US
+
+
 def build_flink_plan(spec: FeatureSpec) -> FlinkJobPlan:
     problems: list[str] = []
     if len(spec.keys) != 1:
@@ -91,7 +136,15 @@ def build_flink_plan(spec: FeatureSpec) -> FlinkJobPlan:
         if aggregation.op not in SUPPORTED_OPS:
             problems.append(
                 f"aggregation '{aggregation.name}' uses op {aggregation.op.value}; "
-                "only count, sum, avg, min and max are supported yet"
+                "only count, sum, avg, min, max and last_k are supported yet"
+            )
+    track_events_seen = spec.online.update_policy is UpdatePolicy.WINDOW_REPLACE
+    if track_events_seen:
+        names = [aggregation.name for aggregation in spec.aggregations] + list(spec.derived)
+        if EVENTS_SEEN in names:
+            problems.append(
+                f"the name '{EVENTS_SEEN}' is reserved for the events seen of a "
+                "window_replace spec (ADR-017)"
             )
     if problems:
         raise UnsupportedSpecError(
@@ -109,6 +162,7 @@ def build_flink_plan(spec: FeatureSpec) -> FlinkJobPlan:
         dedupe_ttl_ms=spec.dedupe.ttl // _MS,
         aggregations=_aggregation_plans(spec),
         derived=tuple(spec.derived.items()),
+        track_events_seen=track_events_seen,
     )
 
 
@@ -121,12 +175,18 @@ def dedupe_value(plan: FlinkJobPlan, payload: str) -> str:
 
 
 def accumulate(
-    plan: FlinkJobPlan, event: Mapping[str, Any], accumulator: tuple[int, ...]
-) -> tuple[int, ...]:
-    """Add one event to the state of a window. An event that fails the filter adds nothing."""
+    plan: FlinkJobPlan, event: Mapping[str, Any], accumulator: Accumulator
+) -> Accumulator:
+    """Add one event to the state of a window.
+
+    An event that fails the filter of an aggregation adds nothing to it. The events seen
+    count every event, whatever the filters say.
+    """
     if len(accumulator) != plan.slots:
         raise ValueError(f"accumulator has {len(accumulator)} slots, the plan needs {plan.slots}")
     state = list(accumulator)
+    if plan.events_seen_slot is not None:
+        state[plan.events_seen_slot] += 1
     for aggregation in plan.aggregations:
         if aggregation.filter_expression is not None and not bool(
             evaluate_expression(aggregation.filter_expression, event)
@@ -137,7 +197,10 @@ def accumulate(
             continue
         value = int(event[_column(aggregation)])
         slot = aggregation.slot
-        if aggregation.op in (Op.MIN, Op.MAX):
+        if aggregation.op is Op.LAST_K:
+            entry = (_event_time_us(event), str(event["event_id"]), value)
+            state[slot] = tuple(sorted((*state[slot], entry))[-_k(aggregation) :])
+        elif aggregation.op in (Op.MIN, Op.MAX):
             if state[slot + 1] == 0:
                 state[slot] = value
             elif aggregation.op is Op.MIN:
@@ -152,27 +215,29 @@ def accumulate(
     return tuple(state)
 
 
-def merge(plan: FlinkJobPlan, left: tuple[int, ...], right: tuple[int, ...]) -> tuple[int, ...]:
+def merge(plan: FlinkJobPlan, left: Accumulator, right: Accumulator) -> Accumulator:
     """Combine two partial states of one window.
 
-    Counts, sums and the parts of an avg add up. An extreme takes the smaller or larger value
-    and ignores a side that saw no matching event.
+    Counts, sums, the parts of an avg and the events seen add up. An extreme takes the
+    smaller or larger value and ignores a side that saw no matching event. A last_k buffer
+    keeps the last k entries of both sides.
     """
     if len(left) != plan.slots or len(right) != plan.slots:
         raise ValueError(f"both accumulators need {plan.slots} slots for this plan")
-    state = [a + b for a, b in zip(left, right, strict=True)]
+    state = [() if isinstance(a, tuple) else a + b for a, b in zip(left, right, strict=True)]
     for aggregation in plan.aggregations:
-        if aggregation.op not in (Op.MIN, Op.MAX):
-            continue
         slot = aggregation.slot
-        if left[slot + 1] == 0:
-            state[slot] = right[slot]
-        elif right[slot + 1] == 0:
-            state[slot] = left[slot]
-        elif aggregation.op is Op.MIN:
-            state[slot] = min(left[slot], right[slot])
-        else:
-            state[slot] = max(left[slot], right[slot])
+        if aggregation.op is Op.LAST_K:
+            state[slot] = tuple(sorted((*left[slot], *right[slot]))[-_k(aggregation) :])
+        elif aggregation.op in (Op.MIN, Op.MAX):
+            if left[slot + 1] == 0:
+                state[slot] = right[slot]
+            elif right[slot + 1] == 0:
+                state[slot] = left[slot]
+            elif aggregation.op is Op.MIN:
+                state[slot] = min(left[slot], right[slot])
+            else:
+                state[slot] = max(left[slot], right[slot])
     return tuple(state)
 
 
@@ -181,13 +246,16 @@ def utc_timestamp(milliseconds: int) -> str:
 
 
 def aggregate_values(
-    plan: FlinkJobPlan, accumulator: tuple[int, ...]
-) -> dict[str, int | float | None]:
-    """The value of every aggregation. An avg, min or max is missing for a window without
-    matching events."""
+    plan: FlinkJobPlan, accumulator: Accumulator
+) -> dict[str, int | float | list[int] | None]:
+    """The value of every aggregation.
+
+    An avg, min or max is missing for a window without matching events, and a last_k is an
+    empty list.
+    """
     if len(accumulator) != plan.slots:
         raise ValueError(f"accumulator has {len(accumulator)} slots, the plan needs {plan.slots}")
-    values: dict[str, int | float | None] = {}
+    values: dict[str, int | float | list[int] | None] = {}
     for aggregation in plan.aggregations:
         if aggregation.op is Op.AVG:
             total, count = accumulator[aggregation.slot], accumulator[aggregation.slot + 1]
@@ -195,6 +263,8 @@ def aggregate_values(
         elif aggregation.op in (Op.MIN, Op.MAX):
             matched = accumulator[aggregation.slot + 1]
             values[aggregation.name] = accumulator[aggregation.slot] if matched else None
+        elif aggregation.op is Op.LAST_K:
+            values[aggregation.name] = [entry[2] for entry in accumulator[aggregation.slot]]
         else:
             values[aggregation.name] = accumulator[aggregation.slot]
     return values
@@ -205,7 +275,7 @@ def feature_record(
     key: str,
     window_start_ms: int,
     window_end_ms: int,
-    accumulator: tuple[int, ...],
+    accumulator: Accumulator,
 ) -> str:
     aggregates = aggregate_values(plan, accumulator)
     values: dict[str, Any] = dict(aggregates)
@@ -214,6 +284,8 @@ def feature_record(
             values[name] = None
         else:
             values[name] = evaluate_expression(expression, aggregates)
+    if plan.events_seen_slot is not None:
+        values[EVENTS_SEEN] = accumulator[plan.events_seen_slot]
     return json.dumps(
         {
             "feature_schema_version": "v1",

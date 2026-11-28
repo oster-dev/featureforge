@@ -59,10 +59,10 @@ class FeatureCase:
     fixture_file: str
     fixture_lines: int
     users: frozenset[str]
-    required_windows: dict[tuple[str, str], Mapping[str, float | None]]
+    required_windows: dict[tuple[str, str], Mapping[str, object]]
     last_window: tuple[str, str]
     min_records: int
-    hand_written: Callable[[list[InteractionEventV1], str, datetime], Mapping[str, float | None]]
+    hand_written: Callable[[list[InteractionEventV1], str, datetime], Mapping[str, object]]
     host_specs: Path = SPECS
     container_specs: str = CONTAINER_SPECS
 
@@ -126,6 +126,31 @@ def play_seconds_reference(
     }
 
 
+def events_seen_reference(
+    events: list[InteractionEventV1], user_id: str, observation: datetime
+) -> int:
+    """Every event of the user in (t - 1h, t] after deduplication, whatever its type."""
+    start = observation - timedelta(hours=1)
+    unique: dict[object, InteractionEventV1] = {}
+    for event in events:
+        unique.setdefault(event.event_id, event)
+    return sum(
+        1
+        for event in unique.values()
+        if event.user_id == user_id and start < event.event_time <= observation
+    )
+
+
+def play_seconds_with_events_seen(
+    events: list[InteractionEventV1], user_id: str, observation: datetime
+) -> dict[str, object]:
+    """The play seconds values plus the events seen of a window_replace spec."""
+    return {
+        **play_seconds_reference(events, user_id, observation),
+        "events_seen": events_seen_reference(events, user_id, observation),
+    }
+
+
 PLAY_SECONDS = FeatureCase(
     spec_file="user_play_seconds_1h.yaml",
     fixture_file="user_play_seconds_1h_v1.jsonl",
@@ -175,7 +200,7 @@ PLAY_SECONDS = FeatureCase(
     },
     last_window=("user000001", "2026-01-01T12:00:00Z"),
     min_records=200,
-    hand_written=play_seconds_reference,
+    hand_written=play_seconds_with_events_seen,
     host_specs=ROOT / "fixtures" / "specs",
     container_specs="/opt/flink/fixture-specs",
 )
@@ -287,6 +312,106 @@ PLAY_SECONDS_EXTREMES = FeatureCase(
     last_window=PLAY_SECONDS.last_window,
     min_records=PLAY_SECONDS.min_records,
     hand_written=play_seconds_extremes_reference,
+    host_specs=PLAY_SECONDS.host_specs,
+    container_specs=PLAY_SECONDS.container_specs,
+)
+
+
+def play_seconds_last_k_reference(
+    events: list[InteractionEventV1], user_id: str, observation: datetime
+) -> dict[str, object]:
+    """Play count, the last two play seconds and the events seen, without the spec machinery."""
+    start = observation - timedelta(hours=1)
+    unique: dict[object, InteractionEventV1] = {}
+    for event in events:
+        unique.setdefault(event.event_id, event)
+    plays = sorted(
+        (
+            event
+            for event in unique.values()
+            if event.user_id == user_id
+            and event.event_type == "play"
+            and start < event.event_time <= observation
+        ),
+        key=lambda event: (event.event_time, str(event.event_id)),
+    )
+    return {
+        "play_count": len(plays),
+        "last_play_seconds": [event.play_seconds for event in plays][-2:],
+        "events_seen": events_seen_reference(events, user_id, observation),
+    }
+
+
+PLAY_SECONDS_LAST_K = FeatureCase(
+    spec_file="user_play_seconds_last2_1h.yaml",
+    fixture_file=PLAY_SECONDS.fixture_file,
+    fixture_lines=PLAY_SECONDS.fixture_lines,
+    users=PLAY_SECONDS.users,
+    required_windows={
+        ("user000001", "2026-01-01T10:00:00Z"): {
+            "play_count": 1,
+            "last_play_seconds": [100],
+            "events_seen": 1,
+        },
+        ("user000001", "2026-01-01T10:01:00Z"): {
+            "play_count": 2,
+            "last_play_seconds": [100, 120],
+            "events_seen": 2,
+        },
+        ("user000001", "2026-01-01T10:30:00Z"): {
+            "play_count": 3,
+            "last_play_seconds": [120, 60],
+            "events_seen": 3,
+        },
+        ("user000001", "2026-01-01T10:45:00Z"): {
+            "play_count": 3,
+            "last_play_seconds": [120, 60],
+            "events_seen": 4,
+        },
+        ("user000001", "2026-01-01T11:00:00Z"): {
+            "play_count": 3,
+            "last_play_seconds": [60, 90],
+            "events_seen": 4,
+        },
+        ("user000001", "2026-01-01T11:01:00Z"): {
+            "play_count": 3,
+            "last_play_seconds": [90, 500],
+            "events_seen": 4,
+        },
+        ("user000001", "2026-01-01T11:30:00Z"): {
+            "play_count": 2,
+            "last_play_seconds": [90, 500],
+            "events_seen": 3,
+        },
+        ("user000001", "2026-01-01T12:00:00Z"): {
+            "play_count": 1,
+            "last_play_seconds": [500],
+            "events_seen": 1,
+        },
+        ("user000002", "2026-01-01T11:00:00Z"): {
+            "play_count": 1,
+            "last_play_seconds": [200],
+            "events_seen": 1,
+        },
+        ("user000002", "2026-01-01T11:14:00Z"): {
+            "play_count": 1,
+            "last_play_seconds": [200],
+            "events_seen": 1,
+        },
+        ("user000003", "2026-01-01T10:30:00Z"): {
+            "play_count": 0,
+            "last_play_seconds": [],
+            "events_seen": 1,
+        },
+        ("user000003", "2026-01-01T11:00:00Z"): {
+            "play_count": 0,
+            "last_play_seconds": [],
+            "events_seen": 1,
+        },
+    },
+    last_window=PLAY_SECONDS.last_window,
+    min_records=PLAY_SECONDS.min_records,
+    hand_written=play_seconds_last_k_reference,
     host_specs=PLAY_SECONDS.host_specs,
     container_specs=PLAY_SECONDS.container_specs,
 )
@@ -435,6 +560,7 @@ def delete_topics(topics: list[str]) -> None:
         pytest.param(PLAY_SECONDS, id="user_play_seconds_1h"),
         pytest.param(PLAY_SECONDS_DERIVED, id="user_play_seconds_derived_1h"),
         pytest.param(PLAY_SECONDS_EXTREMES, id="user_play_seconds_extremes_1h"),
+        pytest.param(PLAY_SECONDS_LAST_K, id="user_play_seconds_last2_1h"),
     ],
 )
 def test_generic_job_reproduces_golden_fixture(case: FeatureCase) -> None:
@@ -610,7 +736,10 @@ def test_generic_job_reproduces_golden_fixture(case: FeatureCase) -> None:
             )
             assert record["feature_schema_version"] == "v1", record
             assert record["feature_name"] == spec.name, record
-            assert set(record) == BASE_FIELDS | set(expected.values), record
+            seen_fields = (
+                {"events_seen"} if spec.online.update_policy == "window_replace" else set()
+            )
+            assert set(record) == BASE_FIELDS | set(expected.values) | seen_fields, record
             for name, value in expected.values.items():
                 assert record[name] == pytest.approx(value), record
             for name, value in case.hand_written(events, user_id, observation).items():

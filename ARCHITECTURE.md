@@ -682,7 +682,7 @@ workflow with registry and rollback. Scope and order: [STATUS.md](STATUS.md) and
 - Flink Kafka sinks use `AT_LEAST_ONCE`. Idempotency comes from dedupe and
   guarded store writes, not from end-to-end exactly-once. Kafka, the online store and Iceberg
   do not share a transaction.
-- The Flink job supports count, sum, avg, min and max aggregations, the Spark backfill also last_k, and both support one
+- The Flink job and the Spark backfill support count, sum, avg, min, max and last_k aggregations and one
   entity key. `sum`, `min` and `max` can be served online with `componentwise_monotonic`, an `avg`
   as a derived value. `window_replace` has no store, so `last_k` and `approx_distinct` cannot be
   served online. The
