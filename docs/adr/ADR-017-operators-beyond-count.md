@@ -72,7 +72,6 @@ and which store policy it uses.
 
 - Float components (min and max over a non-integer field, a sum over a float field). The loader
   rejects them under `componentwise_monotonic` until a decision exists.
-- `last_k`: order by (event_time, event_id), and the largest allowed k.
 
 ## Delivery
 
@@ -85,3 +84,34 @@ and which store policy it uses.
   published-as-of. A minimum or maximum field must be an integer in the event contract.
 - Not delivered: `last_k`, `approx_distinct` and the
   `window_replace` store policy.
+
+## Addendum: the shape of last_k and the window_replace store (2026-11-28)
+
+This answers the open question on last_k and fixes what step 4 delivers.
+
+7. **Value of last_k.** The value is a JSON array of integers: the column values of the matching
+   events, oldest first, ordered by (event_time, event_id) like in the reference, at most k long.
+   A window with fewer matching events gives a shorter array, a window without any gives an empty
+   array. An empty array is a value, not a missing value. Like min and max, last_k takes an
+   integer field only.
+8. **k is bounded.** The model rejects k above 100. Every event enters every window it falls into
+   (1,440 windows for a 24 h window with a 1 min slide, ADR-008), and each window of each key
+   holds up to k values per aggregation, so k bounds the state.
+9. **events_seen.** For a spec with the policy window_replace, the Flink job adds one integer
+   field, events_seen, to every record: the number of events in the window after deduplication,
+   counted for every event whatever the filters say. Events are only added to a window, so it only
+   grows. The name is reserved, an aggregation or a derived value cannot use it, and records of
+   the other policies do not have it.
+10. **The store decision.** A newer window replaces an older one. In the same window a record with
+    a higher events_seen is written, a record with the same events_seen and the same values is
+    unchanged, one with the same events_seen and other values raises UpdateConflictError, and a
+    lower events_seen is stale.
+11. **History and ranking.** The history stores last_k as a list column and events_seen as an
+    integer column. The update identity contains events_seen and the values, and events_seen ranks
+    versions with the same publication time and window.
+12. **Order of the pull requests.** The Spark backfill computes last_k, the Flink job computes
+    last_k and emits events_seen, then the online path (parser, store, history, serving) follows.
+    approx_distinct comes after, with its own decision on the error bound.
+
+Consequence for the Flink job: the accumulator of a spec with last_k cannot stay a tuple of
+integers, because it holds the buffer of the last k events with their time and identity.
